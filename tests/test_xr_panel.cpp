@@ -42,6 +42,11 @@ int main() {
     CHECK(xp_choose(&panel, &cfg, &hand, XD_SHARPEN, nullptr, 0) == XP_SAVE && cfg.sharpen == 2);
     xp_items(&panel, &cfg, hand, 1, 2208, 2064, items);
     CHECK(std::strcmp(items[XD_GLOW].label, "Glow") == 0 && std::strcmp(items[XD_GLOW].value, "Off (faster)") == 0);
+    CHECK(cfg.space_warp == 0 && std::strcmp(items[XD_SPACE_WARP].label, "Space warp") == 0 && std::strcmp(items[XD_SPACE_WARP].value, "Off") == 0);
+    CHECK(xp_choose(&panel, &cfg, &hand, XD_SPACE_WARP, nullptr, 0) == (XP_SAVE | XP_SPACE_WARP_CHANGED) && cfg.space_warp == 1);
+    xp_items(&panel, &cfg, hand, 1, 2208, 2064, items);
+    CHECK(std::strcmp(items[XD_SPACE_WARP].value, "On (half rate)") == 0);
+    CHECK(xp_choose(&panel, &cfg, &hand, XD_SPACE_WARP, nullptr, 0) == (XP_SAVE | XP_SPACE_WARP_CHANGED) && cfg.space_warp == 0);
     const int level = cfg.foveation;
     CHECK(xp_choose(&panel, &cfg, &hand, XD_FOVEATION, nullptr, 0) == (XP_SAVE | XP_FOVEATION_CHANGED) && cfg.foveation == (level + 1) % 4);
     CHECK(xp_choose(&panel, &cfg, &hand, XD_SCALE, nullptr, 0) & XP_SCALE_CHANGED);
@@ -52,6 +57,30 @@ int main() {
     xp_choose(&panel, &cfg, &hand, XP_DISPLAY, nullptr, 0);
     CHECK(xp_menu_button(&panel, 1, 0) && !panel.open);
     CHECK(xp_menu_button(&panel, 1, 0) && panel.open && panel.page == 0);
+
+    // Presets: one row each; choosing one sets all four values, saves and restarts the game; the one in use does nothing
+    {
+        XpPanel shown{}; shown.open = 1; shown.page = 1; LgXrSettings p = LG_XR_SETTINGS_DEFAULT; p.render_scale = 1.5f;
+        const float rates[] = { 72, 80, 90, 120 };
+        xp_items(&shown, &p, hand, 1, 2208, 2064, items);
+        for (int i = 0; i < XP_PRESET_COUNT; i++)   // custom settings: none in use
+            CHECK(std::strcmp(items[XD_PRESET + i].label, xp_presets[i].name) == 0 && std::strcmp(items[XD_PRESET + i].value, "Restarts the game") == 0);
+        CHECK(std::strcmp(items[XD_RES].label, "Resolution per eye") == 0 && std::strcmp(items[XD_BACK].label, "Back") == 0);
+        CHECK(xp_choose(&shown, &p, &hand, XD_PRESET + 0, rates, 4) == (XP_SAVE | XP_RESTART));
+        CHECK(p.refresh == 90 && p.space_warp == 1 && p.render_scale == 0 && p.foveation == 3 && xp_preset_of(&p) == 0);
+        xp_items(&shown, &p, hand, 1, 2208, 2064, items);
+        CHECK(std::strcmp(items[XD_PRESET].value, "In use") == 0 && std::strcmp(items[XD_PRESET + 1].value, "Restarts the game") == 0);
+        CHECK(xp_choose(&shown, &p, &hand, XD_PRESET + 0, rates, 4) == 0);   // already in use: no restart
+        CHECK(xp_choose(&shown, &p, &hand, XD_PRESET + 2, rates, 4) == (XP_SAVE | XP_RESTART));
+        CHECK(p.refresh == 72 && p.space_warp == 0 && p.render_scale == xp_presets[2].render_scale && xp_preset_of(&p) == 2);
+        CHECK(xp_choose(&shown, &p, &hand, XD_PRESET + 1, rates, 4) == (XP_SAVE | XP_RESTART));
+        CHECK(p.refresh == 120 && p.space_warp == 1 && xp_preset_of(&p) == 1);
+        // changing one of its values by hand leaves the preset
+        CHECK(xp_choose(&shown, &p, &hand, XD_SPACE_WARP, rates, 4) && xp_preset_of(&p) == -1);
+        // a display without a preset's rate: that row does nothing
+        const float no72[] = { 90, 120 };
+        CHECK(xp_choose(&shown, &p, &hand, XD_PRESET + 2, no72, 2) == 0 && p.refresh == 120);
+    }
 
     // an explicit render scale caps the eyes at the picture's rows (xr_android.cpp): the Display page shows the size in use
     {
@@ -81,10 +110,14 @@ int main() {
     CHECK(xp_choose(&panel, &cfg, &hand, XC_BACK, nullptr, 0) == 0 && panel.page == 0);
 
     // the new keys survive vr.cfg
+    cfg.space_warp = 1;
     xr_settings_save(&cfg);
     LgXrSettings loaded = LG_XR_SETTINGS_DEFAULT;
     xr_settings_load(&loaded);
     CHECK(loaded.fxaa == cfg.fxaa && loaded.post_shading == 1 && loaded.merge == 0 && loaded.glow == 0 && loaded.sharpen == 2 && loaded.foveation == cfg.foveation);
+    CHECK(loaded.space_warp == 1);
+    { LgXrSettings warp = LG_XR_SETTINGS_DEFAULT; xr_settings_set(&warp, "space_warp", "on"); CHECK(warp.space_warp == 1); xr_settings_set(&warp, "space_warp", "off"); CHECK(warp.space_warp == 0);
+      xr_settings_set(&warp, "space_warp", "flat"); CHECK(warp.space_warp == 1); }   // a test build's value reads as on
     LgXrSettings parsed = LG_XR_SETTINGS_DEFAULT;
     xr_settings_set(&parsed, "fxaa", "off"); xr_settings_set(&parsed, "post_shading", "coarse"); xr_settings_set(&parsed, "merge", "off"); xr_settings_set(&parsed, "glow", "off"); xr_settings_set(&parsed, "sharpen", "high");
     CHECK(parsed.fxaa == 0 && parsed.post_shading == 1 && parsed.merge == 0 && parsed.glow == 0 && parsed.sharpen == 3);

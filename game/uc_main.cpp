@@ -544,10 +544,18 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     std::optional<uc::GameRenderer> renderer_storage; renderer_storage.emplace(options.renderer_backend);
     uc::GameRenderer& renderer=*renderer_storage;   // restart_renderer() replaces it in the same storage, so this reference stays valid
 #ifdef UC_OPENXR
+    std::atomic<uint32_t> space_warp_hz{0};   // before xr: the compositor's space warp callback writes it
+    const auto pacing_with_warp=[&options](std::optional<uint32_t> limit,uint32_t hz) { return uc::pacing_with_space_warp(limit,hz,options.game_hz,options.unlock_60fps); };
     // The headset (Quest): one OpenXR instance for the process; every renderer (restart_renderer) draws into it.
     const std::unique_ptr<uc::XrCompositor> xr=options.headless ? nullptr : uc::make_android_xr();
     if(xr) xr->set_controller_aim_enabled(!controlled);
     if(xr) std::fprintf(stderr,"[xr] headset output on\n");
+    // Space warp (the Display page): the game steps on a timer at half the display rate, which the runtime then paces; off, the frame limit
+    // chooses the step again (pacing_with_warp). The render thread calls this.
+    if(xr) xr->set_space_warp_step([&](uint32_t hz) {
+        space_warp_hz=hz;
+        if(!network) uc::game_pacing_set_mode(pacing_with_warp(options.fps_limit,hz));
+    });
 #endif
     {   // VR (headset or UC_VR_PREVIEW): the game culls to a frustum that covers the eyes (wide_view.h vr_fov_scale; UC_VR_FOV_SCALE, 1 = off)
         bool vr=!options.headless && std::getenv("UC_VR_PREVIEW") && std::string_view(std::getenv("UC_VR_PREVIEW"))=="1";
@@ -859,8 +867,14 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             }
         }
     };
+#ifdef UC_OPENXR
+    uint32_t limited_step_hz=0;   // the headset step the frame limiter last followed (frame_limit_with_step)
+#endif
     auto render_pending = [&]() -> bool {
         bool progressed = false;
+#ifdef UC_OPENXR
+        if(const uint32_t hz=space_warp_hz.load(); hz!=limited_step_hz) { limited_step_hz=hz; frame_limit.set_limit(uc::frame_limit_with_step(options.fps_limit,hz)); }
+#endif
         service_overlay();   // the refresh cadence also holds between the packets of a drained burst
         if (!pending) {
             if(scene_commands.empty() && (!packets.detached() || frame_limit.ready(true,std::chrono::steady_clock::now()))) {
@@ -1099,7 +1113,12 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         };
         targets.fps_limit=[&](std::optional<uint32_t> limit) {
             options.fps_limit=limit; frame_limit.set_limit(limit);
+#ifdef UC_OPENXR
+            frame_limit.set_limit(uc::frame_limit_with_step(limit,space_warp_hz.load()));
+            if(!network)uc::game_pacing_set_mode(pacing_with_warp(limit,space_warp_hz.load()));
+#else
             if(!network)uc::game_pacing_set_mode(uc::pacing_for_limit(limit,options.game_hz,options.unlock_60fps));
+#endif
         };
         targets.bloom=[&](const uc::BloomSettings& settings) { options.bloom=settings.enabled; options.bloom_strength=settings.strength; renderer.set_bloom(settings); };
         targets.crosshair_scale=[&](uint32_t percent) { options.crosshair_scale=percent; renderer.set_crosshair_scale(percent); };

@@ -13,6 +13,7 @@
 #include "../xr/xr_actions.h"
 #include "../xr/xr_settings.h"
 #include "xr_overlay.h"
+#include <cstdlib>
 #include <functional>
 #include "gx_transforms.h"
 #include "gl_clip.h"
@@ -107,6 +108,36 @@ public:
     int sharpen_level() const;   // the Display page's "Sharpening": 0 off .. 3 high (UC_XR_SHARPEN forces it)
     bool post_shading_coarse() const;
     bool merge_frag_uniform() const { return config_.settings.merge != 0; }
+    // Meta Application SpaceWarp (XR_FB_space_warp): the Display page's "Space warp" (UC_SPACE_WARP=0/1 forces it) on a runtime that has it.
+    // Each projection view then carries a motion vector image (NDC, RGBA16F) and a depth image at the runtime's recommended size, and the
+    // runtime synthesizes every other displayed frame: the game runs at half the display rate.
+    bool space_warp() const;
+    // The Display page's tests: "Head only" (space_warp 2): no motion pass (no motion, far depth); "No head in vectors" (3): the vectors'
+    // previous positions through this frame's eye instead of last frame's (the head's motion left out of them).
+    // "Flat depth" (4) and "Flat depth, no head" (5): the vectors, but the depth image cleared to the far plane after the motion pass
+    // (no positional reprojection: the near handrails' disocclusions).
+    // What the runtime gets (S23; the owner compared all in the headset): the vectors with the head's motion in them (Meta's sample) and
+    // the depth image at the far plane. With the real depth the runtime's positional reprojection ghosted near geometry (the handrails at
+    // ~0.3 m) whenever the head moved. Diagnostics: UC_SPACE_WARP_VECTORS=0 (no motion pass), UC_SPACE_WARP_NO_HEAD=1 (the head left out
+    // of the vectors), UC_SPACE_WARP_DEPTH=1 (the motion pass's real depth).
+    static bool env_flag(const char* name) { const char* v = std::getenv(name); return v && *v == '1'; }
+    bool space_warp_vectors() const { static const bool off = [] { const char* v = std::getenv("UC_SPACE_WARP_VECTORS"); return v && *v == '0'; }(); return !off; }
+    bool space_warp_head_in_vectors() const { static const bool no_head = env_flag("UC_SPACE_WARP_NO_HEAD"); return !no_head; }
+    bool space_warp_flat_depth() const { static const bool depth = env_flag("UC_SPACE_WARP_DEPTH"); return !depth; }
+    bool space_warp_frame() const { return warp_frame_; }   // this frame's eye array came with motion and depth images (begin_frame)
+    // The renderer's motion pass (space_warp_frame() only): this frame's motion and depth images (both eyes as layers, COLOR_ATTACHMENT /
+    // DEPTH_STENCIL_ATTACHMENT_OPTIMAL, left so). first: no pass has written them this frame (the pass clears them); later passes load.
+    // A frame without a pass gets them cleared in record() (no motion, everything at the far plane).
+    struct WarpTarget { VkImageView motion = VK_NULL_HANDLE, depth = VK_NULL_HANDLE; VkExtent2D extent{}; bool first = false; };
+    WarpTarget warp_target();
+    VkFormat warp_depth_format() const { return warp_depth_format_; }
+    // The depth images' projection this frame, in metres (the layer space's units): submitted as nearZ / farZ.
+    void set_warp_depth_range(float near_m, float far_m) { warp_near_ = near_m; warp_far_ = far_m; }
+    float warp_near() const { return warp_near_; }
+    float warp_far() const { return warp_far_; }
+    // Before attach(): told the game's step whenever space warp turns on or off or the display rate changes under it (render thread): half
+    // the display rate, or 0 for the step the frame limit chooses (uc_main: game_pacing_set_mode). Called at attach with the saved setting.
+    void set_space_warp_step(std::function<void(uint32_t game_hz)> step) { space_warp_step_ = std::move(step); }
     bool glow_on() const { return config_.settings.glow != 0; }   // vr.cfg / the panel's Glow: the renderer's bloom, read live   // vr.cfg / the panel: the eyes' scene scale, 0 = native (the eye image's rows)
     // The panel changed the render scale since the last call: the renderer applies it at its next frame (no restart).
     bool take_render_scale_change() { const bool changed = render_scale_changed_; render_scale_changed_ = false; return changed; }
@@ -120,6 +151,9 @@ private:
     void poll();
     void release();
     void create_screen_pass(const std::filesystem::path& shaders);
+    void create_space_warp(const std::vector<int64_t>& formats);
+    void record_space_warp(VkCommandBuffer command);
+    void announce_space_warp();
     XrConfig config_;
     LgXrActions actions_{};
     XrInstance instance_ = XR_NULL_HANDLE;
@@ -174,5 +208,25 @@ private:
     bool input_focused_=false,input_finished_=true,aim_world_=false;
     bool controller_aim_enabled_=true;
     VkImage overlay_depth_image_ = VK_NULL_HANDLE;
+    // Space warp: one two-layer swapchain each for the motion vectors and the depth, at warp_extent_ (XrSystemSpaceWarpPropertiesFB).
+    struct WarpSwapchain {
+        XrSwapchain swapchain = XR_NULL_HANDLE; std::vector<VkImage> images; std::vector<VkImageView> views; uint32_t index = 0;
+        void acquire(const char* what);
+        void release();
+    };
+    std::function<void(uint32_t)> space_warp_step_;
+    bool space_warp_supported_ = false, warp_frame_ = false, warp_written_ = false;
+    WarpSwapchain warp_motion_, warp_depth_;
+    VkExtent2D warp_extent_{};
+    VkFormat warp_depth_format_ = VK_FORMAT_UNDEFINED;
+    float warp_near_ = .1f, warp_far_ = 1e4f;   // metres: the depth image's projection (cleared to far: everything at the far plane)
+    // UC_CAPTURE_WARP=N (diagnostics): the Nth frame with a motion pass, its motion, depth and eye images, written as warp-capture-*.raw
+    // into the working directory after the frame (warp-capture.txt: sizes, formats, planes, eye poses).
+    struct Readback { VkBuffer buffer = VK_NULL_HANDLE; VkDeviceMemory memory = VK_NULL_HANDLE; void* mapped = nullptr; VkDeviceSize size = 0; };
+    std::array<Readback, 3> capture_{};   // motion, depth, eyes
+    VkPhysicalDevice physical_ = VK_NULL_HANDLE;
+    unsigned capture_frames_ = 0; bool capture_pending_ = false;
+    void capture_warp(VkCommandBuffer command);
+    void write_warp_capture();
 };
 }  // namespace uc

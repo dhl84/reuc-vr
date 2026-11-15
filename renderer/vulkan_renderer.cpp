@@ -8,6 +8,7 @@
 #include "xr_compositor.h"
 #endif
 #include "gl_clip.h"
+#include "space_warp.h"
 #include "late_aim.h"
 #include "texture_replacement.h"
 #include "post_effects.h"
@@ -661,10 +662,10 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
     }
     if (xform_) {   // the vertex pre-pass: its compute pipeline (own set: jobs, chunks, the draws' uniforms, palettes, banks, outputs)
         xform_vertex_module_=shader(device, shaders_ / "smoke.stereo.xform.vert.spv"); xform_compute_module_=shader(device, shaders_ / "smoke.stereo.xform.comp.spv");
-        VkDescriptorSetLayoutBinding bindings[7]{};
-        const uint32_t numbers[7]={2,3,4,6,7,8,9};
-        for (uint32_t i=0;i<7;++i) bindings[i]={numbers[i],VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
-        VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; set_info.bindingCount=7; set_info.pBindings=bindings;
+        VkDescriptorSetLayoutBinding bindings[8]{};
+        const uint32_t numbers[8]={2,3,4,6,7,8,9,10};   // 10: the space warp's previous positions (slot.xform_previous)
+        for (uint32_t i=0;i<8;++i) bindings[i]={numbers[i],VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
+        VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; set_info.bindingCount=8; set_info.pBindings=bindings;
         vk_check(vkCreateDescriptorSetLayout(device,&set_info,nullptr,&xform_set_layout_),"pre-pass descriptor layout");
         VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout_info.setLayoutCount=1; layout_info.pSetLayouts=&xform_set_layout_;
         vk_check(vkCreatePipelineLayout(device,&layout_info,nullptr,&xform_layout_),"pre-pass pipeline layout");
@@ -1011,6 +1012,8 @@ void VulkanRenderer::retire_textures(Slot& slot) {
     slot.merge_pool=VK_NULL_HANDLE; slot.merge_set=VK_NULL_HANDLE;
     if (slot.xform_pool) vkDestroyDescriptorPool(device,slot.xform_pool,nullptr);
     slot.xform_pool=VK_NULL_HANDLE; slot.xform_set=VK_NULL_HANDLE;
+    if (slot.warp_pool) vkDestroyDescriptorPool(device,slot.warp_pool,nullptr);
+    slot.warp_pool=VK_NULL_HANDLE; slot.warp_set=VK_NULL_HANDLE;
     slot.textures.clear();   // the last slot to drop a texture destroys it
     slot.copy_sources.clear();
 }
@@ -1914,7 +1917,7 @@ void VulkanRenderer::retire_images(bool keep_buffers) {
         if (!keep_buffers) {
             retire_textures(slot);
             destroy_buffer(slot.vertices); destroy_buffer(slot.indices); destroy_buffer(slot.pixels); destroy_buffer(slot.staging); destroy_buffer(slot.readback); slot.readback_target.reset(); destroy_buffer(slot.uniforms); destroy_buffer(slot.palettes); destroy_buffer(slot.banks); destroy_buffer(slot.motions); slot.mesh_refs.clear();
-            for (Buffer* buffer:{&slot.xform_jobs,&slot.xform_chunks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_indices}) destroy_buffer(*buffer);
+            for (Buffer* buffer:{&slot.xform_jobs,&slot.xform_chunks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_indices,&slot.xform_previous,&slot.warp_frame}) destroy_buffer(*buffer);
         }
         destroy_slot_images(slot);
         slot.submitted = slot.reported = slot.initialized = slot.copied = false; slot.serial = 0;
@@ -3106,6 +3109,16 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     std::vector<const gx::TextureBank*> banks;
     std::unordered_map<const gx::Transforms*,uint32_t> palette_of;   // one palette per distinct transform block
     std::vector<const gx::Transforms*> palette_blocks;
+    // The headset's space warp: per draw its motion kind and previous palette for the pre-pass (smoke.slang XformJob motionKind/prevPalette):
+    // 1 = last frame's matrices of the same draw (tracker_), 2 = no match (the motion pass applies the camera's motion), 0 = not tracked.
+    std::vector<std::array<uint32_t,2>> warp_prev(packet.draws.size(),std::array<uint32_t,2>{0,0});
+#ifdef UC_OPENXR
+    if (xr_ && display && !xr_->frame_open()) {   // this packet opens a display frame (begin_frame below): the frame's tracking
+        if (warp_track_) tracker_.end_frame();     // the last one never presented
+        warp_track_=xform_ && xr_->space_warp(); warp_eyes_.reset(); if (!warp_track_) warp_eyes_prev_.reset();
+        if (warp_track_) tracker_.begin_frame();
+    }
+#endif
     size_t vertex_count = 0, index_count = 0;   // dynamic (non-mesh) draws only
     for (const auto& draw : packet.draws) {
         if(draw.state->viewport) {
@@ -3137,6 +3150,20 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const auto [palette,inserted]=palette_of.try_emplace(draw.transforms.block().get(),uint32_t(palette_blocks.size()));
         if (inserted) palette_blocks.push_back(palette->first);
         info.palette=palette->second;
+#ifdef UC_OPENXR
+        // Space warp: depth-writing perspective draws carry last frame's matrices of the same draw (its previous palette), as the desktop's
+        // scene draws do for their vectors below.
+        if (warp_track_ && draw.transforms->projection[3][3]==0 && (info.key[68]&17)==17) {
+            const size_t d=gpu_draws.size();
+            const auto key=tracker_.key(draw);
+            if (const auto* previous=tracker_.previous(key)) {
+                const auto [prev,added]=palette_of.try_emplace(previous->transforms.get(),uint32_t(palette_blocks.size()));
+                if (added) palette_blocks.push_back(prev->first);
+                warp_prev[d]={1u,prev->second};
+            } else warp_prev[d]={2u,0u};
+            tracker_.record(key,draw.transforms.block(),true);
+        }
+#endif
         static const bool no_banks=std::getenv("UC_NO_TMI")!=nullptr;   // debug: ignore per-vertex texture matrix ids (A/B against the old behaviour)
         if (!no_banks && gx::has_texture_matrix_index(*draw.state)) {
             if (!draw.texture_bank) throw std::invalid_argument("native draw has per-vertex texture matrix indices but no texture bank");
@@ -3299,6 +3326,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             destroy_buffer(buffer); buffer=make_buffer(bytes+bytes/2,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,true);
         };
         if (uber_small) merge_map=attributes;
+        grow(slot.xform_previous,warp_track_ ? VkDeviceSize(positions)*16 : 16);   // bound to the pre-pass either way
         grow(slot.xform_positions,VkDeviceSize(positions)*32); grow(slot.xform_attributes,(VkDeviceSize(attributes)+(uber_small ? 2*VkDeviceSize(positions) : 0))*4);
         if (slot.xform_indices.size<VkDeviceSize(indices)*4) { destroy_buffer(slot.xform_indices); slot.xform_indices=make_buffer(std::max<VkDeviceSize>(indices,16)*6,VK_BUFFER_USAGE_INDEX_BUFFER_BIT,true); }
         auto* out=static_cast<uint32_t*>(slot.xform_indices.mapped);
@@ -3738,7 +3766,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // DEPTH_ATTACHMENT and motion COLOR_ATTACHMENT; *initialized false means never written (cleared on first use).
     if (!xform_draws.empty()) {   // the vertex pre-pass: every vertex of the packet's draws shaded once, before the passes that draw them
         // table: the draw's first texture-table entry, written as the last attribute word of every vertex (~0u: none)
-        struct XformJob { uint64_t vertices; uint32_t count, draw; gx::Projection rows; uint32_t palette, current, indexed, bank, positions, attributes, mask, stride, table, merge_map, pad[2]; };   // smoke.slang XformJob
+        struct XformJob { uint64_t vertices; uint32_t count, draw; gx::Projection rows; uint32_t palette, current, indexed, bank, positions, attributes, mask, stride, table, merge_map, motion_kind, prev_palette; };   // smoke.slang XformJob
         static_assert(sizeof(XformJob)==128 && offsetof(XformJob,rows)==16 && offsetof(XformJob,palette)==80 && offsetof(XformJob,table)==112 && offsetof(XformJob,merge_map)==116);
         std::vector<XformJob> jobs; std::vector<std::array<uint32_t,2>> chunks;
         const auto address=[&](const Buffer& buffer) { VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO}; info.buffer=buffer.buffer; return uint64_t(vkGetBufferDeviceAddress(device,&info)); };
@@ -3751,7 +3779,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             else { if (!inline_base) inline_base=address(slot.vertices); vertices=inline_base+uint64_t(info.first_vertex)*sizeof(gx::GpuMeshVertex); }
             for (uint32_t first=0;first<x.count;first+=64) chunks.push_back({uint32_t(jobs.size()),first});
             jobs.push_back({vertices,x.count,draw_uniform[d],packet.draws[d].transforms->projection,info.palette,info.current,info.indexed,info.bank,x.positions,x.attributes,x.word>>8,x.word&255,
-                            tex_merge_ ? (table_ok ? set_base[draw_set[d]] : 0u) : ~0u,table_ok ? merge_map : ~0u,{}});
+                            tex_merge_ ? (table_ok ? set_base[draw_set[d]] : 0u) : ~0u,table_ok ? merge_map : ~0u,warp_prev[d][0],warp_prev[d][1]});
         }
         if (!jobs.empty()) {
             const auto fill=[&](Buffer& buffer,const void* data,VkDeviceSize bytes) {
@@ -3760,20 +3788,20 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             };
             fill(slot.xform_jobs,jobs.data(),jobs.size()*sizeof(XformJob)); fill(slot.xform_chunks,chunks.data(),chunks.size()*sizeof(chunks[0]));
             if (!slot.xform_pool) {
-                const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,7};
+                const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,8};
                 VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pool.maxSets=1; pool.poolSizeCount=1; pool.pPoolSizes=&size;
                 vk_check(vkCreateDescriptorPool(device,&pool,nullptr,&slot.xform_pool),"pre-pass descriptor pool");
                 VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; allocate.descriptorPool=slot.xform_pool; allocate.descriptorSetCount=1; allocate.pSetLayouts=&xform_set_layout_;
                 vk_check(vkAllocateDescriptorSets(device,&allocate,&slot.xform_set),"pre-pass descriptor set");
             }
-            const Buffer* sources[7]={&slot.uniforms,&slot.palettes,&slot.banks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_jobs,&slot.xform_chunks};
-            const uint32_t numbers[7]={2,3,4,6,7,8,9};
-            VkDescriptorBufferInfo infos[7]; VkWriteDescriptorSet writes[7]{};
-            for (int i=0;i<7;++i) {
+            const Buffer* sources[8]={&slot.uniforms,&slot.palettes,&slot.banks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_jobs,&slot.xform_chunks,&slot.xform_previous};
+            const uint32_t numbers[8]={2,3,4,6,7,8,9,10};
+            VkDescriptorBufferInfo infos[8]; VkWriteDescriptorSet writes[8]{};
+            for (int i=0;i<8;++i) {
                 infos[i]={sources[i]->buffer,0,VK_WHOLE_SIZE};
                 writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,nullptr,slot.xform_set,numbers[i],0,1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,nullptr,&infos[i],nullptr};
             }
-            vkUpdateDescriptorSets(device,7,writes,0,nullptr);
+            vkUpdateDescriptorSets(device,8,writes,0,nullptr);
             vkCmdBindPipeline(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_pipeline_);
             vkCmdBindDescriptorSets(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_layout_,0,1,&slot.xform_set,0,nullptr);
             vkCmdDispatch(slot.command,uint32_t(chunks.size()),1,1);
@@ -3784,6 +3812,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             vkCmdPipelineBarrier2(slot.command,&dependency);
         }
     }
+    std::vector<WarpDraw> warp_draws;   // the space warp's motion pass of this packet (record_warp_pass after its EFB passes)
     struct PassTarget { VkImage color, depth; VkImageView color_view, depth_view, motion_view, gbuffer_view; VkExtent2D extent; bool* initialized; bool clear_depth=false; };   // clear_depth: a scratch depth buffer, cleared by every pass
     const PassTarget efb_target{efb_,depth_,efb_view_,depth_view_,VK_NULL_HANDLE,VK_NULL_HANDLE,efb_extent_,&efb_initialized_};
     const PassTarget scene_target{scene_color_,scene_depth_,scene_color_view_,scene_depth_view_,scene_motion_view_,scene_gbuffer_view_,scene_extent_,&scene_initialized_};
@@ -4539,6 +4568,30 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
                 stereo_view_block(matrices,block);
                 push.effects|=kEffectStereoView;
+#ifdef UC_OPENXR
+                // Space warp: the world's triangles that write depth into the eyes' EFB go to the motion pass. The frame's first one fixes
+                // the eye rows and the depth planes the pass uses for all of them (its lens: the world's).
+                if (warp_track_ && warp_prev[d][0] && !culled && target.color==efb_ && !particle_pass && draw.primitive!=0xA8 && draw.primitive!=0xB0 && draw.primitive!=0xB8) {
+                    if (!warp_eyes_) {   // the eyes' frustums with the motion pass's fixed planes (space_warp.h kWarpPlanesMetres)
+                        const auto gl=gl_from_vulkan(draw.transforms->projection);
+                        const float scale=stereo_->settings().scale > 0 ? stereo_->settings().scale : 1.f;   // game units per metre
+                        if (warp_depth_range(gl.data())) {   // a perspective lens: only its form is kept (lg_stereo_eye_projection)
+                            const WarpDepthRange range{kWarpPlanesMetres.near_plane*scale,kWarpPlanesMetres.far_plane*scale};
+                            xr::Matrix lens; warp_projection(gl.data(),range,lens.data());
+                            std::array<float,32> eyes; stereo_view_block(stereo_->transforms(lens,LG_STEREO_WORLD),eyes.data()); warp_eyes_=eyes;
+                            xr_->set_warp_depth_range(kWarpPlanesMetres.near_plane,kWarpPlanesMetres.far_plane);
+                        }
+                    }
+                    if (warp_eyes_) {   // consecutive draws of one kind are one range of the packet's rebased indices: one draw call
+                        const WarpDraw next{xform_draws[d].first,info.index_count,warp_prev[d][0],draw_viewport};
+                        const auto& last=warp_draws.empty() ? next : warp_draws.back();
+                        const bool same_view=last.viewport.x==next.viewport.x && last.viewport.y==next.viewport.y && last.viewport.width==next.viewport.width && last.viewport.height==next.viewport.height;
+                        if (!warp_draws.empty() && last.kind==next.kind && same_view && last.first+last.count==next.first) warp_draws.back().count+=next.count;
+                        else warp_draws.push_back(next);
+                        ++warp_draw_count_;
+                    }
+                }
+#endif
             }
             if (culled) continue;
             // The foveation map: the eyes' scene (world draws that are not a picture for a copy), full-screen fades over it and the 2D passes
@@ -4990,6 +5043,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     }
     else if (!scene_only && !overlay_frame && (!efb_initialized_ || scene_draws<packet.draws.size())) { record_pass(efb_target,scene_draws,packet.draws.size(),false); record_layer(glow_,2); record_layer(hud_,1); }
     if (hudless_wanted && !hudless_taken_ && packet.present) take_hudless();
+#ifdef UC_OPENXR
+    if (xr_ && packet.present && display)   // the displayed EFB rectangle, as the screen pass reads it (see xr_direct below)
+        warp_display_={float(uint64_t(display_source[0])*efb_extent_.width/640),float(uint64_t(display_source[1])*efb_extent_.height/480),
+                       float(std::max<uint64_t>(uint64_t(display_source[0])*efb_extent_.width/640+1,uint64_t(display_source[0]+display_source[2])*efb_extent_.width/640)),
+                       float(std::max<uint64_t>(uint64_t(display_source[1])*efb_extent_.height/480+1,uint64_t(display_source[1]+display_source[3])*efb_extent_.height/480))};
+    if (!warp_draws.empty() && xr_frame_ && xr_->space_warp_frame() && xr_->space_warp_vectors()) record_warp_pass(slot,warp_draws);
+#endif
     // UC_FOLD_CLEAR: no EFB pass of this packet took a waiting clear. An empty packet (no draws, copy, present or clear: one follows every
     // present in the fight) leaves the EFB alone, so the clear waits on; anything else may read or write the EFB from here on.
     if (!packet.draws.empty() || copy_target || packet.present || packet.clear_only || packet.clear_after_copy || overlay_frame) record_efb_clear(slot.command,packet.draws.empty() ? "copy or present" : "draws, no EFB pass");
@@ -5268,6 +5328,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if (packet.present && !overlay_frame) { frame_start_=true; ++frame_index_; scene_restore_copy_.reset(); dlss5_scene_.ready=false; frame_reticle_.clear(); }
     slot.serial = serial; slot.submitted = true; slot.copied=packet.present && display && (!xr_direct || capture_xr); slot.initialized |= slot.copied; slot.reported = false; last_serial_ = serial; next_slot_ = (next_slot_ + 1) % slots_.size();   // efb_initialized_/scene_initialized_ are set by the passes that wrote them
 #ifdef UC_OPENXR
+    if (warp_track_ && packet.present && display) { tracker_.end_frame(); warp_track_ = false; if (warp_eyes_) warp_eyes_prev_ = warp_eyes_; }   // the space warp's frame (its camera motion)
     if (xr_ && packet.present && display && xr_->frame_open()) { xr_->end_frame(xr_frame_); if (xr_frame_) ++presentations_; xr_frame_ = false; }
 #endif
     if (preview_ && packet.present && display && preview_frame_open_) {   // as the headset's frame ends: the frame's most-used lens sizes the screen
@@ -5315,6 +5376,127 @@ void VulkanRenderer::destroy_held_frame() {   // the device is idle or every slo
     }
     held_.extent={}; held_.valid=held_.image_ready=held_.presented=false; held_.draws.clear(); frame_reticle_.clear();
 }
+#ifdef UC_OPENXR
+// The space warp's motion pass (xr_motion.slang): this packet's depth-writing world draws into the frame's motion and depth images, from
+// the pre-pass's positions (slot.xform_positions, slot.xform_previous) through its rebased indices (slot.xform_indices). The frame's first
+// pass clears the images; later packets (other command buffers) load them.
+void VulkanRenderer::record_warp_pass(Slot& slot, const std::vector<WarpDraw>& draws) {
+    struct WarpPush { uint32_t kind, flip_y, unused[2]; };   // xr_motion.slang Push
+    struct WarpEyes { float eyes[32], previous_eyes[32], previous_camera[32]; };   // xr_motion.slang WarpEyes
+    if (!warp_pipeline_) {
+        warp_vertex_=shader(device,shaders_/"xr_motion.vert.spv"); warp_fragment_=shader(device,shaders_/"xr_motion.frag.spv");
+        VkDescriptorSetLayoutBinding bindings[3]{};
+        for (uint32_t i=0;i<3;++i) bindings[i]={i,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT,nullptr};
+        VkDescriptorSetLayoutCreateInfo set{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; set.bindingCount=3; set.pBindings=bindings;
+        vk_check(vkCreateDescriptorSetLayout(device,&set,nullptr,&warp_set_layout_),"space warp descriptor layout");
+        const VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,uint32_t(sizeof(WarpPush))};
+        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout.setLayoutCount=1; layout.pSetLayouts=&warp_set_layout_; layout.pushConstantRangeCount=1; layout.pPushConstantRanges=&range;
+        vk_check(vkCreatePipelineLayout(device,&layout,nullptr,&warp_layout_),"space warp pipeline layout");
+        const VkPipelineShaderStageCreateInfo stages[2]={{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_VERTEX_BIT,warp_vertex_,"vertexMain",nullptr},
+                                                         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_FRAGMENT_BIT,warp_fragment_,"fragmentMain",nullptr}};
+        VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO}; assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; viewport.viewportCount=viewport.scissorCount=1;
+        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        raster.polygonMode=VK_POLYGON_MODE_FILL; raster.cullMode=VK_CULL_MODE_NONE; raster.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth=1;
+        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        depth.depthTestEnable=depth.depthWriteEnable=VK_TRUE; depth.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendAttachmentState attachment{}; attachment.colorWriteMask=VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blend.attachmentCount=1; blend.pAttachments=&attachment;
+        const VkDynamicState dynamic_states[2]={VK_DYNAMIC_STATE_VIEWPORT,VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dynamic.dynamicStateCount=2; dynamic.pDynamicStates=dynamic_states;
+        const VkFormat color_format=VK_FORMAT_R16G16B16A16_SFLOAT;
+        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; rendering.viewMask=0b11;
+        rendering.colorAttachmentCount=1; rendering.pColorAttachmentFormats=&color_format; rendering.depthAttachmentFormat=xr_->warp_depth_format();
+        VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; create.pNext=&rendering; create.stageCount=2; create.pStages=stages;
+        create.pVertexInputState=&input; create.pInputAssemblyState=&assembly; create.pViewportState=&viewport; create.pRasterizationState=&raster;
+        create.pMultisampleState=&multisample; create.pDepthStencilState=&depth; create.pColorBlendState=&blend; create.pDynamicState=&dynamic; create.layout=warp_layout_;
+        vk_check(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&create,nullptr,&warp_pipeline_),"space warp pipeline");
+        std::fprintf(stderr,"[space-warp] motion pass ready (depth format %d)\n",int(xr_->warp_depth_format()));
+    }
+    if (!slot.warp_pool) {
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pool.maxSets=1; pool.poolSizeCount=1; pool.pPoolSizes=&size;
+        vk_check(vkCreateDescriptorPool(device,&pool,nullptr,&slot.warp_pool),"space warp descriptor pool");
+        VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; allocate.descriptorPool=slot.warp_pool; allocate.descriptorSetCount=1; allocate.pSetLayouts=&warp_set_layout_;
+        vk_check(vkAllocateDescriptorSets(device,&allocate,&slot.warp_set),"space warp descriptor set");
+    }
+    {   // the eye rows (this slot's copy: an earlier submission of the slot has completed). Last frame's eyes hold the head's motion in the
+        // vectors as Meta's sample does; the "No head in vectors" test uses this frame's for both.
+        WarpEyes eyes{};
+        std::copy(warp_eyes_->begin(),warp_eyes_->end(),eyes.eyes);
+        const auto& previous=xr_->space_warp_head_in_vectors() && warp_eyes_prev_ ? *warp_eyes_prev_ : *warp_eyes_;
+        std::copy(previous.begin(),previous.end(),eyes.previous_eyes);
+        const auto& camera=tracker_.view_to_prev_view();   // rows of a 3x4 (this view -> last view); last row 0 0 0 1
+        for (int e=0;e<2;++e) for (int r=0;r<4;++r) for (int c=0;c<4;++c) {
+            const float* row=eyes.previous_eyes+e*16+r*4;
+            eyes.previous_camera[e*16+r*4+c]=row[0]*camera[0][c]+row[1]*camera[1][c]+row[2]*camera[2][c]+(c==3 ? row[3] : 0.f);
+        }
+        if (slot.warp_frame.size<sizeof eyes) { destroy_buffer(slot.warp_frame); slot.warp_frame=make_buffer(sizeof eyes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
+        std::memcpy(slot.warp_frame.mapped,&eyes,sizeof eyes);
+    }
+    {   // the pre-pass's buffers may have grown since the last packet of this slot
+        const VkDescriptorBufferInfo infos[3]={{slot.xform_positions.buffer,0,VK_WHOLE_SIZE},{slot.xform_previous.buffer,0,VK_WHOLE_SIZE},{slot.warp_frame.buffer,0,VK_WHOLE_SIZE}};
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t i=0;i<3;++i) writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,nullptr,slot.warp_set,i,0,1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,nullptr,&infos[i],nullptr};
+        vkUpdateDescriptorSets(device,3,writes,0,nullptr);
+    }
+    const auto target=xr_->warp_target();
+    if (!target.first) {   // an earlier packet's pass of this frame wrote them (another submission): its writes before these loads and tests
+        VkMemoryBarrier2 written{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        written.srcStageMask=VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        written.srcAccessMask=VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        written.dstStageMask=VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        written.dstAccessMask=VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; dependency.memoryBarrierCount=1; dependency.pMemoryBarriers=&written;
+        vkCmdPipelineBarrier2(slot.command,&dependency);
+    }
+    VkRenderingAttachmentInfo motion{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}; motion.imageView=target.motion; motion.imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    motion.loadOp=target.first ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD; motion.storeOp=VK_ATTACHMENT_STORE_OP_STORE; motion.clearValue.color={{0,0,0,0}};
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}; depth.imageView=target.depth; depth.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth.loadOp=target.first ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD; depth.storeOp=VK_ATTACHMENT_STORE_OP_STORE; depth.clearValue.depthStencil={1,0};
+    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO}; rendering.renderArea.extent=target.extent; rendering.layerCount=1; rendering.viewMask=0b11;
+    rendering.colorAttachmentCount=1; rendering.pColorAttachments=&motion; rendering.pDepthAttachment=&depth;
+    vkCmdBeginRendering(slot.command,&rendering);
+    vkCmdBindPipeline(slot.command,VK_PIPELINE_BIND_POINT_GRAPHICS,warp_pipeline_);
+    vkCmdBindDescriptorSets(slot.command,VK_PIPELINE_BIND_POINT_GRAPHICS,warp_layout_,0,1,&slot.warp_set,0,nullptr);
+    const VkRect2D scissor{{0,0},target.extent};
+    vkCmdSetScissor(slot.command,0,1,&scissor);
+    // A draw's EFB viewport lands in the eye image through the displayed rectangle (stretched to the eye), so here likewise: the motion
+    // and depth images then line up with the eye picture pixel for pixel (in normalized coordinates).
+    const bool known=warp_display_[2]>warp_display_[0] && warp_display_[3]>warp_display_[1];
+    const float u0=known ? warp_display_[0] : 0, v0=known ? warp_display_[1] : 0;
+    const float sx=float(target.extent.width)/(known ? warp_display_[2]-warp_display_[0] : float(efb_extent_.width));
+    const float sy=float(target.extent.height)/(known ? warp_display_[3]-warp_display_[1] : float(efb_extent_.height));
+    const auto mapped=[&](const VkViewport& v) { return VkViewport{(v.x-u0)*sx,(v.y-v0)*sy,v.width*sx,v.height*sy,0,1}; };
+    VkViewport bound{}; bool have_bound=false;
+    vkCmdBindIndexBuffer(slot.command,slot.xform_indices.buffer,0,VK_INDEX_TYPE_UINT32);
+    static const bool flip_y=[] { const char* v=std::getenv("UC_SPACE_WARP_FLIP_Y"); return v && *v=='1'; }();
+    WarpPush push{};
+    push.kind=draws.front().kind; push.flip_y=flip_y;
+    vkCmdPushConstants(slot.command,warp_layout_,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,uint32_t(sizeof push),&push);
+    uint32_t kind=push.kind;
+    for (const auto& draw:draws) {
+        if (draw.kind!=kind) { kind=draw.kind; vkCmdPushConstants(slot.command,warp_layout_,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,uint32_t(offsetof(WarpPush,kind)),4,&kind); }
+        const VkViewport viewport=mapped(draw.viewport);
+        if (!have_bound || viewport.x!=bound.x || viewport.y!=bound.y || viewport.width!=bound.width || viewport.height!=bound.height) {
+            vkCmdSetViewport(slot.command,0,1,&viewport); bound=viewport; have_bound=true;
+        }
+        vkCmdDrawIndexed(slot.command,draw.count,1,draw.first,0,0);
+    }
+    vkCmdEndRendering(slot.command);
+    warp_call_count_+=draws.size();
+    static auto since=std::chrono::steady_clock::now();
+    if (std::chrono::steady_clock::now()-since>std::chrono::seconds(2)) {
+        const auto& v=draws.front().viewport;
+        std::fprintf(stderr,"[space-warp] 2 s: %llu world draws in %llu draw calls; near %.3f far %.1f m; EFB %ux%u, displayed %.0f,%.0f..%.0f,%.0f, a draw's viewport %.0f,%.0f %.0fx%.0f\n",
+                     (unsigned long long)warp_draw_count_,(unsigned long long)warp_call_count_,xr_->warp_near(),xr_->warp_far(),efb_extent_.width,efb_extent_.height,
+                     warp_display_[0],warp_display_[1],warp_display_[2],warp_display_[3],v.x,v.y,v.width,v.height);
+        warp_draw_count_=warp_call_count_=0; since=std::chrono::steady_clock::now();
+    }
+}
+#endif
 bool VulkanRenderer::render_overlay(uint64_t serial) {
     if (!reticle_layer_ready()) return false;
     // The overlay frames share the slot ring with the game's packets and come far more often: they leave the next two slots to the packets (a slow GPU
@@ -5395,6 +5577,12 @@ void VulkanRenderer::shutdown() {
         if (xform_layout_) vkDestroyPipelineLayout(device,xform_layout_,nullptr);
         if (xform_set_layout_) vkDestroyDescriptorSetLayout(device,xform_set_layout_,nullptr);
         xform_pipeline_=VK_NULL_HANDLE; xform_layout_=VK_NULL_HANDLE; xform_set_layout_=VK_NULL_HANDLE;
+        if (warp_pipeline_) vkDestroyPipeline(device,warp_pipeline_,nullptr);
+        if (warp_layout_) vkDestroyPipelineLayout(device,warp_layout_,nullptr);
+        if (warp_set_layout_) vkDestroyDescriptorSetLayout(device,warp_set_layout_,nullptr);
+        for (auto module:{warp_vertex_,warp_fragment_}) if (module) vkDestroyShaderModule(device,module,nullptr);
+        warp_pipeline_=VK_NULL_HANDLE; warp_layout_=VK_NULL_HANDLE; warp_set_layout_=VK_NULL_HANDLE; warp_vertex_=warp_fragment_=VK_NULL_HANDLE;
+        warp_track_=false; warp_eyes_.reset(); warp_eyes_prev_.reset();
         for (auto& [hash,module]:folded_modules_) if (module) vkDestroyShaderModule(device,module,nullptr);
         folded_modules_.clear();
         shadow_vertex_module_=VK_NULL_HANDLE;

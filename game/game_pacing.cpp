@@ -100,6 +100,14 @@ PacingMode pacing_for_limit(std::optional<uint32_t> fps_limit,uint32_t game_hz_o
     if(limit==0 || limit>60) return {unlock_60fps,limit ? std::min(limit,480u) : 480u};
     return {limit>30,0};
 }
+PacingMode pacing_with_space_warp(std::optional<uint32_t> fps_limit,uint32_t warp_hz,uint32_t game_hz_override,bool unlock_60fps) {
+    if(warp_hz && (!fps_limit || *fps_limit==0 || *fps_limit>30)) return {false,warp_hz};
+    return pacing_for_limit(fps_limit,game_hz_override,unlock_60fps);
+}
+std::optional<uint32_t> frame_limit_with_step(std::optional<uint32_t> fps_limit,uint32_t step_hz) {
+    if(step_hz && fps_limit && *fps_limit>30 && *fps_limit<step_hz) return step_hz;
+    return fps_limit;
+}
 void game_pacing_set_mode(PacingMode mode) { requested_mode=(uint64_t(1)<<63)|(uint64_t(mode.unlock_60)<<32)|mode.game_hz; }
 void game_pacing_set_network_period(uint64_t ticks) {
     if(ticks && (ticks<kTimebaseHz/120 || ticks>kTimebaseHz/20))throw std::invalid_argument("network frame period out of range");
@@ -196,7 +204,10 @@ void hle_GameFrameWait(ppc::Ctx& c) {
 // A scene sets the target (+0x34): 1 for the menus and 2 for a chapter, which then steps and presents 30 times a second.
 // The 60 Hz mode waits for one retrace whatever the target is, so the step of a chapter is 1 / 59.94 s, as in the menus. It is the mode
 // of RBUE08's option: a frame rate limit above 30 (--fps-limit, graphics.fps_limit, the settings menu), --unlock-60fps, and the default
-// of the headset (game/uc_main.cpp). A limit above 60 means 60 here: this game has no timer step.
+// of the headset (game/uc_main.cpp).
+// The timer step (a limit above 60, --game-hz, and the space warp of the headset, which steps the game at half the display rate): the
+// clock waits for a wall-clock deadline and not for a retrace, and its step is the real time since the last frame, as in
+// hle_GameFrameWait. The game takes any step: its clock is a time step, not a frame count.
 // The target itself stays as the scene set it. Four places of the game turn a step into frames with step * rate / target (8031D4D8 and
 // 8031DB3C in 8031CE54, 8032CBE4 in 8032CA94, 80337EB0 in 80337D3C): with the target 2 a 60 Hz step is half a frame for them, and what
 // they drive keeps its speed. With the target written to 1 (the test variable UC_DC_FRAME_TARGET did that) a 60 Hz step is a whole
@@ -206,18 +217,29 @@ void hle_DcFrameWait(ppc::Ctx& c) {
     constexpr uint32_t kDcClock=0x80736D10, kWaitForRetrace=0x8038E618;
     constexpr int32_t kSdaRetraces=-9640;
     const uint32_t clock=c.r[3], lr=c.lr;
-    if(const uint64_t mode=requested_mode.exchange(0)) { unlock_60fps=(mode>>32)&1; game_hz=uint32_t(mode); }   // a new frame rate limit from the settings menu
+    if(const uint64_t mode=requested_mode.exchange(0)) {   // a new frame rate limit from the settings menu, or the space warp of the headset
+        unlock_60fps=(mode>>32)&1; game_hz=uint32_t(mode);
+        deadline_ticks=last_boundary_ticks=0;
+    }
+    const bool timed=game_hz && clock==kDcClock;
     const bool fast=unlock_60fps || game_hz;
     const auto wait_start=std::chrono::steady_clock::now();
-    int32_t count, target;
-    do {
-        c.lr=0x802D8320; uc::call_indirect(c,kWaitForRetrace);
-        count=int32_t(ppc::rd32(c,c.r[13]+kSdaRetraces)); target=int32_t(ppc::rd32(c,clock+0x34));
-    } while(count<(fast ? std::min(target,1) : target));
-    const int32_t elapsed=std::min(count,4);
+    int32_t count, target=int32_t(ppc::rd32(c,clock+0x34)), elapsed;
+    float step;
+    if(timed) {
+        timed_wait();
+        step=timed_step();
+        elapsed=std::clamp(int32_t(std::lround(step*ppc::rdf32(c,clock+0x2C))),1,4);   // the retraces that this step stands for
+    } else {
+        do {
+            c.lr=0x802D8320; uc::call_indirect(c,kWaitForRetrace);
+            count=int32_t(ppc::rd32(c,c.r[13]+kSdaRetraces)); target=int32_t(ppc::rd32(c,clock+0x34));
+        } while(count<(fast ? std::min(target,1) : target));
+        elapsed=std::min(count,4);
+        step=1.0f/(ppc::rdf32(c,clock+0x2C)/float(elapsed));
+    }
     ppc::wr32(c,c.r[13]+kSdaRetraces,0);
     ppc::wr32(c,clock+0x30,uint32_t(elapsed));
-    const float step=1.0f/(ppc::rdf32(c,clock+0x2C)/float(elapsed));
     ppc::wrf32(c,clock+4,step); ppc::wrf32(c,clock+8,step);
     c.r[3]=uint32_t(elapsed); c.lr=lr;
     if(clock==kDcClock) {

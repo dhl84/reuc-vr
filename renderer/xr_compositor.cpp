@@ -98,6 +98,8 @@ XrCompositor::XrCompositor(XrConfig config, XrPlatform platform)
 #endif
         refresh_control_ = has(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
         if (refresh_control_) extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+        space_warp_supported_ = has(XR_FB_SPACE_WARP_EXTENSION_NAME);   // enabled whenever offered; the Display page decides per frame
+        if (space_warp_supported_) extensions.push_back(XR_FB_SPACE_WARP_EXTENSION_NAME);
         XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 #ifdef __ANDROID__
         XrInstanceCreateInfoAndroidKHR android{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
@@ -154,7 +156,7 @@ VkResult XrCompositor::create_device(VkPhysicalDevice physical, const VkDeviceCr
 
 void XrCompositor::attach(VkInstance instance, VkPhysicalDevice physical, VkDevice device, uint32_t family, const std::filesystem::path& shaders) {
     if (session_) throw std::logic_error("OpenXR session already attached");
-    device_ = device;
+    device_ = device; physical_ = physical;
     try {
         XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
         binding.instance = instance; binding.physicalDevice = physical; binding.device = device;
@@ -228,7 +230,7 @@ void XrCompositor::attach(VkInstance instance, VkPhysicalDevice physical, VkDevi
         // unchanged through a UNORM view of the sRGB swapchain, which the compositor then decodes once.
         render_format_ = format == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM : format == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM : format;
         swap.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | (render_format_ != format ? XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT : 0);
-        if (std::getenv("UC_CAPTURE_XR")) swap.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+        if (std::getenv("UC_CAPTURE_XR") || std::getenv("UC_CAPTURE_WARP")) swap.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
         swap.format = format; swap.sampleCount = 1; swap.width = width_; swap.height = height_; swap.faceCount = 1; swap.arraySize = 2; swap.mipCount = 1;
         xr_check(xrCreateSwapchain(session_, &swap, &swapchain_), "OpenXR stereo array swapchain");
         if (config_.require_foveation) {
@@ -254,6 +256,8 @@ void XrCompositor::attach(VkInstance instance, VkPhysicalDevice physical, VkDevi
         panel_.set_eye_size(int(width_), int(height_));
         overlay_depth_image_ = overlay_.depth_image();
         std::fprintf(stderr, "[vulkan-xr] stereo swapchain %ux%u x2, %u images, format %d rendered as %d\n", width_, height_, count, int(format), int(render_format_));
+        if (space_warp_supported_) create_space_warp(formats);
+        announce_space_warp();
     } catch (...) { detach(); throw; }
 }
 
@@ -316,6 +320,147 @@ void XrCompositor::create_screen_pass(const std::filesystem::path& shaders) {
     const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 160}, {VK_DESCRIPTOR_TYPE_SAMPLER, 32}};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pool.maxSets = 32; pool.poolSizeCount = 2; pool.pPoolSizes = sizes;
     vk(vkCreateDescriptorPool(device_, &pool, nullptr, &pool_), "descriptor pool");
+}
+
+bool XrCompositor::space_warp() const {
+    static const char* forced = std::getenv("UC_SPACE_WARP");
+    const bool wanted = forced && *forced ? *forced != '0' : config_.settings.space_warp != 0;
+    return wanted && warp_motion_.swapchain && warp_depth_.swapchain;
+}
+void XrCompositor::announce_space_warp() {
+    // The game's step: half the display rate with space warp; without it, the display rate itself at 72 Hz (the Quest 3's lowest: it has no
+    // 60, and the game's 60 into 72 refreshes repeats 12 frames a second), else the frame limit's.
+    const uint32_t refresh = uint32_t(config_.settings.refresh > 0 ? config_.settings.refresh : 90);
+    const uint32_t hz = space_warp() ? refresh / 2 : refresh <= 72 ? refresh : 0;
+    std::fprintf(stderr, "[vulkan-xr] space warp %s%s; game step %s\n", space_warp() ? (!space_warp_vectors() ? "on, head only (no vectors)" : space_warp_flat_depth() ? (space_warp_head_in_vectors() ? "on, flat depth" : "on, flat depth, no head in the vectors") : space_warp_head_in_vectors() ? "on" : "on, no head in the vectors") : "off",
+                 space_warp_supported_ ? "" : " (runtime has no XR_FB_space_warp)", hz ? std::to_string(hz).append(" Hz").c_str() : "from the frame limit");
+    if (space_warp_step_) space_warp_step_(hz);
+}
+void XrCompositor::WarpSwapchain::acquire(const char* what) {
+    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    xr_check(xrAcquireSwapchainImage(swapchain, &acquire, &index), what);
+    XrSwapchainImageWaitInfo ready{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO}; ready.timeout = XR_INFINITE_DURATION;
+    xr_check(xrWaitSwapchainImage(swapchain, &ready), what);
+}
+void XrCompositor::WarpSwapchain::release() {
+    XrSwapchainImageReleaseInfo info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    xr_check(xrReleaseSwapchainImage(swapchain, &info), "release OpenXR space warp image");
+}
+// The motion vectors (RGBA16F: NDC xy, z) and the depth, both eyes as array layers, at the runtime's recommended size (Meta's XrSpaceWarp
+// sample: a quarter of the eye in each direction). The images arrive from xrWaitSwapchainImage in COLOR_ATTACHMENT_OPTIMAL and
+// DEPTH_STENCIL_ATTACHMENT_OPTIMAL and go back in them (XR_KHR_vulkan_enable2).
+void XrCompositor::create_space_warp(const std::vector<int64_t>& formats) {
+    XrSystemSpaceWarpPropertiesFB warp{XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB};
+    XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES}; properties.next = &warp;
+    xr_check(xrGetSystemProperties(instance_, system_, &properties), "OpenXR space warp properties");
+    const auto has = [&](VkFormat f) { return std::find(formats.begin(), formats.end(), int64_t(f)) != formats.end(); };
+    for (auto f : {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM}) if (has(f)) { warp_depth_format_ = f; break; }
+    if (!warp.recommendedMotionVectorImageRectWidth || !warp.recommendedMotionVectorImageRectHeight || !has(VK_FORMAT_R16G16B16A16_SFLOAT)
+        || warp_depth_format_ == VK_FORMAT_UNDEFINED) {
+        std::fprintf(stderr, "[vulkan-xr] space warp unavailable: motion %ux%u, RGBA16F %d, depth format %d\n", warp.recommendedMotionVectorImageRectWidth,
+                     warp.recommendedMotionVectorImageRectHeight, int(has(VK_FORMAT_R16G16B16A16_SFLOAT)), int(warp_depth_format_));
+        return;
+    }
+    warp_extent_ = {warp.recommendedMotionVectorImageRectWidth, warp.recommendedMotionVectorImageRectHeight};
+    const auto make = [&](WarpSwapchain& target, VkFormat format, XrSwapchainUsageFlags usage, VkImageAspectFlags aspect, const char* what) {
+        XrSwapchainCreateInfo swap{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        swap.usageFlags = usage | (std::getenv("UC_CAPTURE_WARP") ? XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT : 0); swap.format = format; swap.sampleCount = 1; swap.width = warp_extent_.width; swap.height = warp_extent_.height;
+        swap.faceCount = 1; swap.arraySize = 2; swap.mipCount = 1;
+        xr_check(xrCreateSwapchain(session_, &swap, &target.swapchain), what);
+        uint32_t count = 0; xr_check(xrEnumerateSwapchainImages(target.swapchain, 0, &count, nullptr), what);
+        std::vector<XrSwapchainImageVulkanKHR> images(count, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+        xr_check(xrEnumerateSwapchainImages(target.swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())), what);
+        for (const auto& image : images) {
+            target.images.push_back(image.image);
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; view.image = image.image;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; view.format = format; view.subresourceRange = {aspect, 0, 1, 0, 2};
+            VkImageView created = VK_NULL_HANDLE; vk(vkCreateImageView(device_, &view, nullptr, &created), what);
+            target.views.push_back(created);
+        }
+    };
+    // SAMPLED as well: the runtime reads both (the spec's XrCompositionLayerSpaceWarpInfoFB asks for it on the depth swapchain).
+    make(warp_motion_, VK_FORMAT_R16G16B16A16_SFLOAT, XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+         "OpenXR space warp motion swapchain");
+    make(warp_depth_, warp_depth_format_, XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+         "OpenXR space warp depth swapchain");
+    std::fprintf(stderr, "[vulkan-xr] space warp swapchains %ux%u x2 (motion RGBA16F, depth format %d)\n", warp_extent_.width, warp_extent_.height, int(warp_depth_format_));
+}
+// The space warp images of this frame: motion 0 (nothing moves) and depth at the far plane, so the runtime reprojects by the head's pose alone.
+void XrCompositor::record_space_warp(VkCommandBuffer command) {
+    VkRenderingAttachmentInfo motion{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}; motion.imageView = warp_motion_.views.at(warp_motion_.index);
+    motion.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; motion.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; motion.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    motion.clearValue.color = {{0, 0, 0, 0}};
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}; depth.imageView = warp_depth_.views.at(warp_depth_.index);
+    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL; depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.clearValue.depthStencil = {1, 0};
+    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO}; rendering.renderArea.extent = warp_extent_; rendering.layerCount = 1; rendering.viewMask = 0b11;
+    rendering.colorAttachmentCount = 1; rendering.pColorAttachments = &motion; rendering.pDepthAttachment = &depth;
+    vkCmdBeginRendering(command, &rendering);
+    vkCmdEndRendering(command);
+}
+// UC_CAPTURE_WARP: this frame's motion, depth and eye images into host buffers (written by write_warp_capture after the frame).
+void XrCompositor::capture_warp(VkCommandBuffer command) {
+    const uint32_t depth_bytes = warp_depth_format_ == VK_FORMAT_D16_UNORM ? 2 : 4;
+    struct Source { VkImage image; VkExtent2D extent; uint32_t bytes; VkImageAspectFlags aspect; VkImageLayout layout; VkPipelineStageFlags2 stage; VkAccessFlags2 access; };
+    const Source sources[3] = {
+        {warp_motion_.images.at(warp_motion_.index), warp_extent_, 8, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT},
+        {warp_depth_.images.at(warp_depth_.index), warp_extent_, depth_bytes, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+         VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT},
+        {images_.at(image_), {width_, height_}, 4, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT}};
+    VkPhysicalDeviceMemoryProperties memory{}; vkGetPhysicalDeviceMemoryProperties(physical_, &memory);
+    for (int i = 0; i < 3; ++i) {
+        const auto& s = sources[i]; auto& r = capture_[i];
+        r.size = VkDeviceSize(s.extent.width) * s.extent.height * 2 * s.bytes;
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; info.size = r.size; info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        vk(vkCreateBuffer(device_, &info, nullptr, &r.buffer), "capture buffer");
+        VkMemoryRequirements need; vkGetBufferMemoryRequirements(device_, r.buffer, &need);
+        uint32_t type = 0;
+        for (; type < memory.memoryTypeCount; ++type)
+            if ((need.memoryTypeBits & (1u << type)) && (memory.memoryTypes[type].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) break;
+        if (type == memory.memoryTypeCount) throw std::runtime_error("capture: no host-visible memory");
+        VkMemoryAllocateInfo allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; allocate.allocationSize = need.size; allocate.memoryTypeIndex = type;
+        vk(vkAllocateMemory(device_, &allocate, nullptr, &r.memory), "capture memory");
+        vk(vkBindBufferMemory(device_, r.buffer, r.memory, 0), "capture bind");
+        vk(vkMapMemory(device_, r.memory, 0, r.size, 0, &r.mapped), "capture map");
+        const auto transition = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst, VkAccessFlags2 dst_access) {
+            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            b.srcStageMask = src; b.srcAccessMask = src_access; b.dstStageMask = dst; b.dstAccessMask = dst_access; b.oldLayout = from; b.newLayout = to;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; b.image = s.image; b.subresourceRange = {s.aspect, 0, 1, 0, 2};
+            VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; d.imageMemoryBarrierCount = 1; d.pImageMemoryBarriers = &b; vkCmdPipelineBarrier2(command, &d);
+        };
+        transition(s.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{}; copy.imageSubresource = {s.aspect, 0, 0, 2}; copy.imageExtent = {s.extent.width, s.extent.height, 1};
+        vkCmdCopyImageToBuffer(command, s.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, r.buffer, 1, &copy);
+        transition(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, s.stage, s.access);
+    }
+    capture_pending_ = true;
+    std::fprintf(stderr, "[space-warp] capture recorded (frame %u with a motion pass)\n", capture_frames_);
+}
+void XrCompositor::write_warp_capture() {
+    const std::string tag = std::to_string(capture_frames_);   // two frames in a row: warp-capture-<frame>-*.raw
+    const std::string names[3] = {"warp-capture-" + tag + "-motion.raw", "warp-capture-" + tag + "-depth.raw", "warp-capture-" + tag + "-eyes.raw"};
+    for (int i = 0; i < 3; ++i) {
+        std::ofstream file(names[i], std::ios::binary); file.write(static_cast<const char*>(capture_[i].mapped), std::streamsize(capture_[i].size));
+        vkUnmapMemory(device_, capture_[i].memory); vkDestroyBuffer(device_, capture_[i].buffer, nullptr); vkFreeMemory(device_, capture_[i].memory, nullptr);
+        capture_[i] = {};
+    }
+    std::ofstream info("warp-capture-" + tag + ".txt");
+    info << "motion " << warp_extent_.width << "x" << warp_extent_.height << " x2 RGBA16F\ndepth " << warp_extent_.width << "x" << warp_extent_.height
+         << " x2 format " << int(warp_depth_format_) << "\neyes " << width_ << "x" << height_ << " x2 format " << int(render_format_)
+         << "\nnear " << warp_near_ << " far " << warp_far_ << "\n";
+    for (const auto& v : views_)
+        info << "eye pose " << v.pose.position.x << " " << v.pose.position.y << " " << v.pose.position.z << " q " << v.pose.orientation.x << " " << v.pose.orientation.y << " "
+             << v.pose.orientation.z << " " << v.pose.orientation.w << " fov " << v.fov.angleLeft << " " << v.fov.angleRight << " " << v.fov.angleUp << " " << v.fov.angleDown << "\n";
+    std::fprintf(stderr, "[space-warp] capture written: warp-capture-*.raw\n");
+}
+XrCompositor::WarpTarget XrCompositor::warp_target() {
+    if (!warp_frame_) throw std::logic_error("XR: space warp images outside a space warp frame");
+    WarpTarget target{warp_motion_.views.at(warp_motion_.index), warp_depth_.views.at(warp_depth_.index), warp_extent_, !warp_written_};
+    warp_written_ = true;
+    return target;
 }
 
 void XrCompositor::poll() {
@@ -471,6 +616,8 @@ bool XrCompositor::begin_frame() {
     XrSwapchainImageWaitInfo ready{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO}; ready.timeout = XR_INFINITE_DURATION;
     const auto t2 = std::chrono::steady_clock::now();
     xr_check(xrWaitSwapchainImage(swapchain_, &ready), "wait OpenXR eye array");
+    warp_frame_ = space_warp(); warp_written_ = false;   // fixed for the frame: a panel change applies from the next one
+    if (warp_frame_) { warp_motion_.acquire("acquire OpenXR space warp motion"); warp_depth_.acquire("acquire OpenXR space warp depth"); }
     xr_time(2, t2, std::chrono::steady_clock::now());
     return true;
 }
@@ -532,6 +679,7 @@ void XrCompositor::finish_input() {
     if (effects & XP_SCALE_CHANGED) render_scale_changed_ = true;
     if (effects & XP_RECENTER) recenter();
     if ((effects & XP_RESTART) && config_.restart) config_.restart();
+    if (effects & (XP_SPACE_WARP_CHANGED | XP_RATE_CHANGED)) announce_space_warp();   // the game's step follows (half the display rate, or the limit's)
     const auto& haptics = panel_.haptics();
     for (int h = 0; h < 2; ++h) if (haptics[h].milliseconds) rumble(h, haptics[h].amplitude, haptics[h].milliseconds);
     // The game's own vibration (WPADControlMotor: shots, hits, prompts): each player's motor on that player's gun hand. The game's taps are a frame
@@ -665,6 +813,25 @@ void XrCompositor::record(VkCommandBuffer command, VkImage picture, VkImageView 
     vkCmdDraw(command, 6, 1, 0, 0);
     overlay_.draw(command, scene_.overlay_matrices(), scene_.overlay_eyes(), panel_.guns(), panel_.draws());
     vkCmdEndRendering(command);
+    if (warp_frame_ && !warp_written_) record_space_warp(command);   // no motion pass this frame (menus, no world): no motion, far depth
+    else if (warp_frame_) {
+        if (space_warp_flat_depth()) {   // the "Flat depth" tests: the motion pass's depth replaced by the far plane (vectors kept)
+            VkMemoryBarrier2 written{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            written.srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT; written.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            written.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            written.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; dependency.memoryBarrierCount = 1; dependency.pMemoryBarriers = &written;
+            vkCmdPipelineBarrier2(command, &dependency);
+            VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}; depth.imageView = warp_depth_.views.at(warp_depth_.index);
+            depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL; depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            depth.clearValue.depthStencil = {1, 0};
+            VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO}; rendering.renderArea.extent = warp_extent_; rendering.layerCount = 1; rendering.viewMask = 0b11;
+            rendering.pDepthAttachment = &depth;
+            vkCmdBeginRendering(command, &rendering); vkCmdEndRendering(command);
+        }
+        static const unsigned capture_at = [] { const char* v = std::getenv("UC_CAPTURE_WARP"); return v ? unsigned(std::strtoul(v, nullptr, 10)) : 0u; }();
+        if (capture_at && (++capture_frames_ == capture_at || capture_frames_ == capture_at + 1)) capture_warp(command);   // two in a row
+    }
     barrier(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layout, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
             transfer_picture ? VK_PIPELINE_STAGE_2_TRANSFER_BIT : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             transfer_picture ? VK_ACCESS_2_TRANSFER_READ_BIT : VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -701,10 +868,23 @@ void XrCompositor::end_frame(bool rendered) {
     if (!frame_open_) return;
     if (rendered && !acquired_) throw std::logic_error("OpenXR frame has no acquired eye image");
     if (acquired_) { XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO}; xr_check(xrReleaseSwapchainImage(swapchain_, &release), "release OpenXR eye array"); acquired_ = false; }
+    const bool warp = warp_frame_;
+    if (warp) { warp_motion_.release(); warp_depth_.release(); warp_frame_ = false; }
     std::array<XrCompositionLayerProjectionView, 2> views{{{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}}};
+    std::array<XrCompositionLayerSpaceWarpInfoFB, 2> warps{{{XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}, {XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}}};
     for (unsigned i = 0; i < 2; ++i) {
         views[i].pose = views_[i].pose; views[i].fov = views_[i].fov;
         views[i].subImage.swapchain = swapchain_; views[i].subImage.imageRect.extent = {int32_t(width_), int32_t(height_)}; views[i].subImage.imageArrayIndex = i;
+        if (!warp) continue;
+        // The vectors hold the scene's own motion in the layer's space (the game's camera and actors); the runtime adds the head's.
+        auto& w = warps[i];
+        w.motionVectorSubImage.swapchain = warp_motion_.swapchain; w.motionVectorSubImage.imageArrayIndex = i;
+        w.motionVectorSubImage.imageRect.extent = {int32_t(warp_extent_.width), int32_t(warp_extent_.height)};
+        w.depthSubImage.swapchain = warp_depth_.swapchain; w.depthSubImage.imageArrayIndex = i;
+        w.depthSubImage.imageRect.extent = w.motionVectorSubImage.imageRect.extent;
+        w.appSpaceDeltaPose.orientation.w = 1;   // the layer's space (space_) does not move between frames
+        w.minDepth = 0; w.maxDepth = 1; w.nearZ = warp_near_; w.farZ = warp_far_;
+        views[i].next = &w;
     }
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION}; projection.space = space_; projection.viewCount = 2; projection.views = views.data();
     const auto layer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
@@ -713,6 +893,7 @@ void XrCompositor::end_frame(bool rendered) {
     const auto t3 = std::chrono::steady_clock::now();
     xr_check(xrEndFrame(session_, &end), "submit OpenXR frame"); frame_open_ = false;
     xr_time(3, t3, std::chrono::steady_clock::now());
+    if (capture_pending_) { vkDeviceWaitIdle(device_); write_warp_capture(); capture_pending_ = false; }   // diagnostics: one stalled frame
     if (lens_seen_) { scene_.finish_frame(); lens_seen_ = false; }   // HOTD4: the frame's most-used lens sizes the screen
 }
 
@@ -752,6 +933,7 @@ void XrCompositor::detach() {
     if (device_) {
         overlay_.shutdown();
         for (auto view : views_array_) vkDestroyImageView(device_, view, nullptr);
+        for (auto* target : {&warp_motion_, &warp_depth_}) for (auto view : target->views) vkDestroyImageView(device_, view, nullptr);
         if (pool_) vkDestroyDescriptorPool(device_, pool_, nullptr);
         for (auto pipeline : pipelines_) if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
         if (layout_) vkDestroyPipelineLayout(device_, layout_, nullptr);
@@ -764,6 +946,8 @@ void XrCompositor::detach() {
     pool_ = VK_NULL_HANDLE; for (auto& p : pipelines_) p = VK_NULL_HANDLE; layout_ = VK_NULL_HANDLE; set_layout_ = VK_NULL_HANDLE; sampler_ = VK_NULL_HANDLE; vertex_ = fragment_ = VK_NULL_HANDLE;
     if (profile_ && destroy_profile_) destroy_profile_(profile_); profile_ = XR_NULL_HANDLE;
     if (swapchain_) xrDestroySwapchain(swapchain_); swapchain_ = XR_NULL_HANDLE;
+    for (auto* target : {&warp_motion_, &warp_depth_}) { if (target->swapchain) xrDestroySwapchain(target->swapchain); *target = WarpSwapchain{}; }
+    warp_frame_ = false; warp_extent_ = {}; warp_depth_format_ = VK_FORMAT_UNDEFINED;
     if (space_) xrDestroySpace(space_); space_ = XR_NULL_HANDLE;
     if (base_space_) xrDestroySpace(base_space_); base_space_ = XR_NULL_HANDLE;
     lg_xr_actions_destroy(&actions_);

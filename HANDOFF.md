@@ -1,4 +1,24 @@
-# Latest: mesh muzzle alignment, clean reset, expanded scales verified
+# Latest: Application SpaceWarp — accepted in the headset; owner set to 120 Hz, render scale 2.25
+
+Updated 2026-11-12. Branch `worktree-appsw` (from `main` f280916). Details and numbers: [S23](docs/spikes/S23-quest-spacewarp.md).
+
+- Display page **Space warp** (vr.cfg `space_warp`, default **off**; `UC_SPACE_WARP=1` forces it for harness runs). On: `XR_FB_space_warp`
+  with motion vectors and depth from a motion pass over the pre-pass's positions; the game steps on a 45 Hz timer.
+- Live fight, native eyes, same APK: off 46-54/90 with 36-46 stale refreshes a second (GPU 99%); on 45/90, 0 stale, 22.2 ms frames,
+  motion pass ~free after merging draws (55k world draws per 2 s in ~4k calls).
+- Owner verdict (2026-11-12): real depth ghosted on head movement; vectors + flat depth are clean, now what On sends. Vectors verified
+  from captures (UC_CAPTURE_WARP). At 120 Hz only render scale 2.25 holds 60 (0 stale, GPU 85%); 2.5 dips; native 41-46. See S23.
+- Display preset rows (choosing one saves and restarts the game): 90 Hz SW native / 120 Hz SW 2.25x / 72 Hz no SW 2.25x (game at 72; the Quest 3 has no 60 Hz). See S23 "Display presets".
+- The game step is half the display rate (60 at 120 Hz). The owner's vr.cfg was set to refresh 120, render_scale 2.25, space_warp on.
+- Diagnostics: `UC_SPACE_WARP_VECTORS=0` (head pose only), `UC_SPACE_WARP_NO_HEAD=1`, `UC_SPACE_WARP_DEPTH=1` (real depth),
+  `UC_SPACE_WARP_FLIP_Y=1`, `UC_CAPTURE_WARP=N` (frames N, N+1 to warp-capture-*.raw), the `[space-warp]` stats line.
+- Open: default is still off; not merged to `main`.
+- Test builds were installed as versionName `0.1.5-appsw`, versionCode 105 (equal to the owner's release so either installs over the
+  other). The owner's previous APK is kept at `~/workspace/reuc-gpu-efficiency/appsw/pre-appsw-installed.apk` (SHA-256 0038f2f5...).
+
+---
+
+# Earlier: mesh muzzle alignment, clean reset, expanded scales verified
 
 Updated 2026-11-04 21:29 UTC. The owner accepted audio and requested a commit.
 The accepted baseline is committed as `78e6c57`; this follow-up keeps that audio
