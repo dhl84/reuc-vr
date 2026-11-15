@@ -187,6 +187,46 @@ void hle_GameFrameWait(ppc::Ctx& c) {
         adjusted+=change;
     }
 }
+#if defined(UC_TITLE_DC)
+// The Darkside Chronicles (SBDE08): the frame wait of the game's clock (802D8308; the clock is the object at 80736D10), called once at
+// the end of a frame (8029A4DC). It is the counterpart of hle_GameFrameWait. The game's code is
+//     do VIWaitForRetrace(); while (retraces < clock->target);       retraces: the word at r13 - 9640, the retrace callback 802D8484 counts it
+//     clock->elapsed = min(retraces, 4); retraces = 0;                +0x30
+//     clock->step = clock->raw_step = 1 / (clock->rate / elapsed);    +4 and +8; the rate (+0x2C) is 59.94
+// A scene sets the target (+0x34): 1 for the menus and 2 for a chapter, which then steps and presents 30 times a second.
+// The 60 Hz mode waits for one retrace whatever the target is, so the step of a chapter is 1 / 59.94 s, as in the menus. It is the mode
+// of RBUE08's option: a frame rate limit above 30 (--fps-limit, graphics.fps_limit, the settings menu), --unlock-60fps, and the default
+// of the headset (game/uc_main.cpp). A limit above 60 means 60 here: this game has no timer step.
+// The target itself stays as the scene set it. Four places of the game turn a step into frames with step * rate / target (8031D4D8 and
+// 8031DB3C in 8031CE54, 8032CBE4 in 8032CA94, 80337EB0 in 80337D3C): with the target 2 a 60 Hz step is half a frame for them, and what
+// they drive keeps its speed. With the target written to 1 (the test variable UC_DC_FRAME_TARGET did that) a 60 Hz step is a whole
+// frame there, twice the speed. The other readers: the reset of the clock at the start of a frame (80299FFC in 80299F54) sets the
+// step of the next frame to target / rate, and 802CB8CC saves the target, sets 1 and puts it back later (802CBE90).
+void hle_DcFrameWait(ppc::Ctx& c) {
+    constexpr uint32_t kDcClock=0x80736D10, kWaitForRetrace=0x8038E618;
+    constexpr int32_t kSdaRetraces=-9640;
+    const uint32_t clock=c.r[3], lr=c.lr;
+    if(const uint64_t mode=requested_mode.exchange(0)) { unlock_60fps=(mode>>32)&1; game_hz=uint32_t(mode); }   // a new frame rate limit from the settings menu
+    const bool fast=unlock_60fps || game_hz;
+    const auto wait_start=std::chrono::steady_clock::now();
+    int32_t count, target;
+    do {
+        c.lr=0x802D8320; uc::call_indirect(c,kWaitForRetrace);
+        count=int32_t(ppc::rd32(c,c.r[13]+kSdaRetraces)); target=int32_t(ppc::rd32(c,clock+0x34));
+    } while(count<(fast ? std::min(target,1) : target));
+    const int32_t elapsed=std::min(count,4);
+    ppc::wr32(c,c.r[13]+kSdaRetraces,0);
+    ppc::wr32(c,clock+0x30,uint32_t(elapsed));
+    const float step=1.0f/(ppc::rdf32(c,clock+0x2C)/float(elapsed));
+    ppc::wrf32(c,clock+4,step); ppc::wrf32(c,clock+8,step);
+    c.r[3]=uint32_t(elapsed); c.lr=lr;
+    if(clock==kDcClock) {
+        wait_ns+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-wait_start).count());
+        ++calls; retraces+=uint64_t(elapsed); threshold_two+=target==2; adjusted+=fast && target>1;
+        if(std::isfinite(step) && step>0) timestep_ns+=uint64_t(std::llround(double(step)*1e9));
+    }
+}
+#endif
 // Animated models already return elapsed time here; scaling again slows AI relative to animation. Only enforce the host pause.
 void hle_ActorStepTime(ppc::Ctx& c) {
     const auto stack=c.r[1];

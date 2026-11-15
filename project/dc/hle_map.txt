@@ -398,3 +398,4 @@
 
 # --- Manual entries that the reference map does not have (hle_manual.txt)
 @8037CF94 OSTryLockMutex  # manual
+@802D8308 DcFrameWait  # manual

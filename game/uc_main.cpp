@@ -502,12 +502,8 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         static const char* sample_flag = std::getenv("UC_CPU_SAMPLE_FLAG"); static const char* sample_from = std::getenv("UC_CPU_SAMPLE_RETRACE");
         if (sample_flag && sample_from && retraces == std::strtoull(sample_from, nullptr, 10)) { if (std::FILE* f = std::fopen(sample_flag, "w")) std::fclose(f); }   // starts the CPU sampler (cpu_sampler.cpp) at this retrace
 #if defined(UC_TITLE_DC)
-        // Measurement aids for the frame pacing of this game (docs/darkside-port.md). Its clock is the object at 80736D10: the frame wait at 802D8308
-        // waits until the retrace count of the clock reaches the word at +0x34 (1 in the menus, 2 in a chapter) and makes the time step from it.
-        // UC_DC_FRAME_TARGET=1 keeps that word at 1, so the game runs its 60 Hz step in a chapter too (an experiment, off by default).
-        // UC_WRITE_TRAP=<report>|<addresses> (game/write_trap.h) arms here when <report>.go exists: this game has no frame wait native that arms it.
-        static const char* frame_target = std::getenv("UC_DC_FRAME_TARGET");
-        if (frame_target && frame_target[0] == '1') { uint8_t* word = boot.mem + (0x80736D44u & 0x3FFFFFFFu); if (word[0] == 0 && word[1] == 0 && word[2] == 0 && word[3] == 2) word[3] = 1; }
+        // UC_WRITE_TRAP=<report>|<addresses> (game/write_trap.h) arms here when <report>.go exists. The frame pacing of this game is in
+        // hle_DcFrameWait (game/game_pacing.cpp).
         static const bool write_trap = std::getenv("UC_WRITE_TRAP") != nullptr;
         if (write_trap) uc::write_trap_step(sched.irq_ctx());
 #endif

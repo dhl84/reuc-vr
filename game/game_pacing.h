@@ -34,6 +34,9 @@ void pacing_apply_record(ppc::Ctx& c, const PacingFix& fix, uint32_t frame);   /
 #undef PACING_ENTRY
 #undef PACING_FIX
 void hle_GameFrameWait(ppc::Ctx& c);
+#if defined(UC_TITLE_DC)
+void hle_DcFrameWait(ppc::Ctx& c);   // SBDE08: the frame wait 802D8308 (project/dc/hle_manual.txt)
+#endif
 void hle_ActorStepTime(ppc::Ctx& c);
 void hle_FixedPlaybackStep(ppc::Ctx& c);
 void hle_HudNameDelay(ppc::Ctx& c);

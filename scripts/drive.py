@@ -12,6 +12,9 @@ A STEP is one of:
   shot[:NAME]       save the current frame as a PNG in <folder>
   state             print the input frame counter and the retrace counter
   draws             print every draw of the current frame
+  trace:NAME,N[,EVERY]   write the draws of N frames, one every EVERY retraces (default 2), to <folder>/NAME.jsonl: one line for each frame with
+                    the retrace count and, for each draw, its call site, vertex count, texture and screen box (-1 to 1); the boxes of
+                    the same draws over the retraces show how the camera and the models move
   peek:ADDR,SIZE    print SIZE bytes of guest memory at hexadecimal ADDR
   peekptr:ADDR,OFFSET,SIZE   read the pointer at ADDR, then print SIZE bytes at pointer + OFFSET
   waitlog:TEXT[,N]  wait until TEXT appears in the game log after the place of the last waitlog or until step (at most N retraces, default 20000)
@@ -201,6 +204,18 @@ def main():
                     box = d.get("bbox", [0, 0, 0, 0])
                     pct = [round((v + 1) * 50) for v in box]
                     print("  pass %s site %s vertices %s tex %s box x %d..%d y %d..%d" % (d.get("pass"), d.get("callsite"), d.get("vertices"), d.get("tex"), pct[0], pct[2], pct[1], pct[3]), flush=True)
+            elif kind == "trace":
+                parts = value.split(",")
+                count, every = int(parts[1]), int(parts[2]) if len(parts) > 2 else 2
+                with open(game.out / (parts[0] + ".jsonl"), "w") as f:
+                    for _ in range(count):
+                        start = game.retraces()
+                        draws = game.command("draws", timeout=60.0).get("draws", [])
+                        rows = [[d.get("pass"), d.get("callsite"), d.get("vertices"), d.get("tex"), d.get("bbox")] for d in draws]
+                        f.write(json.dumps(dict(retraces=game.retraces(), draws=rows)) + "\n")
+                        while game.proc.poll() is None and game.retraces() - start < every:
+                            time.sleep(0.002)
+                print("trace %s: %d frames to retrace %d" % (parts[0], count, game.retraces()), flush=True)
             elif kind == "waitlog":
                 text, _, limit = value.partition(",")
                 found = wait_log(game, text, int(limit or 20000))
