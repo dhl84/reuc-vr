@@ -35,7 +35,10 @@ struct TextureLevel {
 };
 // luma_intensity: an EFB copy to GX_TF_I8 (the brightness of the colour in every channel). The Vulkan renderer reads the green
 // channel for it, which is an approximation of the Y of the hardware copy; the DirectX renderers do not support it yet.
-enum class TextureChannels:uint8_t { rgba,alpha_intensity,rgb565,luma_intensity };
+// depth_far: an EFB copy to GX_TF_Z16 (SBDE08, common/title.h kDepthCopyAsFar). The Vulkan renderer gives 1 in every channel, which
+// is the farthest depth; the DirectX renderers do not support it.
+// red_intensity: an EFB copy to GX_CTF_R8 (the red of the colour in every channel; SBDE08). Vulkan renderer only.
+enum class TextureChannels:uint8_t { rgba,alpha_intensity,rgb565,luma_intensity,depth_far,red_intensity };
 // A background decode in flight: `done` is set (release) after the worker wrote TexturePixels::levels or stored the error.
 struct TextureJob {
     std::mutex mutex; std::condition_variable ready; std::atomic<bool> done{false}; std::exception_ptr error;

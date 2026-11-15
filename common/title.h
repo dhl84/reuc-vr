@@ -34,6 +34,17 @@ inline constexpr char kSaveHome[] = "/title/00010000/53424445/data";
 inline constexpr int32_t kSdaAxCallback = -8116, kSdaAxVoiceCount = -8004, kSdaAxVoiceBase = -8016;   // 4, 12 and 12 votes
 inline constexpr uint32_t kAxSyncPbs = 0x803963BC;         // same code as RBUE08 80275F34
 inline constexpr uint32_t kAxServiceCallbacks = 0x80393AE4; // called from the same place as RBUE08 80273688; its body differs: not verified
+// End of the MEM1 arena. A console's start code puts the file table of the disc at the top of MEM1 and the arena ends there:
+// (0x817FFFFF - maximum table size) rounded down to 32. boot.bin gives 0x9F35 words at 0x42C: 0x817D8320 (its word at 0x430 is this
+// address minus 0x01400000). The game gives all of MEM1 to one frame heap and fills it when it loads a chapter: with 0x81700000 the
+// heap was full while the first chapter loaded (an allocation of 4224 bytes at 8011DB24 failed with 428 bytes left).
+inline constexpr uint32_t kMem1ArenaHi = 0x817D8320;
+// The game copies a 512x512 part of the frame buffer of the console (640x528) to a GX_TF_Z16 texture for its shadows (8033B9B8).
+// The native renderers have a 640x480 colour buffer and no depth copies: a copy takes the lines that exist (stretched to its
+// texture), and the depth texture reads as the farthest depth in every texel (gx::TextureChannels::depth_far), so the game draws
+// no shadow. An approximation.
+inline constexpr uint32_t kEfbCopyLines = 528;
+inline constexpr bool kDepthCopyAsFar = true;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
@@ -54,6 +65,9 @@ inline constexpr const char* kTitleDir = "/title/00010000/52425545";          //
 inline constexpr char kSaveHome[] = "/title/00010000/52425545/data";
 inline constexpr int32_t kSdaAxCallback = -25636, kSdaAxVoiceCount = -25524, kSdaAxVoiceBase = -25536;
 inline constexpr uint32_t kAxSyncPbs = 0x80275F34, kAxServiceCallbacks = 0x80273688;
+inline constexpr uint32_t kMem1ArenaHi = 0x81700000;
+inline constexpr uint32_t kEfbCopyLines = 480;
+inline constexpr bool kDepthCopyAsFar = false;
 #endif
 }  // namespace uc::title
 

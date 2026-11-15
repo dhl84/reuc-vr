@@ -58,5 +58,7 @@ struct MeshSetup {
 };
 MeshSetup import_mesh_setup(std::span<const std::byte> bytes);
 size_t tev_material_size(uint32_t stages);
-TevMaterial import_tev_material(uint32_t stages,std::span<const std::byte> bytes);
+// selector_masks: when given, a stage pair may write only a part of its constant selectors (the mask command before the selector
+// word; NW4R of 2008 in SBDE08 does so), and the mask of each pair is stored there. Without it every pair must write all of them.
+TevMaterial import_tev_material(uint32_t stages,std::span<const std::byte> bytes,std::array<uint32_t,8>* selector_masks=nullptr);
 }

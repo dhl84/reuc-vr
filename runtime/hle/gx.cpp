@@ -711,10 +711,13 @@ std::shared_ptr<const PaletteData> load_palette(const PaletteSource& source) {
     return std::make_shared<const PaletteData>(PaletteData{source.format,{bytes.begin(),bytes.end()}});
 }
 gx::TextureCache texture_cache;
+// The GX texture format with the size of an EFB copy of that copy format (0x27 GX_CTF_A8, 0x28 GX_CTF_R8, 0x13 GX_TF_Z16: two bytes for each texel).
+gx::TextureFormat copy_storage_format(uint32_t format) { return (format==0x27 || format==0x28) ? gx::TextureFormat::i8 : format==0x13 ? gx::TextureFormat::ia8 : gx::TextureFormat(format); }
 std::shared_ptr<const gx::TexturePixels> make_copy_texture(uint32_t address,uint32_t width,uint32_t height,uint32_t format) {
-    memory.read(address,gx::encoded_texture_size({width,height,format==0x27 ? gx::TextureFormat::i8 : gx::TextureFormat(format),1}));
+    memory.read(address,gx::encoded_texture_size({width,height,copy_storage_format(format),1}));
     auto target=std::make_shared<gx::TexturePixels>(); target->gpu_only=true; target->guest_address=address&0x3FFFFFFF;
-    target->channels=format==0x27 ? gx::TextureChannels::alpha_intensity : format==1 ? gx::TextureChannels::luma_intensity : format==4 ? gx::TextureChannels::rgb565 : gx::TextureChannels::rgba;
+    target->channels=format==0x27 ? gx::TextureChannels::alpha_intensity : format==1 ? gx::TextureChannels::luma_intensity : format==4 ? gx::TextureChannels::rgb565 :
+        format==0x13 ? gx::TextureChannels::depth_far : format==0x28 ? gx::TextureChannels::red_intensity : gx::TextureChannels::rgba;
     for(;;) {
         target->levels.push_back({width,height,{}});
         if(width==1 && height==1) break;
@@ -727,7 +730,8 @@ std::shared_ptr<const gx::TexturePixels> snapshot_texture(const std::optional<Te
     if(auto found=versions.find(source->address&0x3FFFFFFF);found!=versions.end() && found->second) {
         const auto& level=found->second->levels[0];
         const auto channels=found->second->channels;
-        const auto expected=(channels==gx::TextureChannels::alpha_intensity || channels==gx::TextureChannels::luma_intensity) ? gx::TextureFormat::i8 : channels==gx::TextureChannels::rgb565 ? gx::TextureFormat::rgb565 : gx::TextureFormat::rgba8;
+        const auto expected=(channels==gx::TextureChannels::alpha_intensity || channels==gx::TextureChannels::luma_intensity || channels==gx::TextureChannels::red_intensity) ? gx::TextureFormat::i8 : channels==gx::TextureChannels::rgb565 ? gx::TextureFormat::rgb565 :
+            channels==gx::TextureChannels::depth_far ? gx::TextureFormat::ia8 : gx::TextureFormat::rgba8;
         if(source->desc.format!=expected || source->palette || source->desc.width>level.width || source->desc.height>level.height) {
             std::fprintf(stderr,"[efb-view-invalid] address %08X view %ux%u format %u palette %u copy %ux%u channels %u\n",source->address,source->desc.width,source->desc.height,unsigned(source->desc.format),unsigned(bool(source->palette)),level.width,level.height,unsigned(channels));
             throw std::invalid_argument("unsupported native EFB texture view");
@@ -1813,26 +1817,28 @@ void hle_GXCopyDisp(ppc::Ctx& c) {
 void hle_GXSetTexCopySrc(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80285334),c); finish_primitive();
     const auto x=c.r[3],y=c.r[4],width=c.r[5],height=c.r[6],sdk=read32(c.r[2]+UC_SDA2(-8968));
-    if(!width || !height || x>=640 || width>640-x || y>=480 || height>480-y) throw std::invalid_argument("invalid native EFB texture source rectangle");
+    // The game may name lines below the 480 of the native colour buffer (common/title.h kEfbCopyLines): the native copy takes the lines that exist.
+    if(!width || !height || x>=640 || width>640-x || y>=480 || height>uc::title::kEfbCopyLines-y) throw std::invalid_argument("invalid native EFB texture source rectangle");
     memory.read(sdk+0x240,8);
-    texture_copy_source={x,y,width,height};
+    texture_copy_source={x,y,width,std::min(height,480-y)};
     ppc::wr32(c,sdk+0x240,0x49000000u|x|y<<10);
     ppc::wr32(c,sdk+0x244,0x4A000000u|(width-1)|(height-1)<<10);
 }
 void hle_GXSetTexCopyDst(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80285398),c); finish_primitive();
     const auto width=c.r[3],height=c.r[4],format=c.r[5],half=c.r[6],sdk=read32(c.r[2]+UC_SDA2(-8968));
-    if(!width || !height || width>1024 || height>1024 || (format!=1 && format!=4 && format!=6 && format!=0x27) || half>1) {   // 1 = GX_TF_I8 (SBDE08 copies the brightness)
+    const bool depth=uc::title::kDepthCopyAsFar && format==0x13;   // GX_TF_Z16 (SBDE08 copies the depth of its shadow casters)
+    if(!width || !height || width>1024 || height>1024 || (format!=1 && format!=4 && format!=6 && format!=0x27 && format!=0x28 && !depth) || half>1) {   // 1 = GX_TF_I8 (SBDE08 copies the brightness), 0x28 = GX_CTF_R8 (SBDE08 shadows)
         std::fprintf(stderr,"[efb-destination-invalid] %ux%u format %08X half %u caller %08X\n",width,height,format,half,c.lr);
         throw std::invalid_argument("unsupported native EFB texture destination");
     }
     memory.read(sdk+0x248,9);
     // Original SDK tile stride in32byte units: RGBA8=4x4/64; RGB565=4x4/32; A8 and I8=8x4/32.
-    const auto stride=(format==0x27 || format==1) ? (width+7)/8 : ((width+3)/4)*(format==6 ? 2 : 1);
-    const auto copy_type=format==0x27 ? 0x70u : format<<4;
+    const auto stride=(format==0x27 || format==0x28 || format==1) ? (width+7)/8 : ((width+3)/4)*(format==6 ? 2 : 1);
+    const auto copy_type=format==0x27 ? 0x70u : format==0x28 ? 0x08u : depth ? 0x38u : format<<4;   // the SDK turns GX_TF_Z16 into copy format 0xB: bit 3, and 3 in bits 4 to 6
     ppc::wr32(c,sdk+0x248,0x4D000000u|stride);
     ppc::wr32(c,sdk+0x24C,(read32(sdk+0x24C)&~0x18278u)|0x10000u|half<<9|copy_type);
-    ppc::wr8(c,sdk+0x250,0);
+    ppc::wr8(c,sdk+0x250,depth ? 1 : 0);   // the SDK's flag of a depth copy
     texture_copy_width=width; texture_copy_height=height;
     texture_copy_format=format;
 }
@@ -1840,7 +1846,7 @@ void hle_GXCopyTex(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80285974),c); finish_primitive();
     const auto address=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if((address&31) || c.r[4]>1 || !texture_copy_source[2] || !texture_copy_width || !texture_copy_height) throw std::invalid_argument("invalid native EFB texture copy request");
-    memory.read(address,gx::encoded_texture_size({texture_copy_width,texture_copy_height,texture_copy_format==0x27 ? gx::TextureFormat::i8 : gx::TextureFormat(texture_copy_format),1}));
+    memory.read(address,gx::encoded_texture_size({texture_copy_width,texture_copy_height,copy_storage_format(texture_copy_format),1}));
     memory.read(sdk,0x254);
     const auto control=(read32(sdk+0x24C)&~0xFF004800u)|0x52000000u|c.r[4]<<11;
     if(profile_mesh) back([clear=c.r[4],source=texture_copy_source,width=texture_copy_width,height=texture_copy_height,blend=read32(sdk+0x220),depth=read32(sdk+0x228)] {
@@ -1904,7 +1910,8 @@ void hle_ResTevApply(ppc::Ctx& c) {
     const auto count=std::to_integer<uint8_t>(memory.read(object+12,1)[0]);
     const auto bytes=memory.read(object+32,gx::tev_material_size(count));
     gx::TevMaterial parsed;
-    try { parsed=gx::import_tev_material(count,bytes); }
+    std::array<uint32_t,8> selector_masks{};
+    try { parsed=gx::import_tev_material(count,bytes,&selector_masks); }
     catch(const std::invalid_argument&) {
         std::fprintf(stderr,"[native-tev-invalid] object %08X stages %u prefix",object,count);
         for(auto byte:bytes) std::fprintf(stderr," %02X",std::to_integer<unsigned>(byte));
@@ -1931,8 +1938,9 @@ void hle_ResTevApply(ppc::Ctx& c) {
         ppc::wr32(c,sdk+0x1C0+i*4,(0xC1+i*2)<<24|stage.alpha);
         const auto at=sdk+0x150+i/2*4,shift=(i%2)*12;
         ppc::wr32(c,at,(read32(at)&~(0xFFFu<<shift))|(stage.order<<shift));
-        const auto selector=sdk+0x200+i/2*4,bits=4+(i%2)*10;
-        ppc::wr32(c,selector,(read32(selector)&~(1023u<<bits))|(stage.konst<<bits));
+        // A masked write as the hardware does it: the selector bits outside the mask keep their value (SBDE08 materials write a part).
+        const auto selector=sdk+0x200+i/2*4,bits=4+(i%2)*10,written=(selector_masks[i/2]>>bits)&1023u;
+        ppc::wr32(c,selector,(read32(selector)&~(written<<bits))|((stage.konst&written)<<bits));
     }
 }
 void hle_ResColorApply(ppc::Ctx& c) {

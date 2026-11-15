@@ -66,7 +66,7 @@ size_t tev_material_size(uint32_t stages) {
     if (!stages || stages>16) throw std::invalid_argument("invalid native TEV stage count");
     return 96+(((stages+1)/2*48+31)/32)*32;
 }
-TevMaterial import_tev_material(uint32_t stages,std::span<const std::byte> bytes) {
+TevMaterial import_tev_material(uint32_t stages,std::span<const std::byte> bytes,std::array<uint32_t,8>* selector_masks) {
     if (bytes.size()!=tev_material_size(stages)) throw std::invalid_argument("invalid native TEV asset size");
     auto field=[&](size_t at,uint8_t tag) {
         if (bytes[at]!=std::byte(0x61) || bytes[at+1]!=std::byte(tag)) throw std::invalid_argument("invalid native TEV asset field tag at "+std::to_string(at)+", expected "+std::to_string(tag)+", actual "+std::to_string(std::to_integer<uint8_t>(bytes[at+1])));
@@ -81,7 +81,9 @@ TevMaterial import_tev_material(uint32_t stages,std::span<const std::byte> bytes
     result.indirect_order=field(80,0x27); padding(85,96);
     for(uint32_t pair=0;pair<(stages+1)/2;++pair) {
         const auto at=96+pair*48;
-        if(field(at,0xFE)!=0xFFFFF0) throw std::invalid_argument("invalid native TEV selector mask");
+        const auto mask=field(at,0xFE);   // the bits of the selector word that the display list writes; never the swap bits (0 to 3)
+        if(selector_masks ? (mask&15)!=0 : mask!=0xFFFFF0) throw std::invalid_argument("invalid native TEV selector mask");
+        if(selector_masks) (*selector_masks)[pair]=mask;
         const auto konst=field(at+5,uint8_t(0xF6+pair));
         const auto order=field(at+10,uint8_t(0x28+pair));
         for(uint32_t lane=0;lane<2;++lane) {

@@ -422,6 +422,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     std::memcpy(hdr, boot_bin.data(), std::min<size_t>(32, boot_bin.size()));
     uc::LowMemInfo info;
     info.arena_lo = uc::arena_lo_after_bss(dol.image.bss_address, dol.image.bss_size);
+    info.arena_hi = uc::title::kMem1ArenaHi;   // the interrupt stack (0x817EFF00, below) lies above it
     uc::init_lowmem(boot, hdr, info);
 
     map_hardware();
