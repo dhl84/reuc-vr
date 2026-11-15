@@ -3,6 +3,7 @@
 #include "fastmem.h"
 #include "guest_mem.h"
 #include "trace.h"
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +35,9 @@ void set_exit_hook(void (*fn)()) { g_hook = fn; }
 #endif
 }
 
+static std::atomic<void (*)()> crash_hook{nullptr};
+void set_crash_hook(void (*fn)()) { crash_hook.store(fn); }
+
 // A fault in the guest's 4 GiB range: the guest address (cached alias) for the first 1 GiB, the RAM blocks.
 static void print_guest_address(uintptr_t host) {
     if (!guest_mem_base()) return;
@@ -43,6 +47,7 @@ static void print_guest_address(uintptr_t host) {
 
 #ifdef _WIN32
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
+    if (const auto hook = crash_hook.load()) hook();
     const EXCEPTION_RECORD* r = ep->ExceptionRecord;
     char reason[256];
     std::snprintf(reason, sizeof reason, "host exception %08lX at %p%s %p", r->ExceptionCode, r->ExceptionAddress,
@@ -71,6 +76,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
 // writes the report must reach crash_report_write, which holds it until that report is done (as the Windows filter does). A fault
 // inside the handler still ends the process: the signal stays blocked while its handler runs (no SA_NODEFER).
 static void crash_signal(int signal, siginfo_t* info, void* context) {
+    if (const auto hook = crash_hook.load()) hook();
     const uintptr_t pc = host_context_pc(context);
     const bool access = signal == SIGSEGV || signal == SIGBUS;
     char reason[256];

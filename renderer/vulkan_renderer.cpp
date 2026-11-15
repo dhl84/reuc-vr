@@ -1130,7 +1130,8 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
         return choice;
     }
     // Neither pipeline exists yet: compile synchronously (the ubershader in uber-only mode, else the specialized one) and queue the ubershader for later misses.
-    const bool uber=uber_only_;
+    bool uber=uber_only_;
+    if (compile_guard_.bad(uber ? fixed : key,uber) && !compile_guard_.bad(uber ? key : fixed,!uber)) uber=!uber;   // its compile crashed the driver before: the other form of the draw
     const PipelineKey& wanted=uber ? fixed : key;
     const auto start=std::chrono::steady_clock::now();
     auto pipeline=make_pipeline(wanted,uber);
@@ -1479,7 +1480,10 @@ VkPipeline VulkanRenderer::make_pipeline(const PipelineKey& key,bool uber) {
         create.pColorBlendState = &blending; create.pDynamicState = &dynamic; create.layout = merge ? merge_layout_ : table ? table_layout_ : layout_;
         create.pDepthStencilState=&depth;
         if (fovea_supported_) create.flags|=VK_PIPELINE_CREATE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;   // EFB passes may bind the foveation map
-        vk_check(vkCreateGraphicsPipelines(device, pipeline_cache_, 1, &create, nullptr, &pipeline), "graphics pipeline");
+        const int journal=compile_guard_.begin(key,uber);   // a crash of the driver in this compile is found at the next start (compile_guard.h)
+        const VkResult made=vkCreateGraphicsPipelines(device, pipeline_cache_, 1, &create, nullptr, &pipeline);
+        compile_guard_.end(journal);
+        vk_check(made, "graphics pipeline");
     }
     return pipeline;
 }
@@ -1494,6 +1498,9 @@ void VulkanRenderer::load_pipeline_cache() {
     vk_check(vkCreatePipelineCache(device,&info,nullptr,&pipeline_cache_),"pipeline cache");   // the driver ignores data from another driver or version
     pipeline_cache_loaded_=data.size();
     std::fprintf(stderr,"[pipeline] disk cache bytes=%zu\n",data.size());
+    if (const size_t bad=compile_guard_.open(cache_dir_))
+        std::fprintf(stderr,"[pipeline] %zu pipelines are not compiled: the graphics driver crashed in their compile (%zu found in the last run)\n",bad,compile_guard_.new_bad());
+    g_compile_guard.store(&compile_guard_);
     for (const char* name:{"pipeline_keys.seed","pipeline_keys.quest","pipeline_keys.bin"})   // .quest: the headset's own keys (stereo builds ship it)
         for (const auto& recorded:load_pipeline_keys(cache_dir_/name))
             if (auto key=logic_ops_ ? static_key(recorded) : without_logic_op(static_key(recorded)); valid_pipeline_key(key,logic_ops_)) {
@@ -1537,7 +1544,7 @@ void VulkanRenderer::compile_worker() {
         if (compile_stop_) return;
         const CompileJob job=compile_queue_.front(); compile_queue_.pop_front();
         auto& target=job.uber ? uber_pipelines_ : pipelines_;
-        if (target.count(job.key)) { ++jobs_done_; continue; }
+        if (target.count(job.key) || compile_guard_.bad(job.key,job.uber)) { ++jobs_done_; continue; }   // bad: its compile crashed the driver before
         ++compiling_;
         lock.unlock();
         VkPipeline pipeline=VK_NULL_HANDLE;
@@ -5367,6 +5374,8 @@ void VulkanRenderer::shutdown() {
         for (auto [key,pipeline]:uber_pipelines_) vkDestroyPipeline(device,pipeline,nullptr);
         pipelines_.clear(); uber_pipelines_.clear(); last_pipeline_=VK_NULL_HANDLE; last_table_pipeline_=VK_NULL_HANDLE; last_merge_pipeline_[0]=last_merge_pipeline_[1]=last_merge_pipeline_[2]=VK_NULL_HANDLE;
         if (pipeline_cache_) { save_pipeline_cache(); vkDestroyPipelineCache(device,pipeline_cache_,nullptr); pipeline_cache_=VK_NULL_HANDLE; }
+        if (g_compile_guard.load()==&compile_guard_) g_compile_guard.store(nullptr);
+        compile_guard_.close();
         if (shadow_pipeline_) vkDestroyPipeline(device,shadow_pipeline_,nullptr);
         shadow_pipeline_=VK_NULL_HANDLE; shadow_map_.shutdown();
         for (auto module:{vertex_module_,nobank_vertex_module_,fragment_module_,early_module_,uber_module_,shadow_vertex_module_,xform_vertex_module_,xform_compute_module_}) if (module) vkDestroyShaderModule(device,module,nullptr);

@@ -75,6 +75,7 @@
 #include "startup_error.h"
 #include "audio_gap_audit.h"
 #include "game_renderer.h"
+#include "compile_guard.h"
 #include "host_keys.h"
 #include "launch.h"
 #include "live_settings.h"
@@ -359,6 +360,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     uc::trace_set_retrace_clock([]() -> uint64_t { return uc::vi_stats().retraces; });
     uc::gx_gap_audit_enable(options.gx_gaps);
     uc::install_crash_handlers();
+    uc::set_crash_hook(uc::compile_guard_crashed);   // a driver crash inside a pipeline compile marks that pipeline (renderer/compile_guard.h)
     uc::set_exit_hook(print_stats);
     uc::crash_report_init(kPublicRelease ? fs::path() : (uc::diagnostic_directory().empty() ? exe_dir()/"logs" : uc::diagnostic_directory())/"crashes", [] {   // an empty directory writes no report
         const auto vi = uc::vi_stats(); const auto d = uc::dvd_stats(); const auto gx = uc::gx_stats(); const auto sound = uc::audio_stats();

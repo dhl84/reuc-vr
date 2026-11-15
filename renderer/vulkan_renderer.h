@@ -6,6 +6,7 @@
 #include "hdr_pass.h"
 #include "hud_layer.h"
 #include "pipeline_keys.h"
+#include "compile_guard.h"
 #include "uber_merge.h"
 #include "prompt_overlay.h"
 #include "menu_overlay.h"
@@ -561,6 +562,7 @@ private:
     bool uber_only_ = false;
     VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
     size_t pipeline_cache_loaded_ = 0;
+    CompileGuard compile_guard_;   // pipelines whose compile crashed the driver in an earlier run are never compiled again (compile_guard.h)
     bool probe_fragment_ = false;   // UC_PROBE_FS (diagnostics): no folded TEV modules
     // The headset's vertex pre-pass (smoke.slang xformMain): each packet's vertices are shaded once by a compute dispatch, the draws read
     // the results (smoke.stereo.xform.vert.spv). Needs bufferDeviceAddress (the jobs point at the mesh slabs); UC_NO_XFORM=1 turns it off.
