@@ -23,9 +23,9 @@ A STEP is one of:
   waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
-  bot:N[,EVERY[,TEXT]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A+B, WAVE, A;
+  bot:N[,EVERY[,TEXT]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A, A+B, WAVE, A;
                     these pass most quick-time prompts of The Darkside Chronicles ("Press the A Button!", "Wave the Wii Remote!"), reload,
-                    and take a choice of ways (the A presses are at the right and at the left of the screen); with TEXT the step ends
+                    and take a choice of ways and the prompt Move (the A presses are at the right, in the middle and at the left of the screen); with TEXT the step ends
                     after the round of 35 points in which TEXT appears in the game log (searched from the last waitlog, until or bot match)
   watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]   read the pointer at ADDR, then print the SIZE bytes at pointer + OFFSET each time they change, for
                     N retraces (4 bytes also as a float), and each new line of the game log that holds one of the TEXTs; for example the
@@ -308,7 +308,7 @@ def main():
                 parts = value.split(",")
                 count, every = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 2)
                 points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
-                extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
+                extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A", 3, (0.01, 0.01)), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
                 stop, found, done = parts[2] if len(parts) > 2 else None, False, 0
                 while game.proc.poll() is None and done < count:
                     if stop and log_has(game, stop):
