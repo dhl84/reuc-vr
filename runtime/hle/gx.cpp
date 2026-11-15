@@ -1097,10 +1097,18 @@ void live_begin(const SdkRef& block,uint8_t primitive,uint8_t vat,uint16_t count
     gx::share(live_transforms,transforms);
     live_blend=blend_state;
 }
+// GX_POINTS: the native renderers have no point primitive, so a title may drop such a draw (common/title.h kDropPointDraws).
+bool dropped_point_draw(const gx::DrawPacket& draw) {
+    if(!uc::title::kDropPointDraws || draw.primitive!=0xB8) return false;
+    static uint64_t dropped=0;
+    if(!dropped++) std::fprintf(stderr,"[gx] GX_POINTS draws are not drawn: the first one is from call site %08X%c",draw.callsite,10);
+    return true;
+}
 void live_end(uint32_t who,std::span<const std::byte> bytes) {
     capture->write_attribute(who,bytes);
     auto draw = capture->take_draw(); add_guest_stat(vertex_count,capture->vertex_count()); add_guest_stat(draw_count,1);
     if(replaying)return;
+    if(dropped_point_draw(draw)) return;
     draw.transforms=live_transforms;
     draw.texture=live_texture;
     draw.material=live_material; draw.uniforms=live_uniforms; draw.texture_bank=texture_bank(*draw.state,texture_matrices);
@@ -1627,7 +1635,7 @@ void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,
     catch(...) { list_readbacks.clear(); throw; }
     list_readbacks.clear();
     for (auto& item : imported) {
-        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); draws.push_back(std::move(*draw)); }
+        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); if(!dropped_point_draw(*draw)) draws.push_back(std::move(*draw)); }
         else {
             auto& command=std::get<CopiedTexture>(item); copy_state=command.clear_state;
             submit_batch(inputs,false,command.clear,0,std::move(command.request));
@@ -1943,7 +1951,7 @@ void hle_GXSetBlendMode(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80288274),c); matrix_boundary(UC_ADDR(0x80288274));
     if (c.r[3]>3 || c.r[4]>7 || c.r[5]>7 || c.r[6]>15) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x80288274),3,c.r[3]);
     const auto sdk=read32(c.r[2]+UC_SDA2(-8968)),mode=c.r[3];
-    const auto word=(read32(sdk+0x220)&~0xF7E3u)|(mode&1)|(mode==2 ? 2u : 0u)|(mode==3 ? 0x800u : 0u)|(c.r[4]<<8)|(c.r[5]<<5)|(c.r[6]<<12);
+    const auto word=(read32(sdk+0x220)&~uc::title::kBlendModeBits)|(mode&1)|(mode==2 ? 2u : 0u)|(mode==3 ? 0x800u : 0u)|(c.r[4]<<8)|(c.r[5]<<5)|(c.r[6]<<12);   // common/title.h
     publish_blend(c,sdk,word);
 }
 void hle_GXSetColorUpdate(ppc::Ctx& c) {

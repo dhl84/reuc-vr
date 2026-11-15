@@ -81,6 +81,17 @@ inline constexpr uint32_t kSmallTextureTexels = 64;
 // does, and 700 frames of it filled the cache (1 GB) and kept their GPU images. When this number of older versions of one texture
 // (same address, size, format and palette) is in the cache, a new version drops them. 0: no limit.
 inline constexpr uint32_t kTextureVersionLimit = 2;
+// GXSetBlendMode of the SDK writes the subtract bit (bit 11 of the blend word) at every call: it is set for GX_BM_SUBTRACT and cleared for
+// every other mode (803A7F98: rlwimi r9,r0,6,20,20). These are the bits that the native (runtime/hle/gx.cpp) replaces. With 0xF7E3 the
+// bit stayed set after the first subtract draw, and every later draw that set its blend through this function took the destination
+// minus the source: the glow of the chapter and character pieces under the pointer was a dark square, and the effect sprites of the
+// menus and of the chapters were dark.
+inline constexpr uint32_t kBlendModeBits = 0xFFE3;
+// The effect library of the game draws one kind of particle as GX_POINTS, one point for each GXBegin (call site 804A1D10, after
+// GXSetPointSize at 804A1CC0). The native renderers have no point primitive: a point draw stopped the game with "unsupported native
+// draw topology" in the sixth chapter of "Memories of a Lost City". Such a draw is dropped now (runtime/hle/gx.cpp live_end), so
+// these particles are missing from the picture. false: the draw goes to the renderer, which stops.
+inline constexpr bool kDropPointDraws = true;
 // The health of a player (the "LEON" bar of the HUD) is the float at +0x974 of the player object: 50 is full, 0 is dead. Its setter
 // (800AC7EC) holds it between 0 and 50, a hit takes its damage away (800ACA74), a herb adds (800AC86C). The player manager is the
 // object at 80736378 (its getter is 80046EFC). It keeps a handle of two words for each of the two players at +0xAC: an id and an
@@ -122,6 +133,11 @@ inline constexpr bool kDepthCopyAsFar = false;
 inline constexpr uint32_t kEfbCopyReadbackTexels = 0;
 inline constexpr uint32_t kSmallTextureTexels = 0;
 inline constexpr uint32_t kTextureVersionLimit = 0;
+// The bits of the blend word that the native GXSetBlendMode replaces. The SDK code of RBUE08 (80288274) is the same as that of SBDE08
+// and also writes the subtract bit (0x800) at every call, so 0xFFE3 would be right here too. The value is kept until a scene of
+// RBUE08 with a subtract draw is checked: a change here changes its picture.
+inline constexpr uint32_t kBlendModeBits = 0xF7E3;
+inline constexpr bool kDropPointDraws = false;
 #endif
 }  // namespace uc::title
 
