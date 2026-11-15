@@ -1,3 +1,4 @@
+#include "title.h"
 #include "game_input.h"
 #include "hooks.h"
 #include "input_api.h"
@@ -154,6 +155,10 @@ InputSample game_input_buttons(InputContext context,const ActionFrame& frame) {
 static InputSample game_input_sample_unfiltered(const ppc::Ctx& c,const InputSample& raw) {
     if(!input)return raw;
     const auto state=input_probe_snapshot(c);
+    if(!uc::title::kNativeActionMap) {   // SBDE08: no game state is known yet, so the Wii Remote sample goes to the game as it is
+        if(player==0)test_state_publish(state,uint8_t(InputContext::menu));   // the test server answers an input command from this
+        return raw;
+    }
     const auto context=game_input_context(state,player);
     if(player==0) {
         test_state_publish(state,uint8_t(context));

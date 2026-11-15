@@ -42,11 +42,12 @@ int main(int argc, char** argv) {
         if (a == "--dol") dol_path = next();
         else if (a == "--cfg") cfg_path = next();
         else if (a == "--names") load_names(next());
+        else if (a == "--jump-targets") cmd = a;   // every target of every jump table the analyzer found, one hex address per line
         else if (a == "--disasm" || a == "--callers" || a == "--callees" || a == "--find-string") {
             cmd = a; arg = next();
             if (cmd == "--disasm" && i + 1 < argc && argv[i + 1][0] != '-') count = std::atoi(argv[++i]);
         } else {
-            std::fprintf(stderr, "usage: xref --dol <f> [--cfg <f>] [--names <f>]... (--disasm <addr> [n] | --callers <x> | --callees <x> | --find-string <text>)\n");
+            std::fprintf(stderr, "usage: xref --dol <f> [--cfg <f>] [--names <f>]... (--disasm <addr> [n] | --callers <x> | --callees <x> | --find-string <text> | --jump-targets)\n");
             return 2;
         }
     }
@@ -68,6 +69,12 @@ int main(int argc, char** argv) {
         return std::string(b) + (n.empty() || n[0] == '+' ? "" : " <" + n + ">");
     };
 
+    if (cmd == "--jump-targets") {
+        std::set<uint32_t> targets;
+        for (const auto& table : an.jump_tables) for (uint32_t t : table.targets) targets.insert(t);
+        for (uint32_t t : targets) std::printf("%08X\n", t);
+        return 0;
+    }
     if (cmd == "--disasm") {
         uint32_t a = 0;
         if (!resolve(arg, a)) { std::fprintf(stderr, "unknown address or name '%s'\n", arg.c_str()); return 1; }

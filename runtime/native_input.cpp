@@ -1,3 +1,4 @@
+#include "title.h"
 #include "native_input.h"
 #include "gx_vertices.h"
 #include "gx_audit.h"
@@ -592,11 +593,13 @@ void input_hle_restore_channel(unsigned channel) {
 }
 }
 void hle_KPADRead(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802F21EC,c);
-    const auto channel=c.r[3],buffer=c.r[4],count=c.r[5]; c.r[3]=0;
+    uc::gx_audit_enter(UC_ADDR(0x802F21EC),c);
+    const auto channel=c.r[3],buffer=c.r[4],count=c.r[5],error=uc::title::kKpadReadError ? c.r[6] : 0u; c.r[3]=0;
+    constexpr uint32_t size=uc::title::kKpadStatusSize;   // one KPADStatus; the fields this function writes are at the same offsets in both SDKs
+    if (error) ppc::wr32(c,error,uint32_t(-2));   // KPAD_READ_ERR_NO_CONTROLLER until a sample is written
     auto* source=channel==0 ? input : channel==1 ? second_input : nullptr;
     if (!source || !count || count>16) return;
-    try { check(c,buffer,132); } catch (const gx::Error&) { return; }
+    try { check(c,buffer,size); } catch (const gx::Error&) { return; }
     sampled_channel=channel;
     if(channel==0 && input_poll)input_poll(c);
     auto sample=source->consume();
@@ -604,8 +607,8 @@ void hle_KPADRead(ppc::Ctx& c) {
 #if defined(UC_TRACE) || defined(__ANDROID__)   // Quest: pairs with xr_android.cpp's [xr-input] lines (only on presses: a few lines a minute)
     if (sample.pressed) std::fprintf(stderr,"[input] pressed %08X held %08X aim %.3f %.3f\n",sample.pressed,sample.held,sample.x,sample.y);
 #endif
-    std::memset(c.mem+(buffer&0x3FFFFFFF),0,132);
-    gx::note_write_range(buffer,132);
+    std::memset(c.mem+(buffer&0x3FFFFFFF),0,size);
+    gx::note_write_range(buffer,size);
     ppc::wr32(c,buffer,sample.held); ppc::wr32(c,buffer+4,sample.pressed); ppc::wr32(c,buffer+8,sample.released);
     ppc::wrf32(c,buffer+0x20,sample.x); ppc::wrf32(c,buffer+0x24,sample.y);
     ppc::wrf32(c,buffer+0x28,sample.dx); ppc::wrf32(c,buffer+0x2C,sample.dy);
@@ -618,6 +621,7 @@ void hle_KPADRead(ppc::Ctx& c) {
     ppc::wrf32(c,buffer+0x60,sample.stick_x); ppc::wrf32(c,buffer+0x64,sample.stick_y);
     ppc::wrf32(c,buffer+0x6C,-1); ppc::wrf32(c,buffer+0x74,1); // Neutral Nunchuk gravity.
     c.r[3]=1;
+    if (error) ppc::wr32(c,error,0);   // KPAD_READ_ERR_NONE
     if(channel==0 && input_probe) input_probe(c,sample);
 }
 // WPADControlMotor(chan, command): command 1 starts the remote's motor, 0 and 2 (the SDK's stop and hard stop) stop it. The headset plays it on the

@@ -11,6 +11,13 @@ inline constexpr const char* kDiscId = "SBDE08";
 inline constexpr const char* kName = "Resident Evil: The Darkside Chronicles";
 inline constexpr const char* kProjectDir = "project/dc";   // symbol lists of a build tree (game/uc_main.cpp)
 inline constexpr bool kActiveThreadQueue = true;           // the native thread calls keep __OSActiveThreadQueue (runtime/hle/os_thread.cpp)
+// KPAD of the 2009 SDK: a KPADStatus is 176 bytes (mulli r6,r22,176 at 80412124; 132 in RBUE08), and the read entry that the game
+// calls (80411E60) takes a pointer to an error word in r6 (the KPADReadEx form).
+inline constexpr uint32_t kKpadStatusSize = 176;
+// The PC action layer (game/game_input.cpp) reads RBUE08 game state to place the Wii Remote buttons. It is off for this game:
+// the Wii Remote sample goes to the game as it is.
+inline constexpr bool kNativeActionMap = false;
+inline constexpr bool kKpadReadError = true;
 // OSThread of the SDK's DefaultThread. __OSThreadInit is the same code in both games (8037E618 here, 80261104 in RBUE08);
 // its data moved from 805F88D8 to 8075E018 together with its neighbours (tools/dolmatch.py data_addresses.txt).
 inline constexpr uint32_t kDefaultThread = 0x8075E018;
@@ -30,6 +37,9 @@ inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
 inline constexpr const char* kProjectDir = "project";
 inline constexpr bool kActiveThreadQueue = false;
+inline constexpr uint32_t kKpadStatusSize = 132;
+inline constexpr bool kNativeActionMap = true;
+inline constexpr bool kKpadReadError = false;
 // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.
 inline constexpr uint32_t kDefaultThread = 0x805F88D8;
 inline constexpr int32_t kSdaSchedulerLock = -26464;       // the SDK's scheduler-lock counter

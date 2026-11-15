@@ -5,3 +5,4 @@ addr 806A0041 8080AC01   # byte 1 of the word at 806A0040, which moved to 8080AC
 addr 801619C4 BAD00004   # movie draw call site (a log line only)
 addr 80366FF4 BAD00008   # ResPixelApply: an entry inside a function whose body changed; not found yet
 addr 80367024 BAD0000C   # ResColorApply: the same
+addr 802F21EC 80411E60   # KPADRead: the read entry the game calls (project/dc/hle_manual.txt)
