@@ -54,7 +54,10 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 - The log line `[sched-cycles]` gives the CPU work of each guest thread in a second, in millions of cycles. The line `[sched] ... run ms` also counts the time that a thread waits while it holds the baton.
 - `UC_TEXTURE_MISS_LOG=<file>` writes one line for each miss of the texture cache: address, size, format, and the number of cache entries with that address and with that key.
 - `UC_WRITE_TRAP=<report>|<addresses>` (`game/write_trap.h`) works in this game too. It arms at the first retrace after `<report>.go` appears.
-- `UC_DC_FRAME_TARGET=1` keeps the frame target of the game's clock at 1 (see "Frame pacing and load"). It is an experiment and is off by default.
+- `--game-arg=--fps-limit --game-arg=60` (options of `scripts/drive.py`) runs a chapter with the 60 Hz step (see "The 60 Hz mode"). Without it the Windows build runs the game's own 30 Hz step. The log line `[game-pacing]` gives the frame waits, the retraces and the game time since the start.
+- The log line `[perf-dc]` gives, for each second, the small textures that took a GPU image of the pool, the read-backs of the exposure copy and their host time.
+- `UC_SMALL_TEXTURES=0` turns the handling of small rewritten textures off (see "The render thread"): the texture cache keeps every version, and the renderer makes a GPU image for each. Use it to compare.
+- The step `trace:NAME,N[,EVERY]` of `scripts/drive.py` writes the screen box of every draw of N frames to a file. The boxes of the same draws over the retraces show how the camera and the models move. Two runs can be compared this way (the pictures of two runs are never taken at the same game time).
 
 The game ignores A, B and Z as "OK" while the pointer is exactly at the centre of the screen (0, 0). Move the pointer first, for example `aim:-0.2,0.1`.
 
@@ -71,6 +74,8 @@ aim:0.05,0.0 wait:300 press:A wait:250 until:NEVERMATCH,B,10,300
 
 The first line creates the save and passes the intro movie and the title screen. The second line takes New Game, File 01, Normal and Chronicles. The third line passes the chapter's first movie and takes Leon. The last line waits for the second movie and the loading, then shoots (B) at the first enemy.
 
+The fixed waits of the third and the last line do not fit every run: in one run the A press on Leon did not take, and the chapter's movie started 7900 retraces later, with the next A press. These steps wait for the movie and for the end of the loading instead: `aim:-0.27,-0.2 wait:60 until:MV_301_10.sfd,A,120,3000 waitlog:EZ0S_r302.arc,12000`. The game opens `EZ0S_r302.arc` when the walk into the village starts, about 6600 retraces after the movie file. The first voice line of the walk (`VO_3015000.brstm`) follows about 300 retraces later; `waitlog` on it gives two runs the same game time within a few retraces.
+
 To play on without the places of the enemies, repeat these steps: `spray:220,2 aim:0.47,-0.03 wait:6 press:A wait:20 shot:NAME`. `spray` shoots 220 times over a grid of points, one shot every 2 input frames. The A press at that place takes "Go Right" when the game shows a choice of ways; in a run without that press the choice waited for more than 25000 retraces. On 15 November 2026 a run of 90 such rounds (146000 retraces, `--seconds 1200 --speed 4`) went through the streets, the market, the spiders, the hut with the wounded man, the choice of ways and the flooded part of the village to the boss of the chapter. The player died at the boss several times; each time the game showed "You are Dead" and the screen "Loading data" and went on from its last checkpoint. No run stopped with an error.
 
 ## Frame pacing and load
@@ -84,9 +89,9 @@ The clock of the game:
 - `+8` is the time step in seconds: `+0x30` divided by the rate. `+0x0C` to `+0x28` are eight time scales. `+4` is the time step times these scales.
 - The frame wait is 802D8308, called at the end of a frame (8029A4DC). It calls `VIWaitForRetrace` until the retrace count of the clock reaches the target. The count is the word at r13 - 9640, and the retrace callback 802D8484 adds 1 to it. The function is the counterpart of 801581E0 of `RBUE08`.
 - At its start a scene sets the target (80047788, called with 1 or 2). The menus, the logos and the first movies run with 1. The scene of a chapter (call site 80045ED4) sets 2. The movie of the chapter, the loading and the gameplay then present 30 frames for 60 retraces. The time step is 2 / 59.94 s.
-- Most of the code reads the time step: 111 places read `+4` directly, and the getter has 449 call sites. 6 places read the target.
+- Most of the code reads the time step: 111 places read `+4` directly, and the getter has 449 call sites. 6 places read the target (see "The 60 Hz mode").
 
-Load in the first chapter (streets and market, the test input shoots at a grid):
+Load in the first chapter before the fixes of the next section (streets and market, the test input shoots at a grid):
 
 - The guest needs 21 to 25 million CPU cycles for a presented frame, 18 of them on the main thread. The sound thread needs 130 to 165 million each second. A frame has 800 to 1000 draws.
 - `RBUE08` needs 19 million cycles and 1090 draws for a frame in its train chapter at 30 frames per second on the same PC.
@@ -96,14 +101,65 @@ Load in the first chapter (streets and market, the test input shoots at a grid):
 - `VulkanRenderer::collect` takes about 3 ms of each frame for the mean of the exposure copy that the game reads back.
 - The guest code has no hot spot: 1323 functions have samples, and the first 20 hold 24 % of them. 70 % of the samples are in the SDK and the middleware (addresses from 80378000), 30 % in the code of the game. Functions whose `RBUE08` counterpart has a native that is off here hold 5 %.
 
-A 60 Hz step (experiment, `UC_DC_FRAME_TARGET=1`):
+### The render thread
 
-- With the target kept at 1 the game presents 60 frames for 60 retraces in a chapter. Its time step is 1 / 59.94 s, as in its menus.
-- In one run the movie of the chapter had the same length: 6539 retraces, against 6535 with the target 2.
-- The voice lines of the opening walk started at the same game times, within 1 s.
-- The guest then needs 15 million cycles for a frame (890 million each second).
-- The PC held 60 in 46 of 90 seconds. The render thread was the limit in the other seconds.
-- Animations, physics, the exposure filter and the sound were not compared.
+The small textures:
+
+- The game lights each model with a texture of 4x4 texels (8x8 for some), RGBA8. The light object of a model (vtable 806F22B4, 0x480 bytes) holds the 64 bytes of texels at `+0x40`.
+- Each frame the update of the light object (8034F238) takes the place of the model and asks the light manager (the object at 80758480, its pointer is at r13 - 9644) about the lights there (virtual `+0x30`, 802D50D4). Then the manager writes the 16 texels (virtual `+0x78`, 802D61D4): one sum of the lights for each texel, as bytes for alpha, red, green and blue.
+- The material of the model samples the texture as texture map 1 in its first TEV stage (draw call site 804AD87C).
+- The first chapter has about 80 such textures, and nearly every one gets new texels in every frame: 41430 of 41711 misses of the texture cache in 36 s.
+- Each miss made a new entry in the texture cache, which kept the old versions (4096 entries at most, each with its GPU image), and a new GPU texture: an image, a view, a staging buffer and two memory allocations, and later the same number of frees.
+
+The fix (`kSmallTextureTexels` in `common/title.h`: 64 texels; 0 for `RBUE08`, which keeps its path):
+
+- `gx::TextureCache`: new texels of such a texture replace the entry with the old texels. The decode runs on the calling thread, not on a worker.
+- `VulkanRenderer`: when no submission uses the GPU image of such a texture any more, the image goes to a pool (512 images at most), and the next small texture of that size takes it. The texels go through one staging buffer of the frame slot. A rewrite makes no image, no buffer and no memory allocation. It is one copy of 64 bytes into an image.
+- The movie player writes each frame into the same 640x480 texture. Before, the flood of small textures pushed the old frames out of the cache. Without the flood 1 GB of them stayed. `kTextureVersionLimit` (2) drops the older versions of one texture when a third one arrives. A movie frame still makes one GPU image.
+
+The read-back of the exposure copy:
+
+- It never waited for the GPU. The commands of the frame copy the texture to a buffer, and the render thread takes the pixels when the fence of that submission has signalled. The game gets them at its next `GXCopyTex`, one or two frames late.
+- The time was in the mean of the pixels. The loop read the mapped buffer one byte at a time, and the buffer was in write-combined memory, the first host-visible memory type of the GPU: 2.9 ms for each copy of 128x64 pixels (render scale 2).
+- Now the buffer comes from cached host memory when the device has such a type (`allocate_host_buffer`, `prefer_cached`), and the pixels are copied out once before the mean: 0.015 ms for each copy. The bytes that the game gets are the same.
+
+Numbers (15 November 2026, same PC and settings as above, 30 Hz step; a run is the walk into the village for 900 retraces without input, then three rounds of the spray input; one run each unless a second value is given):
+
+| | before | after |
+|---|---|---|
+| Presented frames for 60 retraces | 27.4 (26.4 with `UC_SMALL_TEXTURES=0`) | 29.9, 29.5, 29.9 |
+| Render thread, ms for a presented frame | 15.6 (20.0) | 1.5, 2.0, 1.7 |
+| the same in the walk / in the fights | 28.2 / 12.5 | 1.6 / 1.5 |
+| GPU textures made for a frame | 32.6 (44.2) | 0.0 |
+| Small textures that took a pooled image, for a frame | - | 36 to 47 |
+| Read-back, ms for a copy | 2.9 | 0.015 |
+
+- Memory at the end of such a run: the working set of the process had a peak of 2930 MB before and 1967 MB after, the texture cache held 1022 MB in the movie before and 81 MB at most after, and the GPU memory in use was 873 MB before and 706 MB after.
+- The pictures: two runs never show the same game time, so no pair of frames is equal. The closest pair of 14 frames after the first voice line, one run with `UC_SMALL_TEXTURES=0` and one without, has a PSNR of 22.8 dB (neighbours of one run, 6 retraces apart: 19 to 21 dB), and 36.2 dB after both are scaled down to 64x36 (neighbours: 29 to 32 dB). The difference is on the edges of objects, where the camera moved.
+- The DirectX renderers have no pool: they still make a texture for each rewrite. The change of the cache holds for them too. They have no read-back and no `GX_TF_I8` conversion.
+- Still open: a rewrite is one small upload for each texture (25 to 65 in a frame). One texture for all of them (an atlas) would make it one upload, but it changes how the materials sample.
+- Still open: guest frames of 80 to 170 ms, 3 to 10 in a minute, in both modes. The clock of the game counts 4 retraces at most for a frame, so each one makes the game time a few retraces late.
+
+### The 60 Hz mode
+
+- The frame wait of the game (802D8308) is a native now: `hle_DcFrameWait` in `game/game_pacing.cpp` (`project/dc/hle_manual.txt`). With the 60 Hz mode it waits for one retrace whatever the target is. The time step of a chapter is then 1 / 59.94 s, as in the menus, and the game presents 60 frames for 60 retraces.
+- The mode is the one of `RBUE08`: a frame rate limit above 30 (`--fps-limit 60`, `graphics.fps_limit` in `config.json`), or `--unlock-60fps`. A new limit while the game runs reaches the native through `game_pacing_set_mode`; that was not tested in this game. The headset build has the limit 60 as its default (`game/uc_main.cpp`), so it gets the mode without a setting. The Windows build without a limit runs the 30 Hz step. A limit above 60 means 60 here: the game has no timer step.
+- The target itself stays as the scene set it. The six readers of the target:
+  - 80299FFC (in 80299F54, the start of a frame): when a reset is asked for, the retrace count becomes 0 and the next step is target / rate. In the 60 Hz mode that frame steps 2 retraces of game time in 1.
+  - 802CB8CC (in 802CB794): a screen saves the target and writes 1 (802CB928); 802CBE90 (in 802CBB3C) writes the saved value back. The screen was not identified.
+  - 8031D4D8 and 8031DB3C (in 8031CE54): a number that follows another number. Its step is 0.1 x difference x a factor x (time step x rate / target).
+  - 8032CBE4 (in 8032CA94): a model. It gives time step x rate / target, a number of frames, to each of its animation objects (virtual `+0x28`).
+  - 80337EB0 (in 80337D3C): a list of animation entries of a model. Each frame counter grows by time step x rate / target.
+- So four readers turn the time step into frames of 1/30 s with the target 2. A 60 Hz step is half a frame for them, and what they drive keeps its speed. The test variable `UC_DC_FRAME_TARGET` of the measurement wrote 1 to the target: a 60 Hz step was a whole frame for them, twice the speed. The variable is gone.
+
+Checked on 15 November 2026 (first chapter, speed 1, retrace counts, not wall time):
+
+- Voice lines of the walk without input, one run for each mode: the lines `VO_3015000`, `VO_3010001`, `VO_3017002`, `VO_3017003` and `VO_3017004` started 320, 860, 1262 and 1535 retraces after the first one with the 30 Hz step, and 320, 860, 1262 and 1533 with the 60 Hz step. Five later lines (to 4400 retraces after the first one) started at the same times within the 60 retraces that the log resolves.
+- The camera of the walk, with the `trace` step (173 draws followed for 650 retraces after the first voice line, two runs at 30 Hz and one at 60 Hz): from 60 to 530 retraces the boxes of the 60 Hz run were where the 30 Hz runs had them 1 retrace before, which is the precision of the start. Then a guest frame of 133 ms made the 60 Hz run 4 retraces late (see the open item above). The distance of the box centres at the same times (RMS, median of the draws) was 0.006 screen units between the two 30 Hz runs and 0.011 to 0.013 between a 30 Hz run and the 60 Hz run, the late part included.
+- The movie of the chapter with its loading, at speed 4: 6671 retraces at 60 Hz, 6610 at 30 Hz.
+- Load at 60 Hz: 59.9 frames for 60 retraces in the walk without input (78 s), 59.4 with the spray input (40 s; the seconds below 59 hold a frame capture or a long guest frame). The render thread needs 1.6 to 1.7 ms for a frame, and the guest 14 to 15 million cycles (850 to 900 million each second).
+- Not checked: the speed of enemies and of model animations in a fight. Enemies come only after shots, and two runs of the spray input do not fight the same fight. The code of the four readers above says that model animations keep their speed.
+- Not done: the pause of the PC port (`game_pacing_set_paused`) does nothing in this game.
 
 ## State
 
