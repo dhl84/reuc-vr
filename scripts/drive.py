@@ -29,7 +29,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from uctest.transport import PipeTransport  # noqa: E402
 
+# Names follow docs/testing/test-server.md (plus 0x1000, minus 0x10). A name of the form 0x.... sends that mask as it is.
 BUTTONS = {"A": 0x800, "B": 0x400, "PLUS": 0x1000, "MINUS": 0x10}
+
+
+def button_mask(names):
+    mask = 0
+    for name in names.split("+"):
+        mask |= int(name, 16) if name.lower().startswith("0x") else BUTTONS[name.upper()]
+    return mask
 
 
 class Game:
@@ -117,9 +125,7 @@ def main():
                 game.wait(int(value))
             elif kind == "press":
                 names, _, hold = value.partition("*")
-                mask = 0
-                for name in names.split("+"):
-                    mask |= BUTTONS[name.upper()]
+                mask = button_mask(names)
                 game.command("input", kpad={"x": game.aim[0], "y": game.aim[1], "buttons": mask}, hold_frames=int(hold or 4))
                 print("press %s at retrace %d" % (value, game.retraces()), flush=True)
             elif kind == "aim":
@@ -141,9 +147,7 @@ def main():
                 print("peek %s: %s" % (addr, game.command("peek", addr=int(addr, 16), size=int(size))["hex"]), flush=True)
             elif kind == "hold":   # like press, but the script goes on while the buttons are down
                 names, _, hold = value.partition("*")
-                mask = 0
-                for name in names.split("+"):
-                    mask |= BUTTONS[name.upper()]
+                mask = button_mask(names)
                 with game.cv:
                     ident = game.next_id
                     game.next_id += 1

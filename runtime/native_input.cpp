@@ -481,7 +481,7 @@ InputSample NativeInput::consume_at(uint64_t now_ns) {
     return result;
 }
 bool NativeInput::apply_test_command(uint64_t sequence,float x,float y,uint32_t held) {
-    if(!sequence || !std::isfinite(x) || !std::isfinite(y) || std::abs(x)>1 || std::abs(y)>1 || (held&~0x1C10u)) return false;
+    if(!sequence || !std::isfinite(x) || !std::isfinite(y) || std::abs(x)>1 || std::abs(y)>1 || (held&~uc::title::kTestPadButtons)) return false;
     std::lock_guard lock(mutex_);
     if(!state_.valid || sequence<=sequence_) return false;
     actions_.focus(false); services_.focus(false); actions_.focus(true); services_.focus(true);
@@ -617,7 +617,7 @@ void hle_KPADRead(ppc::Ctx& c) {
     ppc::wrf32(c,buffer+0x10,-1); ppc::wrf32(c,buffer+0x18,1);
     ppc::wrf32(c,buffer+0x34,1); ppc::wrf32(c,buffer+0x48,1); ppc::wrf32(c,buffer+0x58,-1);
     ppc::wr8(c,buffer+0x5C,1); // Nunchuk, matching WPADProbe.
-    ppc::wr8(c,buffer+0x5E,sample.valid ? 1 : 0); ppc::wr8(c,buffer+0x5F,5);
+    ppc::wr8(c,buffer+0x5E,sample.valid ? uc::title::kKpadPointerValid : 0); ppc::wr8(c,buffer+0x5F,5);
     ppc::wrf32(c,buffer+0x60,sample.stick_x); ppc::wrf32(c,buffer+0x64,sample.stick_y);
     ppc::wrf32(c,buffer+0x6C,-1); ppc::wrf32(c,buffer+0x74,1); // Neutral Nunchuk gravity.
     c.r[3]=1;

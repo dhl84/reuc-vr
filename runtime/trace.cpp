@@ -1,6 +1,9 @@
 #include "trace.h"
 #include "ppc_rt.h"
+#include "vi.h"
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -28,7 +31,29 @@ void dump_ring(std::FILE* out, const Ring& r, int count) {
 }
 }  // namespace
 
-namespace ppc { void trace_enter(uint32_t a) { Ring& r = ring(); std::lock_guard lock(r.mutex); r.a[r.pos++ & 255] = a; } }
+// Bring-up aid: UC_TRACE_NEW=<retrace> prints every guest function the first time it is entered once the retrace counter passed
+// that value ("[new-fn] <retrace> <address> <name>"). Press a button after that moment to see the code that handles the press.
+namespace {
+constexpr uint32_t kSeenWords = (24u << 20) / 4;   // one flag per MEM1 word
+std::atomic<uint8_t>* g_seen = [] () -> std::atomic<uint8_t>* {
+    const char* text = std::getenv("UC_TRACE_NEW");
+    return text && *text ? new std::atomic<uint8_t>[kSeenWords]() : nullptr;
+}();
+const uint64_t g_new_after = [] { const char* text = std::getenv("UC_TRACE_NEW"); return text ? std::strtoull(text, nullptr, 10) : 0ull; }();
+void note_first_entry(uint32_t a) {
+    const uint32_t index = (a - 0x80000000u) >> 2;
+    if (index >= kSeenWords || g_seen[index].load(std::memory_order_relaxed)) return;
+    if (g_seen[index].exchange(1)) return;
+    const uint64_t retraces = uc::vi_stats().retraces;
+    if (retraces >= g_new_after) std::fprintf(stderr, "[new-fn] %llu %08X %s\n", (unsigned long long)retraces, a, uc::symbol_name(a).c_str());
+}
+}  // namespace
+namespace ppc {
+void trace_enter(uint32_t a) {
+    { Ring& r = ring(); std::lock_guard lock(r.mutex); r.a[r.pos++ & 255] = a; }
+    if (g_seen) [[unlikely]] note_first_entry(a);
+}
+}  // namespace ppc
 
 namespace uc {
 void symbols_load(const std::string& path) {

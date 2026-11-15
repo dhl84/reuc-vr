@@ -17,7 +17,9 @@ inline constexpr uint32_t kKpadStatusSize = 176;
 // The PC action layer (game/game_input.cpp) reads RBUE08 game state to place the Wii Remote buttons. It is off for this game:
 // the Wii Remote sample goes to the game as it is.
 inline constexpr bool kNativeActionMap = false;
+inline constexpr uint32_t kTestPadButtons = 0xFFFF;   // the test server may send every Wii Remote and Nunchuk button (bring-up)
 inline constexpr bool kKpadReadError = true;
+inline constexpr uint8_t kKpadPointerValid = 2;            // dpd_valid_fg: both sensor bar points seen (test value, see docs/darkside-port.md)
 // OSThread of the SDK's DefaultThread. __OSThreadInit is the same code in both games (8037E618 here, 80261104 in RBUE08);
 // its data moved from 805F88D8 to 8075E018 together with its neighbours (tools/dolmatch.py data_addresses.txt).
 inline constexpr uint32_t kDefaultThread = 0x8075E018;
@@ -39,7 +41,9 @@ inline constexpr const char* kProjectDir = "project";
 inline constexpr bool kActiveThreadQueue = false;
 inline constexpr uint32_t kKpadStatusSize = 132;
 inline constexpr bool kNativeActionMap = true;
+inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
 inline constexpr bool kKpadReadError = false;
+inline constexpr uint8_t kKpadPointerValid = 1;
 // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.
 inline constexpr uint32_t kDefaultThread = 0x805F88D8;
 inline constexpr int32_t kSdaSchedulerLock = -26464;       // the SDK's scheduler-lock counter

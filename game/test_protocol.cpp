@@ -1,3 +1,4 @@
+#include "title.h"
 #include "test_protocol.h"
 #include "from_chars_compat.h"
 #include <charconv>
@@ -136,7 +137,7 @@ std::variant<TestRequest, TestParseError> parse_test_request(std::string_view li
                 only(*body, {"x", "y", "buttons"});
                 in.x = float(number(*body, "x", -1, 1, false)); in.y = float(number(*body, "y", -1, 1, false));
                 in.buttons = uint32_t(number(*body, "buttons", 0, 0xFFFF, true));
-                if (in.buttons & ~0x1C10u) throw std::runtime_error("buttons outside A/B/plus/minus");
+                if (in.buttons & ~uc::title::kTestPadButtons) throw std::runtime_error("buttons outside the test pad mask");
                 break;
             case TestDevice::key: only(*body, {"code", "down"}); in.code = uint32_t(number(*body, "code", 1, 511, true)); in.down = boolean(*body, "down"); break;
             case TestDevice::mouse: only(*body, {"button", "down"}); in.code = uint32_t(number(*body, "button", 1, 255, true)); in.down = boolean(*body, "down"); break;

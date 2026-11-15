@@ -42,9 +42,13 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 
 ## Bring-up aids
 
+- `scripts/drive.py` starts a build with its test server, sends Wii Remote input at given game times, saves frames and reads guest memory. It needs no keyboard and no mouse.
+- `UC_TRACE_NEW=<retrace>` (trace build) prints each guest function the first time it runs after that retrace count.
 - `UC_DUMP_THREADS=1` prints the state, the wait key and the registers of each guest thread once per second.
 - `UC_CAPTURE_RETRACES=300,900` saves the frame at those retrace counts as PNG files (`--capture-dir <dir>`).
 - `--log-dvd` prints each disc file that the game opens and reads.
+
+The game ignores A, B and Z as "OK" while the pointer is exactly at the centre of the screen (0, 0). Move the pointer first, for example `aim:-0.2,0.1`.
 
 ## State
 
@@ -53,11 +57,14 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It runs the SDK start-up, the save start-up, and the start of NW4R, GX, VI, AI, AX and KPAD.
 - It loads its files from the unpacked disc.
 - It draws the strap screen, the Zapper screen, and the Capcom and CRIWARE logos.
+- It shows the dialog "Save game data not found. Create data?", takes A from the test input, and writes `banner.bin` and `buc2_0.dat` to the save folder.
+- It plays the intro movie (`MV_000_10.sfd`, decoded by the game's own code) and reaches the title screen.
 
 Not done yet:
 
-- Input. `KPADRead` of this game is the newer form with an error pointer in r6, and the status structure is not checked.
-- The title screen, the menus and the game itself are not reached or not checked.
-- Movies and sound are not checked.
+- The menus after the title screen and the game itself are not reached or not checked.
+- Sound is not checked. The runs so far were muted.
+- Keyboard, mouse, gamepad and VR controller input. The PC action layer reads `RBUE08` game state, so it is off, and only the Wii Remote sample of the test server reaches the game.
 - The Quest build, the VR view and the VR aim.
 - EFB copies to `GX_TF_I8` read the green channel as an approximation of the brightness.
+- The HOME button dims the screen and shows the hand pointer, but the menu itself is not checked.
