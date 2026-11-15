@@ -96,7 +96,7 @@ On 15 November 2026 the Windows build was played from the first chapter on. The 
 - `UC_DC_GOD=1` writes the full value to the two players and to the partner at every retrace (`game/uc_main.cpp`, constants in `common/title.h`). A hit takes less than the full health, so one write for each retrace is sufficient. The game still plays its hit reactions.
 - How it was found: the layout names `lifebar1p` and `gauge_1p` lead to the HUD code. The HUD update 800E9604 gets the float `+0x974` of the player at 800AD174. Two memory dumps, one before the damage and one after the death, showed 50 and 0 there.
 
-Checked with frames: the "LEON" bar stays full while zombies hold the player and during the boss fight. Without the aid the same fight takes the health from 50 to 0 in steps of 5 (see "The 60 Hz mode").
+Checked with frames: the "LEON" bar stays full while zombies hold the player and during the boss fight. The "KRAUSER" bar stays full for 16 rounds of the `bot` step in the first chapter. In a run without the partner's part of the aid it was at a quarter after the same number of rounds. Without the aid the same fight takes the health from 50 to 0 in steps of 5 (see "The 60 Hz mode").
 
 ### The steps from one chapter to the next
 
@@ -129,7 +129,7 @@ The first line goes to the profile screen. The second line takes FILE 01, YES an
 | Memories of a Lost City, Chapter 5 | Played to "RESULTS". Clear time 00:23:35, 92 enemies. |
 | Memories of a Lost City, Chapter 6 | Played to "RESULTS" after the change for the point draw (see below). Before the change the run stopped 170 s into the chapter. |
 | Memories of a Lost City, Chapter 7 | Played to "RESULTS". Clear time 00:32:53, 84 enemies. |
-| Memories of a Lost City, Chapter 8 | Not played. The last run ended on the weapon screen before this chapter. |
+| Memories of a Lost City, Chapter 8 | Played for 36 minutes of game time, to the fight with the boss on the train. The run ended there at its time limit of 440 s, without an error. |
 
 The clear time is the time of the game clock. A chapter of 15 minutes takes about 3 minutes at speed 6.
 
@@ -139,7 +139,7 @@ One run stopped with an error: the point draw in the sixth chapter of "Memories 
 
 ### Faults found and fixed
 
-- The piece under the pointer on the chapter screen and on the character screen was a dark square. The cause was the native `GXSetBlendMode`. The SDK function writes the subtract bit of the blend word at every call: it sets the bit for `GX_BM_SUBTRACT` and clears it for every other mode (803A7F98). The native kept the bit after it was set. After the first subtract draw, every draw that set its blend through this function was subtracted from the picture. The glow of the piece is an additive quad with an indirect texture (call site 804A0A20). The effect sprites (call site 8049CD48) use the same path. The bits that the native replaces are now a constant of each game (`kBlendModeBits` in `common/title.h`). `RBUE08` has the same SDK code, but it keeps its old value until one of its scenes with a subtract draw is checked.
+- The piece under the pointer on the chapter screen and on the character screen was a dark square. The logo of the title screen was black. The cause was the native `GXSetBlendMode`. The SDK function writes the subtract bit of the blend word at every call: it sets the bit for `GX_BM_SUBTRACT` and clears it for every other mode (803A7F98). The native kept the bit after it was set. After the first subtract draw, every draw that set its blend through this function was subtracted from the picture. The glow of the piece is an additive quad with an indirect texture (call site 804A0A20). The effect sprites (call site 8049CD48) use the same path. The bits that the native replaces are now a constant of each game (`kBlendModeBits` in `common/title.h`). `RBUE08` has the same SDK code, but it keeps its old value until one of its scenes with a subtract draw is checked.
 - The effect library draws one kind of particle as `GX_POINTS`, one point for each `GXBegin` (call site 804A1D10, in a display list). The native renderers have no point primitive. The draw stopped the game with "unsupported native draw topology" in the sixth chapter of "Memories of a Lost City". A point draw is dropped now (`kDropPointDraws` in `common/title.h`, `dropped_point_draw` in `runtime/hle/gx.cpp`), and the log names the first one. These particles are missing from the picture.
 - The test aid did not hold the partner's health at first. The partner's bar went down in the first chapter. In the fourth chapter of "Memories of a Lost City" one run opened `menu02.brstm` and went back to the menus. When the player is dead, the game opens this file: the three runs without the aid opened it after the health was 0, and no other run opened it. The players had the aid in that run, so the death of the partner is the probable cause. No frame shows it. The aid writes the partner's health now. Two more runs of that chapter reached "RESULTS", the first of them still without the write. The step `bot:N,2,menu02.brstm` ends at a game over.
 
@@ -321,7 +321,7 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It plays the two movies of the first chapter, loads the chapter and runs it to its boss: the walk through the village, the first enemy, the HUD, shots that kill the enemy, the reload, the subtitles, the scenes in the streets and the market, the spiders, the scene with the wounded man, the choice of ways, the creatures in the water, the screen "You are Dead" and the return to the last checkpoint.
 - It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
 - The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
-- With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run and plays the first seven chapters of "Memories of a Lost City" (see "Play-through").
+- With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run. It plays the first seven chapters of "Memories of a Lost City" and most of the eighth (see "Play-through").
 - Its mixed sound is the sound of the game. The title music is equal to the stream file, sample for sample, at the right rate and in stereo (see "Sound").
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
