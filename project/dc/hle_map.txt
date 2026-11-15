@@ -167,8 +167,8 @@
 @803A6620 GXLoadTexObjPreLoaded  # GXLoadTexObjPreLoaded, carried exact + sigmatch
 @803A6800 GXLoadTlut  # GXLoadTlut, carried exact + sigmatch
 @804AE524 ResTevApply  # ResTevApply, carried exact
-# OFF (not found): @80366FF4 ResPixelApply
-# OFF (not found): @80367024 ResColorApply
+@804AE688 ResPixelApply  # ResPixelApply, carried pattern
+@804AE6B8 ResColorApply  # ResColorApply, carried pattern
 @804AD7A4 ResMeshSetup  # ResMeshSetup, carried exact
 @804AD87C ResMeshDraw  # ResMeshDraw, carried exact
 @804C0108 ResChannelApply  # ResChannelApply, carried exact
@@ -315,7 +315,7 @@
 # OFF (not found): @8036624C Leaf_8036624C
 # OFF (not found): @8036B2C8 Leaf_8036B2C8
 # OFF (not found): @8003F468 Leaf_8003F468
-# OFF (not found): @801996BC Leaf_801996BC
+# OFF (excluded, reference game logic): @800BDD70 Leaf_801996BC  # Leaf_801996BC, carried pattern
 # OFF (excluded, reference game logic): @804E1378 Leaf_80394548  # Leaf_80394548, carried exact
 # OFF (not found): @800ABCE0 Leaf_800ABCE0
 # OFF (not found): @800460A0 SegmentTriangleHit

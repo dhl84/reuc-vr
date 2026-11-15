@@ -15,6 +15,8 @@
 800B3C8C PSQUATDotProduct carried exact from 8006BC18
 800BAF90 WorldDarkening::Fade(float, carried call from 8006E400
 800E5680 cXyz::operator!=(Vec carried exact from 801C4AD8
+80125548 GameInfoManager::CheckSaveIDChanged(void carried pattern from 8003EDB0
+8015CA64 dJointSetCharacterNoMotionDirection(dxJoint carried pattern from 8016BE54
 801A9D08 set<f>__Q29JGeometry8TVec2<f>FRCQ29JGeometry8TVec2<f>_v carried exact from 80232804
 802A4F38 LexicalCast<f,i>(int carried exact from 8004EC84
 802C9194 nlPrintf(char carried exact from 8009D434
@@ -626,6 +628,7 @@
 803AFB34 __signbitd carried exact from 8028F728
 803AFB4C __fpclassifyd carried call from 8028F740
 803AFBC8 __stdio_atexit carried call from 8028F7C0
+803B0A4C round_decimal carried pattern from 8029065C
 803B1310 __pformatter carried call from 80290F54
 803B1BBC __FileWrite carried exact from 802917B0
 803B1C14 __StringWrite carried exact from 80291808
@@ -1535,6 +1538,7 @@
 803FAF60 IUSB_CloseDeviceAsync carried call from 802DD7F0
 803FB3D8 __IntrBlkMsgInt carried call from 802DD904
 803FB730 IUSB_WriteBlkMsgAsync carried exact from 802DDC30
+803FBE88 IUSB_WriteCtrlMsgAsync carried pattern from 802DE320
 803FDFA4 WPADGetRadioSensitivity carried exact from 802E0320
 803FF0E8 WPADGetAccGravityUnit carried exact from 802E13DC
 803FF2A4 WPADProbe carried exact from 802E159C

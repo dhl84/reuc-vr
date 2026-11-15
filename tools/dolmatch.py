@@ -16,6 +16,8 @@
 #   exact   the function body is the same after relocations are masked, and that body is unique in both programs
 #   call    the two functions are called from the same place of two functions that were already matched
 #   order   the functions lie between two matched neighbours, with the same count and the same sizes on both sides
+#   inside  the address lies inside a function that is the same code in both programs
+#   pattern the masked instruction run from the address to its first blr stands exactly once in the new program
 # No game code or data is written to the outputs: only addresses, sizes and names from the reference lists.
 import argparse
 import bisect
@@ -332,6 +334,46 @@ def main():
             n = inside(r)
             if n is not None:
                 match[r] = (n, "inside")
+
+    # pattern: a wanted address that is still missing may be a routine without a prologue that nothing calls with bl (a tail-called
+    # leaf, a resume entry). Take its words up to the first blr (6 to 64 words), mask the relocations as above, and accept a place in
+    # the new program where the same run stands exactly once.
+    def run_at(dol, addr):
+        for base, words in dol.text:
+            if base <= addr < base + 4 * len(words):
+                k = (addr - base) // 4
+                out = []
+                while k < len(words) and len(out) < 64:
+                    out.append(words[k])
+                    if words[k] == 0x4E800020:
+                        break
+                    k += 1
+                return out
+        return []
+
+    new_masked = [(base, [mask_function([w], base + 4 * i)[0][0] for i, w in enumerate(words)]) for base, words in new.text]
+    first_index = collections.defaultdict(list)
+    for base, masked in new_masked:
+        for i, w in enumerate(masked):
+            first_index[w].append((base, i))
+    n_pattern = 0
+    for r in sorted(set(list(names) + [a for a, _ in hle_addr])):
+        if r in match:
+            continue
+        run = run_at(ref, r)
+        if len(run) < 6 or run[-1] != 0x4E800020:
+            continue
+        masked = [mask_function([w], r + 4 * i)[0][0] for i, w in enumerate(run)]
+        hits = []
+        for base, i in first_index.get(masked[0], ()):
+            seg = next(m for b, m in new_masked if b == base)[i:i + len(masked)]
+            if seg == masked:
+                hits.append(base + 4 * i)
+        if len(hits) == 1 and hits[0] not in taken:
+            match[r] = (hits[0], "pattern")
+            taken[hits[0]] = r
+            n_pattern += 1
+    print("pattern: %d more addresses" % n_pattern)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     lines = []

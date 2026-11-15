@@ -141,8 +141,8 @@ on   GXCopyTex                    803A5610 carried exact
 on   GXLoadTexObjPreLoaded        803A6620 carried exact + sigmatch
 on   GXLoadTlut                   803A6800 carried exact + sigmatch
 on   ResTevApply                  804AE524 carried exact
-off  ResPixelApply                not found
-off  ResColorApply                not found
+on   ResPixelApply                804AE688 carried pattern
+on   ResColorApply                804AE6B8 carried pattern
 on   ResMeshSetup                 804AD7A4 carried exact
 on   ResMeshDraw                  804AD87C carried exact
 on   ResChannelApply              804C0108 carried exact
@@ -277,7 +277,7 @@ off  Leaf_8011F1E4                excluded; 80334D58 carried call
 off  Leaf_8036624C                not found
 off  Leaf_8036B2C8                not found
 off  Leaf_8003F468                not found
-off  Leaf_801996BC                not found
+off  Leaf_801996BC                excluded; 800BDD70 carried pattern
 off  Leaf_80394548                excluded; 804E1378 carried exact
 off  Leaf_800ABCE0                not found
 off  SegmentTriangleHit           not found

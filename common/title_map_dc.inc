@@ -49,8 +49,8 @@ UC_TITLE_ADDR(0x802F21EC, 0x80411E60)   // manual
 UC_TITLE_ADDR(0x80366D3C, 0x804AD7A4)   // function, exact
 UC_TITLE_ADDR(0x80366E14, 0x804AD87C)   // function, exact
 UC_TITLE_ADDR(0x80366E78, 0x804AE524)   // function, exact
-UC_TITLE_ADDR(0x80366FF4, 0xBAD00008)   // manual
-UC_TITLE_ADDR(0x80367024, 0xBAD0000C)   // manual
+UC_TITLE_ADDR(0x80366FF4, 0x804AE688)   // function, pattern
+UC_TITLE_ADDR(0x80367024, 0x804AE6B8)   // function, pattern
 UC_TITLE_ADDR(0x80373D00, 0x804BDC00)   // function, exact
 UC_TITLE_ADDR(0x803740B8, 0x804BDFB8)   // function, exact
 UC_TITLE_ADDR(0x80374114, 0x804BE014)   // function, exact
