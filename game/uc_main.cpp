@@ -355,6 +355,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
 #endif
     }
     uc::os_log_sleep(options.log_sleep);
+    uc::trace_set_retrace_clock([]() -> uint64_t { return uc::vi_stats().retraces; });
     uc::gx_gap_audit_enable(options.gx_gaps);
     uc::install_crash_handlers();
     uc::set_exit_hook(print_stats);

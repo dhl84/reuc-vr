@@ -1,6 +1,5 @@
 #include "trace.h"
 #include "ppc_rt.h"
-#include "vi.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
@@ -39,15 +38,18 @@ std::atomic<uint8_t>* g_seen = [] () -> std::atomic<uint8_t>* {
     const char* text = std::getenv("UC_TRACE_NEW");
     return text && *text ? new std::atomic<uint8_t>[kSeenWords]() : nullptr;
 }();
+std::atomic<uint64_t (*)()> g_retrace_clock{nullptr};   // set by the game (uc::trace_set_retrace_clock): this file must not depend on the video code
 const uint64_t g_new_after = [] { const char* text = std::getenv("UC_TRACE_NEW"); return text ? std::strtoull(text, nullptr, 10) : 0ull; }();
 void note_first_entry(uint32_t a) {
     const uint32_t index = (a - 0x80000000u) >> 2;
     if (index >= kSeenWords || g_seen[index].load(std::memory_order_relaxed)) return;
     if (g_seen[index].exchange(1)) return;
-    const uint64_t retraces = uc::vi_stats().retraces;
+    const auto clock = g_retrace_clock.load(std::memory_order_relaxed);
+    const uint64_t retraces = clock ? clock() : 0;
     if (retraces >= g_new_after) std::fprintf(stderr, "[new-fn] %llu %08X %s\n", (unsigned long long)retraces, a, uc::symbol_name(a).c_str());
 }
 }  // namespace
+namespace uc { void trace_set_retrace_clock(uint64_t (*clock)()) { g_retrace_clock = clock; } }
 namespace ppc {
 void trace_enter(uint32_t a) {
     { Ring& r = ring(); std::lock_guard lock(r.mutex); r.a[r.pos++ & 255] = a; }
