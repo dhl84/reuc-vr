@@ -42,7 +42,9 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 
 ## Bring-up aids
 
-- `scripts/drive.py` starts a build with its test server, sends Wii Remote input at given game times, saves frames and reads guest memory. It needs no keyboard and no mouse. The steps `waitlog`, `until` and `waitpeek` wait for a text in the game log or for a value in guest memory, because the retrace count of a screen is not the same in every run. The step `dump` writes MEM1 and MEM2 to files.
+- `scripts/drive.py` starts a build with its test server, sends Wii Remote input at given game times, saves frames and reads guest memory. It needs no keyboard and no mouse. The steps `waitlog`, `until` and `waitpeek` wait for a text in the game log or for a value in guest memory, because the retrace count of a screen is not the same in every run. The step `dump` writes MEM1 and MEM2 to files. The step `spray` moves the pointer over a grid of points and shoots at each one. The step `touch` makes a file, which starts a diagnostic that waits for one.
+- `UC_PACKET_DUMP=<file>|go|<frames>` lists every render packet of some frames: its draws with call site, blend and textures, and its EFB copy. The list starts when `<file>.go` appears (`touch:packets.txt.go` in `scripts/drive.py`). `UC_PACKET_DUMP_TEV=1` adds the TEV stages, the colour registers and constants, the channel controls and the lights of each draw.
+- `UC_CAPTURE_PASS_GO=<file>` saves the frame buffer after each render packet of one frame as `pass-*.png` in the capture folder. It starts with the first packet after a present once the file exists (`touch:pass.go`).
 - `UC_TRACE_NEW=<retrace>` (trace build) prints each guest function the first time it runs after that retrace count.
 - `UC_DUMP_THREADS=1` prints the state, the wait key and the registers of each guest thread once per second.
 - `UC_CAPTURE_RETRACES=300,900` saves the frame at those retrace counts as PNG files (`--capture-dir <dir>`).
@@ -63,6 +65,8 @@ aim:0.05,0.0 wait:300 press:A wait:250 until:NEVERMATCH,B,10,300
 
 The first line creates the save and passes the intro movie and the title screen. The second line takes New Game, File 01, Normal and Chronicles. The third line passes the chapter's first movie and takes Leon. The last line waits for the second movie and the loading, then shoots (B) at the first enemy.
 
+To play on without the places of the enemies, repeat these steps: `spray:220,2 aim:0.47,-0.03 wait:6 press:A wait:20 shot:NAME`. `spray` shoots 220 times over a grid of points, one shot every 2 input frames. The A press at that place takes "Go Right" when the game shows a choice of ways; in a run without that press the choice waited for more than 25000 retraces. On 15 November 2026 a run of 90 such rounds (146000 retraces, `--seconds 1200 --speed 4`) went through the streets, the market, the spiders, the hut with the wounded man, the choice of ways and the flooded part of the village to the boss of the chapter. The player died at the boss several times; each time the game showed "You are Dead" and the screen "Loading data" and went on from its last checkpoint. No run stopped with an error.
+
 ## State
 
 On 15 November 2026 the Windows build of `SBDE08` does this:
@@ -73,7 +77,9 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It shows the dialog "Save game data not found. Create data?", takes A from the test input, and writes `banner.bin` and `buc2_0.dat` to the save folder.
 - It plays the intro movie (`MV_000_10.sfd`, decoded by the game's own code) and reaches the title screen.
 - It shows the profile screen, the difficulty screen, the main menu and the character screen, and takes the pointer and A there.
-- It plays the two movies of the first chapter, loads the chapter and runs it: the walk through the village, the first enemy, the HUD, shots that kill the enemy, and the screen "You are Dead" when nobody shoots.
+- It plays the two movies of the first chapter, loads the chapter and runs it to its boss: the walk through the village, the first enemy, the HUD, shots that kill the enemy, the reload, the subtitles, the scenes in the streets and the market, the spiders, the scene with the wounded man, the choice of ways, the creatures in the water, the screen "You are Dead" and the return to the last checkpoint.
+- It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
+- The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
 
@@ -81,15 +87,19 @@ Found on the way (each is a constant in `common/title.h` or a note in the code):
 - The arena of MEM1 ends at the file table of the disc (0x817D8320) and the arena of MEM2 at 0x935E0000 (IOS55). With the `RBUE08` values the game ran out of memory when it loaded the chapter.
 - `OSJoinThread` does not wait for a detached thread.
 - NW4R material display lists write a part of the constant selectors of a stage pair.
+- The game sets its exposure from the picture. Each frame it copies the middle of the frame buffer to a `GX_TF_I8` texture, draws that texture into a 32x16 corner, copies the corner to a second `GX_TF_I8` texture (8036AD98), and reads 66 bytes of that texture from memory (8036AE74). It takes the two conversions of the hardware away from their mean (`Y = 16 + 0.8588 x colour`, twice) and gives the result to its tone mapping. A native EFB copy stays on the GPU, so the texture in memory was all zero, the game saw a black picture and chose the largest exposure: the daylight scene was white. The Vulkan renderer now reads such a small intensity copy back, and the next `GXCopyTex` call writes it to the guest's texture, one or two frames late (`kEfbCopyReadbackTexels` in `common/title.h`). The game records these copies in a display list, so the request goes through `GXCallDisplayList` too.
+- An EFB copy to `GX_TF_I8` holds `Y = 16 + 0.257 R + 0.504 G + 0.098 B` on the hardware, and the game's formulas expect that. The Vulkan renderer converts the copy on the GPU (`renderer/intensity_copy_pass.cpp`). Before, it read the green channel.
+- The exposure is a gain of `0.15 / brightness`, held between 0.75 and 1.25 (8036AFC4). After it the game draws its colour filter with six TEV stages (call site 802A0B04): 30 % less colour, a gain of 1 + (0.62, 0.56, 0.41) for red, green and blue in the first chapter, 8 % less blue, and a contrast curve `x (0.70 x + 0.30)`. The filter comes from the game's data. With the smallest exposure a part of the scene that is brighter than about 0.83 before the filter comes out as pale yellow (255, 255, about 210) without detail. Ground in direct sun does that: its material is twice the texture times the light (TEV scale 2), and the sun has the colour 255. No reference picture of the console was compared.
+- NW4R reads its stream files under a mutex that it takes with `OSTryLockMutex` and gives back with `OSUnlockMutex`. `OSUnlockMutex` is a native that keeps the state of a mutex outside the guest, and `OSTryLockMutex` was the SDK's code, which works on the fields of the guest's mutex. The first reader kept the mutex for ever, every later reader slept, and its read ended with "cancelled" when the game stopped the sound. `OSTryLockMutex` is a native now (`project/dc/hle_manual.txt`).
 
 Not done yet:
 
-- The outdoor picture of the chapter is too bright. The cause is not found; it is not the bloom of the port (`--no-bloom` gives the same picture). The brightness copy below is one candidate.
 - The game draws no shadows: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel (there is no depth copy yet), and a copy that names lines below 480 takes the 480 lines of the native colour buffer. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
-- The music streams (`Data/sound/stream/menu01.brstm` and others) are opened but never read.
-- Sound is not checked. The runs so far were muted.
-- The chapter is not played past its first enemy.
+- Sound is not checked. The runs so far were muted. The streams are read; nobody has listened to them.
+- The chapter is not played to its end. The test input shoots at a grid of points and does not win against the boss.
+- In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
+- `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
 - Keyboard, mouse, gamepad and VR controller input. The PC action layer reads `RBUE08` game state, so it is off, and only the Wii Remote sample of the test server reaches the game.
 - The Quest build, the VR view and the VR aim.
-- EFB copies to `GX_TF_I8` read the green channel as an approximation of the brightness.
+- The exposure read-back and the conversion of `GX_TF_I8` copies are in the Vulkan renderer only. The read-back takes the first layer (the left eye of a stereo view).
 - The HOME button dims the screen and shows the hand pointer, but the menu itself is not checked.
