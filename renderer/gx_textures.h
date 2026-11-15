@@ -33,12 +33,15 @@ struct TextureLevel {
     uint32_t width, height;
     std::vector<uint8_t> rgba;
 };
-// luma_intensity: an EFB copy to GX_TF_I8 (the brightness of the colour in every channel). The Vulkan renderer reads the green
-// channel for it, which is an approximation of the Y of the hardware copy; the DirectX renderers do not support it yet.
+// luma_intensity: an EFB copy to GX_TF_I8 (the brightness of the colour in every channel). The Vulkan renderer converts the copy to
+// the Y of the hardware (renderer/intensity_copy_pass.h); the DirectX renderers do not support it yet.
 // depth_far: an EFB copy to GX_TF_Z16 (SBDE08, common/title.h kDepthCopyAsFar). The Vulkan renderer gives 1 in every channel, which
 // is the farthest depth; the DirectX renderers do not support it.
 // red_intensity: an EFB copy to GX_CTF_R8 (the red of the colour in every channel; SBDE08). Vulkan renderer only.
 enum class TextureChannels:uint8_t { rgba,alpha_intensity,rgb565,luma_intensity,depth_far,red_intensity };
+// An EFB copy that the game reads from memory (common/title.h kEfbCopyReadbackTexels). The renderer that supports it (Vulkan) fills
+// `rgba` with level 0 at the game's size, RGBA8, and then sets `ready` (release), when the GPU has finished the copy.
+struct CopyReadback { std::atomic<bool> ready{false}; std::vector<uint8_t> rgba; };
 // A background decode in flight: `done` is set (release) after the worker wrote TexturePixels::levels or stored the error.
 struct TextureJob {
     std::mutex mutex; std::condition_variable ready; std::atomic<bool> done{false}; std::exception_ptr error;
@@ -52,6 +55,7 @@ struct TexturePixels {
     uint32_t desc_width=0, desc_height=0;   // the game's size, set when the texture is created (guest_* come from the decode, which may still run); 0 for EFB copies
     std::shared_ptr<TextureJob> job;   // set while a worker still fills `levels`
     uint32_t guest_address=0; // Identity of an immutable EFB copy version; ordinary textures leave this zero.
+    std::shared_ptr<CopyReadback> readback;   // EFB copies only: set when the game reads this copy from memory
     // Blocks until the pixels are decoded (no-op for finished textures) and rethrows a decode error. Call before reading `levels`.
     void wait() const {
         if (!job || job->done.load(std::memory_order_acquire)) { if (job && job->error) std::rethrow_exception(job->error); return; }

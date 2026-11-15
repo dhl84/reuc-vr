@@ -15,6 +15,7 @@
 #include "occlusion_pass.h"
 #include "pass_timer.h"
 #include "rcas_pass.h"
+#include "intensity_copy_pass.h"
 #include "rt_denoiser.h"
 #include "rt_material.h"
 #include "rt_scene.h"
@@ -207,6 +208,7 @@ private:
         bool mips_pending=false;   // an EFB copy whose levels 1.. are not made yet: record_copy_mips, when a draw first samples it with a mip filter
         gx::TextureChannels channels=gx::TextureChannels::rgba;
         bool bc7=false;   // a texture replacement: BC7 blocks, not RGBA8
+        VkImageView intensity_views[2]{}; VkDescriptorSet intensity_sets[2]{};   // an EFB copy to an intensity format: one layer each, for the conversion pass (intensity_copy_)
         VkDeviceSize allocation_size=0;
         std::shared_ptr<const gx::TexturePixels> source;
         bool initialized=false;
@@ -226,6 +228,8 @@ private:
         std::vector<std::shared_ptr<const gx::MeshBuffers>> mesh_refs;   // keeps the meshes this submission draws alive until its fence completed
         std::vector<std::shared_ptr<Texture>> textures;   // shared through texture_pool_: one GPU image per texture, not one per slot
         std::vector<std::shared_ptr<const gx::TexturePixels>> copy_sources;
+        Buffer readback; std::shared_ptr<gx::CopyReadback> readback_target; VkExtent2D readback_extent{};   // an EFB copy that the game reads from memory: delivered when the fence completed (collect)
+        uint32_t readback_width=0, readback_height=0;   // the game's size of that copy
         std::vector<VkDescriptorSet> texture_sets;
         VkDescriptorPool texture_pool=VK_NULL_HANDLE;
         uint32_t descriptor_capacity=0;
@@ -368,6 +372,7 @@ private:
     PresentFunctions present_, base_present_;   // current backend and the preloaded Streamline calls
     bool fsr_presentation_=false, dlss_presentation_=false;
     std::unique_ptr<Upscaler> upscaler_;
+    IntensityCopyPass intensity_copy_;   // EFB copies to GX_TF_I8 (SBDE08); made with the first such copy
     RcasPass rcas_;   // sharpening after upscalers that do not sharpen themselves
     // DLSS Frame Generation: the HUD-less copy of the frame at back-buffer size, taken before the HUD packet (or at the present).
     std::unique_ptr<DlssFrameGeneration> dlss_g_;

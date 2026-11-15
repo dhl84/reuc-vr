@@ -57,6 +57,13 @@ inline constexpr uint32_t kMem2ArenaHi = 0x935E0000;
 // no shadow. An approximation.
 inline constexpr uint32_t kEfbCopyLines = 528;
 inline constexpr bool kDepthCopyAsFar = true;
+// The game measures the brightness of the picture for its exposure: it copies the middle of the frame buffer to GX_TF_I8 twice, the
+// second time to a 32x16 texture (8036AD98), and then reads 66 bytes of that texture from memory (8036AE74). From their mean it takes
+// away the two conversions of the hardware (Y = 16 + 0.8588 colour, twice) and gives the result to its tone mapping. A native EFB copy
+// stays on the GPU, so the texture in memory was all zero and the game chose the largest exposure: the daylight scene was white.
+// An intensity copy of at most this number of texels is read back from the GPU and written to the guest's texture when the GPU has
+// finished it, one or two frames later (runtime/hle/gx.cpp hle_GXCopyTex). 0: no copy is read back.
+inline constexpr uint32_t kEfbCopyReadbackTexels = 1024;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
@@ -83,6 +90,7 @@ inline constexpr uint32_t kMem1ArenaHi = 0x81700000;
 inline constexpr uint32_t kMem2ArenaHi = 0x933E0000;
 inline constexpr uint32_t kEfbCopyLines = 480;
 inline constexpr bool kDepthCopyAsFar = false;
+inline constexpr uint32_t kEfbCopyReadbackTexels = 0;
 #endif
 }  // namespace uc::title
 

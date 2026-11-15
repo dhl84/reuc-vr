@@ -194,6 +194,11 @@ add_custom_command(OUTPUT ${shader_dir}/rcas.comp.spv
   COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_dir}
   COMMAND ${UC_SLANGC} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/rcas.slang -entry main -stage compute -target spirv -profile spirv_1_5 -fvk-use-entrypoint-name -o ${shader_dir}/rcas.comp.spv
   DEPENDS shaders/rcas.slang VERBATIM)
+# The colour conversion of an EFB copy to an intensity format (SBDE08).
+add_custom_command(OUTPUT ${shader_dir}/intensity_copy.comp.spv
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_dir}
+  COMMAND ${UC_SLANGC} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/intensity_copy.slang -entry main -stage compute -target spirv -profile spirv_1_5 -fvk-use-entrypoint-name -o ${shader_dir}/intensity_copy.comp.spv
+  DEPENDS shaders/intensity_copy.slang VERBATIM)
 # SMAA 1x (third_party/smaa, MIT): three compute entry points of one shader.
 foreach(smaa_pass edges weights blend)
   add_custom_command(OUTPUT ${shader_dir}/smaa.${smaa_pass}.spv
@@ -364,7 +369,7 @@ elseif(UC_OPENXR)
   message(FATAL_ERROR "the headset build needs glslangValidator for HOTD4's overlay shaders (brew install glslang)")
 endif()
 set(UC_SHADER_FILES ${shader_dir}/smoke.stereo.nobank.vert.spv ${shader_dir}/smoke.stereo.xform.comp.spv ${shader_dir}/smoke.stereo.xform.vert.spv ${shader_dir}/smoke.stereo.xform.tex.vert.spv ${shader_dir}/smoke.stereo.tex.frag.spv ${shader_dir}/smoke.stereo.tex.early.frag.spv ${shader_dir}/smoke.stereo.xform.uber.vert.spv ${shader_dir}/smoke.stereo.uber.merge.frag.spv ${shader_dir}/smoke.stereo.uber.merge.early.frag.spv ${shader_dir}/smoke.stereo.xform.uber2.vert.spv ${shader_dir}/smoke.stereo.uber2.merge.frag.spv ${shader_dir}/smoke.stereo.uber2.merge.early.frag.spv ${shader_dir}/smoke.stereo.xform.uber1.vert.spv ${shader_dir}/smoke.stereo.uber1.merge.frag.spv ${shader_dir}/smoke.stereo.uber1.merge.early.frag.spv ${shader_dir}/smoke.stereo.probe.vert.spv ${shader_dir}/smoke.stereo.nobank.noinv.vert.spv ${shader_dir}/smoke.stereo.probe.frag.spv ${shader_dir}/smoke.early.frag.spv ${shader_dir}/smoke.motion.early.frag.spv ${shader_dir}/smoke.stereo.early.frag.spv ${UC_XR_OVERLAY_SPV} ${shader_dir}/smoke.stereo.vert.spv ${shader_dir}/smoke.stereo.frag.spv ${shader_dir}/smoke.stereo.uber.spv ${shader_dir}/xr_screen.vert.spv ${shader_dir}/xr_screen.frag.spv ${shader_dir}/hud_layer.vert.spv ${shader_dir}/hud_layer.frag.spv ${shader_dir}/particle_depth.vert.spv ${shader_dir}/particle_depth.frag.spv ${shader_dir}/hdr.vert.spv ${shader_dir}/hdr.frag.spv ${shader_dir}/smoke.vert.spv ${shader_dir}/smoke.frag.spv ${shader_dir}/smoke.uber.spv
-  ${shader_dir}/smoke.motion.vert.spv ${shader_dir}/smoke.motion.frag.spv ${shader_dir}/smoke.motion.uber.spv ${shader_dir}/rcas.comp.spv
+  ${shader_dir}/smoke.motion.vert.spv ${shader_dir}/smoke.motion.frag.spv ${shader_dir}/smoke.motion.uber.spv ${shader_dir}/rcas.comp.spv ${shader_dir}/intensity_copy.comp.spv
   ${shader_dir}/smaa.edges.spv ${shader_dir}/smaa.weights.spv ${shader_dir}/smaa.blend.spv
   ${shader_dir}/smoke.shadow.vert.spv ${shader_dir}/gtao.ao.spv ${shader_dir}/gtao.denoise.spv ${shader_dir}/gtao.contact.spv ${shader_dir}/gtao.composite.spv
   ${shader_dir}/motion_blur.tile.spv ${shader_dir}/motion_blur.blur.spv ${shader_dir}/bloom.down_first.spv ${shader_dir}/bloom.down.spv ${shader_dir}/bloom.up.spv ${shader_dir}/bloom.composite.spv ${shader_dir}/rt_transform.spv
@@ -397,7 +402,7 @@ target_include_directories(uc_prompt_icons PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(uc_prompt_icons PUBLIC uc_input_prompts uc_imgui)
 add_library(uc_prompt_picture STATIC prompt_picture.cpp)
 target_link_libraries(uc_prompt_picture PUBLIC uc_gx uc_prompt_icons)
-add_library(uc_vulkan STATIC vulkan_renderer.cpp vulkan_depth_efb.cpp png.cpp prompt_overlay.cpp menu_overlay.cpp blit_upscaler.cpp smaa_upscaler.cpp occlusion_pass.cpp motion_blur_pass.cpp bloom_pass.cpp rt_scene.cpp rt_denoiser.cpp rt_shadow_pass.cpp rt_reflection_pass.cpp rt_path_pass.cpp rr_inputs_pass.cpp shadow_map.cpp rcas_pass.cpp hdr_pass.cpp dlss5_pass.cpp pass_timer.cpp upscaler_probe.cpp)
+add_library(uc_vulkan STATIC vulkan_renderer.cpp vulkan_depth_efb.cpp png.cpp prompt_overlay.cpp menu_overlay.cpp blit_upscaler.cpp smaa_upscaler.cpp occlusion_pass.cpp motion_blur_pass.cpp bloom_pass.cpp rt_scene.cpp rt_denoiser.cpp rt_shadow_pass.cpp rt_reflection_pass.cpp rt_path_pass.cpp rr_inputs_pass.cpp shadow_map.cpp rcas_pass.cpp intensity_copy_pass.cpp hdr_pass.cpp dlss5_pass.cpp pass_timer.cpp upscaler_probe.cpp)
 if(ANDROID)
   target_sources(uc_vulkan PRIVATE vulkan_android_entry.cpp)
 endif()

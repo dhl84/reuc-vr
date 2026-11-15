@@ -833,6 +833,8 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
         VkImageCreateInfo create{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; create.imageType=VK_IMAGE_TYPE_2D; create.format=format;
         create.extent={texture.extent.width,texture.extent.height,1}; create.mipLevels=texture.mip_levels; create.arrayLayers=gpu_only ? layers_ : 1; create.samples=VK_SAMPLE_COUNT_1_BIT;
         create.tiling=VK_IMAGE_TILING_OPTIMAL; create.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|(gpu_only || texture.auto_mips ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+        const bool intensity=gpu_only && texture.channels==gx::TextureChannels::luma_intensity;   // converted in place after the copy (record_texture_copy)
+        if(intensity) { intensity_copy_.initialize(device,shaders_); create.usage|=VK_IMAGE_USAGE_STORAGE_BIT; }
         vk_check(vkCreateImage(device,&create,nullptr,&texture.image),"texture image");
         VkMemoryRequirements requirements; vkGetImageMemoryRequirements(device,texture.image,&requirements);
         texture.allocation_size=requirements.size;
@@ -844,14 +846,21 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
         view.format=format; view.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,texture.mip_levels,0,create.arrayLayers};
         if(texture.channels==gx::TextureChannels::alpha_intensity)
             view.components={VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A};
-        if(texture.channels==gx::TextureChannels::luma_intensity)   // approximation: green stands for the brightness
+        if(texture.channels==gx::TextureChannels::luma_intensity)   // every channel holds the brightness after the conversion pass
             view.components={VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G};
         if(texture.channels==gx::TextureChannels::depth_far)   // approximation: no depth copy, every texel is the farthest depth
             view.components={VK_COMPONENT_SWIZZLE_ONE,VK_COMPONENT_SWIZZLE_ONE,VK_COMPONENT_SWIZZLE_ONE,VK_COMPONENT_SWIZZLE_ONE};
         if(texture.channels==gx::TextureChannels::red_intensity)
             view.components={VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_R};
         vk_check(vkCreateImageView(device,&view,nullptr,&texture.view),"texture view");
+        if(intensity) for(uint32_t layer=0;layer<std::min(layers_,2u);++layer) {
+            VkImageViewCreateInfo plain{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; plain.image=texture.image; plain.viewType=VK_IMAGE_VIEW_TYPE_2D; plain.format=format;
+            plain.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,layer,1};
+            vk_check(vkCreateImageView(device,&plain,nullptr,&texture.intensity_views[layer]),"intensity copy view");
+            texture.intensity_sets[layer]=intensity_copy_.make_set(texture.intensity_views[layer]);
+        }
     } catch (...) {
+        for(int layer=0;layer<2;++layer) { intensity_copy_.free_set(texture.intensity_sets[layer]); if(texture.intensity_views[layer]) vkDestroyImageView(device,texture.intensity_views[layer],nullptr); }
         if (texture.view) vkDestroyImageView(device,texture.view,nullptr);
         if (texture.image) vkDestroyImage(device,texture.image,nullptr);
         if (texture.memory) vkFreeMemory(device,texture.memory,nullptr);
@@ -889,6 +898,11 @@ void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source
     copy.srcOffsets[1]={std::max(copy.srcOffsets[0].x+1,int32_t(uint64_t(x+width)*extent.width/640)),std::max(copy.srcOffsets[0].y+1,int32_t(uint64_t(y+height)*extent.height/480)),1};
     copy.dstOffsets[1]={int32_t(target.extent.width),int32_t(target.extent.height),1};
     vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy,VK_FILTER_LINEAR);
+    if(target.intensity_sets[0]) {   // GX_TF_I8: the copied colour becomes the hardware's Y in every channel (SBDE08)
+        barrier(command,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_STORAGE_READ_BIT|VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,target.mip_levels);
+        for(int layer=0;layer<2;++layer) if(target.intensity_sets[layer]) intensity_copy_.record(command,target.intensity_sets[layer],target.extent);
+        barrier(command,target.image,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,target.mip_levels);
+    } else
     // Level 0 only. Every EFB copy has a GX mip chain down to 1x1 (gx.cpp make_copy_texture), but the game samples its copies without a
     // mip filter (the train fight: none of ~120 copy samples per frame): levels 1.. are made when a draw first samples the copy with one
     // (record_copy_mips). Until then they are undefined, and never read (such a sampler's maxLod is 0).
@@ -943,6 +957,7 @@ void VulkanRenderer::recycle_copy_texture(Texture& texture) {
     texture={};
 }
 void VulkanRenderer::destroy_texture(Texture& texture) {
+    for(int layer=0;layer<2;++layer) { intensity_copy_.free_set(texture.intensity_sets[layer]); if(texture.intensity_views[layer]) vkDestroyImageView(device,texture.intensity_views[layer],nullptr); }
     if (texture.view) vkDestroyImageView(device,texture.view,nullptr);
     if (texture.image) vkDestroyImage(device,texture.image,nullptr);
     if (texture.memory) vkFreeMemory(device,texture.memory,nullptr);
@@ -1600,6 +1615,22 @@ void VulkanRenderer::collect() {
         if (status == VK_NOT_READY) break;
         vk_check(status, "frame fence status");
         completed_.push_back(slot.serial); slot.reported = true;
+        if (slot.readback_target) {   // the copy at the game's size: each texel the mean of the pixels it covers at the render scale
+            const uint32_t width=slot.readback_width, height=slot.readback_height; const auto extent=slot.readback_extent;
+            const auto* pixels=static_cast<const uint8_t*>(slot.readback.mapped);
+            std::vector<uint8_t> rgba(size_t(width)*height*4);
+            for (uint32_t y=0; y<height; ++y) for (uint32_t x=0; x<width; ++x) {
+                const uint32_t x0=uint32_t(uint64_t(x)*extent.width/width), x1=std::max(x0+1,uint32_t(uint64_t(x+1)*extent.width/width));
+                const uint32_t y0=uint32_t(uint64_t(y)*extent.height/height), y1=std::max(y0+1,uint32_t(uint64_t(y+1)*extent.height/height));
+                uint32_t sum[4]{}, count=0;
+                for (uint32_t py=y0; py<y1 && py<extent.height; ++py) for (uint32_t px=x0; px<x1 && px<extent.width; ++px, ++count)
+                    for (int ch=0; ch<4; ++ch) sum[ch]+=pixels[(size_t(py)*extent.width+px)*4+ch];
+                for (int ch=0; ch<4; ++ch) rgba[(size_t(y)*width+x)*4+ch]=uint8_t(count ? (sum[ch]+count/2)/count : 0);
+            }
+            slot.readback_target->rgba=std::move(rgba);
+            slot.readback_target->ready.store(true,std::memory_order_release);
+            slot.readback_target.reset();
+        }
         uint64_t stamps[2];
         if (slot.timed && vkGetQueryPoolResults(device, timing_pool_, uint32_t((&slot - slots_.data()) * 2), 2, sizeof stamps, stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && stamps[1] >= stamps[0])
         { const uint64_t ns = uint64_t(double(stamps[1] - stamps[0]) * timestamp_period_); gpu_busy_ns_ += ns; if (ns > gpu_window_max_ns_) gpu_window_max_ns_ = ns;
@@ -1831,7 +1862,7 @@ void VulkanRenderer::retire_images(bool keep_buffers) {
     for (auto& slot : slots_) {
         if (!keep_buffers) {
             retire_textures(slot);
-            destroy_buffer(slot.vertices); destroy_buffer(slot.indices); destroy_buffer(slot.pixels); destroy_buffer(slot.uniforms); destroy_buffer(slot.palettes); destroy_buffer(slot.banks); destroy_buffer(slot.motions); slot.mesh_refs.clear();
+            destroy_buffer(slot.vertices); destroy_buffer(slot.indices); destroy_buffer(slot.pixels); destroy_buffer(slot.readback); slot.readback_target.reset(); destroy_buffer(slot.uniforms); destroy_buffer(slot.palettes); destroy_buffer(slot.banks); destroy_buffer(slot.motions); slot.mesh_refs.clear();
             for (Buffer* buffer:{&slot.xform_jobs,&slot.xform_chunks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_indices}) destroy_buffer(*buffer);
         }
         destroy_slot_images(slot);
@@ -2928,7 +2959,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     const size_t reticle_before=frame_reticle_.size();
     if (layer_on && !overlay_frame) for (const auto& draw:packet.draws) if (draw.layer) frame_reticle_.push_back(draw);   // after every early return: a packet that is retried must not be counted twice
     collect();   // after the check: a fence that finishes between an earlier collect() and the check would be reused unreported and its packet would never complete
-    slot.copy_sources.clear();
+    slot.copy_sources.clear(); slot.readback_target.reset();
     slot.mesh_refs.clear();   // the submission that used these meshes completed (fence checked above)
     if ((++renders_ & 255)==0) sweep_meshes(false);
     std::erase_if(copy_aliases_,[](const auto& entry){return entry.second.requested.expired();});
@@ -4904,6 +4935,17 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if(copy_target) {
         if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED);
         else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED);
+        if(const auto& readback=packet.texture_copy->target->readback) {   // the game reads this copy from memory (SBDE08's exposure): level 0 of the first layer goes to a buffer, collect() delivers it
+            const auto extent=copy_target->extent; const VkDeviceSize bytes=VkDeviceSize(extent.width)*extent.height*4;
+            if(slot.readback.size<bytes) { destroy_buffer(slot.readback); slot.readback=make_buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT); }
+            const auto fragment=VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, transfer=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,transfer,VK_ACCESS_2_TRANSFER_READ_BIT);
+            VkBufferImageCopy region{}; region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}; region.imageExtent={extent.width,extent.height,1};
+            vkCmdCopyImageToBuffer(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,slot.readback.buffer,1,&region);
+            barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,transfer,VK_ACCESS_2_TRANSFER_READ_BIT,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            slot.readback_target=readback; slot.readback_extent=extent;
+            slot.readback_width=packet.texture_copy->target->levels[0].width; slot.readback_height=packet.texture_copy->target->levels[0].height;
+        }
     }
     if (scene_only) {
         if (copy_target && !packet.clear_after_copy) scene_restore_copy_=packet.texture_copy;
@@ -5257,7 +5299,7 @@ void VulkanRenderer::shutdown() {
         }
         hudless_extent_={};
         upscaler_.reset();
-        dlss5_pass_.shutdown(); rcas_.shutdown(); hdr_pass_.shutdown(); bloom_pass_.shutdown(); occlusion_.shutdown(); motion_blur_.shutdown(); rt_shadow_.shutdown(); rt_shadow_denoiser_.shutdown(); rt_reflection_.shutdown(); rt_reflection_denoiser_.shutdown(); rt_lighting_.shutdown(); rt_lighting_denoiser_.shutdown(); rt_path_.shutdown(); rt_path_denoiser_.shutdown(); rr_inputs_.shutdown(); rt_.shutdown();
+        dlss5_pass_.shutdown(); rcas_.shutdown(); intensity_copy_.shutdown(); hdr_pass_.shutdown(); bloom_pass_.shutdown(); occlusion_.shutdown(); motion_blur_.shutdown(); rt_shadow_.shutdown(); rt_shadow_denoiser_.shutdown(); rt_reflection_.shutdown(); rt_reflection_denoiser_.shutdown(); rt_lighting_.shutdown(); rt_lighting_denoiser_.shutdown(); rt_path_.shutdown(); rt_path_denoiser_.shutdown(); rr_inputs_.shutdown(); rt_.shutdown();
         destroy_scene_targets();
         for (auto& buffer:rt_records_) destroy_buffer(buffer);
         for (auto& buffer:rt_lights_) destroy_buffer(buffer);

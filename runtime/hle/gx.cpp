@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <list>
+#include <deque>
 #include <unordered_map>
 #include "clock.h"
 #include "public_release.h"
@@ -713,9 +714,45 @@ std::shared_ptr<const PaletteData> load_palette(const PaletteSource& source) {
 gx::TextureCache texture_cache;
 // The GX texture format with the size of an EFB copy of that copy format (0x27 GX_CTF_A8, 0x28 GX_CTF_R8, 0x13 GX_TF_Z16: two bytes for each texel).
 gx::TextureFormat copy_storage_format(uint32_t format) { return (format==0x27 || format==0x28) ? gx::TextureFormat::i8 : format==0x13 ? gx::TextureFormat::ia8 : gx::TextureFormat(format); }
-std::shared_ptr<const gx::TexturePixels> make_copy_texture(uint32_t address,uint32_t width,uint32_t height,uint32_t format) {
+// EFB copies that the game reads from memory (common/title.h kEfbCopyReadbackTexels): small copies to GX_TF_I8.
+bool copy_is_read_back(uint32_t width,uint32_t height,uint32_t format) { return format==1 && uint64_t(width)*height<=uc::title::kEfbCopyReadbackTexels; }
+// Front: the requests, oldest first. The renderer fills each one when the GPU has finished the copy; the next GXCopyTex call then
+// writes the texels to the guest's texture, so the game reads the picture of one or two frames before. A renderer without this
+// support never fills them: the list keeps the last few and the guest's memory stays as it is.
+struct PendingReadback { uint32_t address,width,height; std::shared_ptr<gx::CopyReadback> pixels; };
+std::deque<PendingReadback> pending_readbacks;
+std::shared_ptr<gx::CopyReadback> request_readback(uint32_t address,uint32_t width,uint32_t height) {
+    auto pixels=std::make_shared<gx::CopyReadback>();
+    pending_readbacks.push_back({address,width,height,pixels});
+    return pixels;
+}
+void deliver_readbacks(ppc::Ctx& c) {
+    for(;;) {
+        // The newest finished copy; older requests for its texture go with it.
+        size_t newest=pending_readbacks.size();
+        for(size_t i=0;i<pending_readbacks.size();++i) if(pending_readbacks[i].pixels->ready.load(std::memory_order_acquire)) newest=i;
+        if(newest==pending_readbacks.size()) break;
+        const auto entry=pending_readbacks[newest];
+        if(entry.pixels->rgba.size()==size_t(entry.width)*entry.height*4) {
+            // GX_TF_I8: tiles of 8x4 texels, one byte each; the copy holds the brightness in every channel.
+            const uint32_t tiles_x=(entry.width+7)/8,tiles_y=(entry.height+3)/4;
+            for(uint32_t ty=0;ty<tiles_y;++ty) for(uint32_t tx=0;tx<tiles_x;++tx) for(uint32_t y=0;y<4;++y) for(uint32_t x=0;x<8;++x) {
+                const uint32_t px=tx*8+x,py=ty*4+y;
+                const uint8_t value=px<entry.width && py<entry.height ? entry.pixels->rgba[(size_t(py)*entry.width+px)*4] : 0;
+                ppc::wr8(c,entry.address+(ty*tiles_x+tx)*32+y*8+x,value);
+            }
+        }
+        std::deque<PendingReadback> kept;
+        for(size_t i=0;i<pending_readbacks.size();++i) if(i>newest || pending_readbacks[i].address!=entry.address) kept.push_back(std::move(pending_readbacks[i]));
+        pending_readbacks=std::move(kept);
+    }
+    while(pending_readbacks.size()>16) pending_readbacks.pop_front();
+}
+// Builder: the requests of the display list that call_list imports now, each with its texture's address.
+std::vector<std::pair<uint32_t,std::shared_ptr<gx::CopyReadback>>> list_readbacks;
+std::shared_ptr<const gx::TexturePixels> make_copy_texture(uint32_t address,uint32_t width,uint32_t height,uint32_t format,std::shared_ptr<gx::CopyReadback> readback={}) {
     memory.read(address,gx::encoded_texture_size({width,height,copy_storage_format(format),1}));
-    auto target=std::make_shared<gx::TexturePixels>(); target->gpu_only=true; target->guest_address=address&0x3FFFFFFF;
+    auto target=std::make_shared<gx::TexturePixels>(); target->gpu_only=true; target->guest_address=address&0x3FFFFFFF; target->readback=std::move(readback);
     target->channels=format==0x27 ? gx::TextureChannels::alpha_intensity : format==1 ? gx::TextureChannels::luma_intensity : format==4 ? gx::TextureChannels::rgb565 :
         format==0x13 ? gx::TextureChannels::depth_far : format==0x28 ? gx::TextureChannels::red_intensity : gx::TextureChannels::rgba;
     for(;;) {
@@ -872,7 +909,9 @@ void import_resource(uint32_t address,uint32_t length,gx::State& bindings,gx::Tr
         else if (const auto* index=std::get_if<Resource::MatrixIndex>(&item)) { indices[index->reg]=index->value; if(index->reg==0) transform_state.current=index->value&63; }
         else if (const auto* clear=std::get_if<Resource::CopyClear>(&item)) copy=clear->state;
         else if (const auto* command=std::get_if<Resource::TextureCopy>(&item)) {
-            auto target=make_copy_texture(command->address,command->width,command->height,command->format);
+            std::shared_ptr<gx::CopyReadback> readback;
+            if(const auto found=std::find_if(list_readbacks.begin(),list_readbacks.end(),[&](const auto& entry){ return entry.first==command->address; });found!=list_readbacks.end()) { readback=std::move(found->second); list_readbacks.erase(found); }
+            auto target=make_copy_texture(command->address,command->width,command->height,command->format,std::move(readback));
             versions[command->address&0x3FFFFFFF]=target;
             imported.push_back(CopiedTexture{{command->source,std::move(target)},command->clear,copy});
         }
@@ -1551,22 +1590,23 @@ void hle_GXEndDisplayList(ppc::Ctx& c) {
 namespace {
 // Front: what a call of the list does that the guest observes (the colour channel words written back, the packets its texture copies seal),
 // with the checks the import made (nesting, every child list's bytes).
-void walk_effects(uint32_t address,uint32_t length,uint32_t& channels_count,std::array<uint32_t,4>& channels,uint32_t& texture_copies,std::vector<uint32_t>& path) {
+void walk_effects(uint32_t address,uint32_t length,uint32_t& channels_count,std::array<uint32_t,4>& channels,uint32_t& texture_copies,std::vector<uint32_t>& path,std::vector<FrontEffect>& read_back) {
     const uint32_t physical=address & 0x3FFFFFFF;
     if (path.size()==64 || std::find(path.begin(),path.end(),physical)!=path.end())
         throw gx::Error(gx::ErrorCode::sequence,address,64,path.size());
     const auto& resource=checked_resource(address,length);
     path.push_back(physical);
     for (const auto& effect : resource.effects) switch (effect.kind) {
-        case FrontEffect::child: walk_effects(effect.a,effect.b,channels_count,channels,texture_copies,path); break;
+        case FrontEffect::child: walk_effects(effect.a,effect.b,channels_count,channels,texture_copies,path,read_back); break;
         case FrontEffect::num_channels: channels_count=effect.a; break;
         case FrontEffect::channel_control: channels[effect.a]=effect.b; break;
-        case FrontEffect::texture_copy: ++texture_copies; break;
+        case FrontEffect::texture_copy: ++texture_copies; if(copy_is_read_back(effect.b&2047,(effect.b>>11)&2047,effect.b>>22)) read_back.push_back(effect); break;   // a: address, b: width, height, format (hle_GXCopyTex)
     }
     path.pop_back();
 }
-void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,const SealInputs& inputs) {
+void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,const SealInputs& inputs,std::vector<std::pair<uint32_t,std::shared_ptr<gx::CopyReadback>>> readbacks={}) {
     Imported imported;
+    list_readbacks=std::move(readbacks);
     auto bindings=state;
     auto transform_state=transforms;
     auto copy=copy_state;
@@ -1578,7 +1618,9 @@ void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,
     auto indices=matrix_indices;
     auto versions=copied_textures;
     std::vector<uint32_t> path;
-    import_resource(address,length,bindings,transform_state,copy,textures,loaded,blend,colors,matrices,indices,imported,versions,path);
+    try { import_resource(address,length,bindings,transform_state,copy,textures,loaded,blend,colors,matrices,indices,imported,versions,path); }
+    catch(...) { list_readbacks.clear(); throw; }
+    list_readbacks.clear();
     for (auto& item : imported) {
         if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); draws.push_back(std::move(*draw)); }
         else {
@@ -1622,9 +1664,12 @@ void hle_GXCallDisplayList(ppc::Ctx& c) {
     for(uint32_t i=0;i<4;++i) channels[i]=sdk_word(block,0xB8+i*4);
     uint32_t texture_copies=0;
     std::vector<uint32_t> path;
-    walk_effects(address,length,channels_count,channels,texture_copies,path);
+    std::vector<FrontEffect> read_back;
+    walk_effects(address,length,channels_count,channels,texture_copies,path,read_back);
     for(uint32_t i=0;i<texture_copies;++i) { next_seal(); ++copies; }
-    back_with_sdk(sdk,block,true,[lr=c.lr,address,length,inputs=texture_copies ? seal_inputs() : SealInputs{}](const SdkRef& snapshot_block) { call_list(snapshot_block,lr,address,length,inputs); });   // the inputs only serve the packets its copies seal
+    std::vector<std::pair<uint32_t,std::shared_ptr<gx::CopyReadback>>> readbacks;   // SBDE08: copies of the list that the game reads from memory
+    for(const auto& effect:read_back) readbacks.emplace_back(effect.a,request_readback(effect.a,effect.b&2047,(effect.b>>11)&2047));
+    back_with_sdk(sdk,block,true,[lr=c.lr,address,length,inputs=texture_copies ? seal_inputs() : SealInputs{},readbacks=std::move(readbacks)](const SdkRef& snapshot_block) { call_list(snapshot_block,lr,address,length,inputs,readbacks); });   // the inputs only serve the packets its copies seal
     ppc::wr32(c,sdk+0x254,(read32(sdk+0x254)&~0x70u)|(channels_count<<4));
     for(uint32_t i=0;i<4;++i) ppc::wr32(c,sdk+0xB8+i*4,channels[i]);
 }
@@ -1845,6 +1890,7 @@ void hle_GXSetTexCopyDst(ppc::Ctx& c) {
 void hle_GXCopyTex(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80285974),c); finish_primitive();
     const auto address=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
+    if(uc::title::kEfbCopyReadbackTexels) deliver_readbacks(c);
     if((address&31) || c.r[4]>1 || !texture_copy_source[2] || !texture_copy_width || !texture_copy_height) throw std::invalid_argument("invalid native EFB texture copy request");
     memory.read(address,gx::encoded_texture_size({texture_copy_width,texture_copy_height,copy_storage_format(texture_copy_format),1}));
     memory.read(sdk,0x254);
@@ -1860,15 +1906,17 @@ void hle_GXCopyTex(ppc::Ctx& c) {
         for(auto word:{read32(sdk+0x240),read32(sdk+0x244),read32(sdk+0x248),0x4B000000u|((address&0x3FFFFFFF)>>5),control}) { uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word); }
         if(c.r[4]) for(auto word:{read32(sdk+0x228),read32(sdk+0x220)}) { uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word); }
         if(recording_push()) {
-            front_list->effects.push_back({FrontEffect::texture_copy});
+            front_list->effects.push_back({FrontEffect::texture_copy,address,texture_copy_width|texture_copy_height<<11|texture_copy_format<<22});
             back([copy=Resource::TextureCopy{texture_copy_source,address,texture_copy_width,texture_copy_height,c.r[4]!=0,texture_copy_format}] { brec->native.geometry.push_back(copy); });
         }
         ppc::wr32(c,sdk+0x24C,control); ppc::wr16(c,sdk+2,0);
         return;
     }
+    std::shared_ptr<gx::CopyReadback> readback;
+    if(copy_is_read_back(texture_copy_width,texture_copy_height,texture_copy_format)) readback=request_readback(address,texture_copy_width,texture_copy_height);   // SBDE08: the game reads this copy from memory
     next_seal();
-    back([inputs=seal_inputs(),address,width=texture_copy_width,height=texture_copy_height,format=texture_copy_format,source=texture_copy_source,clear=c.r[4]!=0] {
-        auto target=make_copy_texture(address,width,height,format);
+    back([inputs=seal_inputs(),address,width=texture_copy_width,height=texture_copy_height,format=texture_copy_format,source=texture_copy_source,clear=c.r[4]!=0,readback] {
+        auto target=make_copy_texture(address,width,height,format,readback);
         const auto [entry,inserted]=copied_textures.try_emplace(address&0x3FFFFFFF);
         try { submit_batch(inputs,false,clear,0,gx::TextureCopy{source,target}); }
         catch(...) { if(inserted) copied_textures.erase(entry); throw; }
