@@ -23,6 +23,12 @@ A STEP is one of:
   waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
+  bot:N[,EVERY]     like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A+B, WAVE, A;
+                    these pass most quick-time prompts of The Darkside Chronicles ("Press the A Button!", "Wave the Wii Remote!"), reload,
+                    and take a choice of ways (the A presses are at the right and at the left of the screen)
+  watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]   read the pointer at ADDR, then print the SIZE bytes at pointer + OFFSET each time they change, for
+                    N retraces (4 bytes also as a float), and each new line of the game log that holds one of the TEXTs; for example the
+                    health of a player of The Darkside Chronicles and the voice lines of a fight (docs/darkside-port.md)
   touch:NAME        create the empty file <folder>/NAME (a diagnostic such as UC_PACKET_DUMP=<folder>/packets.txt|go starts when its .go file appears)
   speed:N           set the speed of the game clock to N (1 to 32) from here on: reach a scene at speed 4, then measure at speed 1
 
@@ -32,6 +38,7 @@ The protocol is docs/testing/test-server.md. The script needs no keyboard or mou
 import argparse
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -262,6 +269,64 @@ def main():
                                 game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
                     done += batch
                 print("spray %s: %d points to retrace %d" % (value, done, game.retraces()), flush=True)
+            elif kind == "watchptr":   # watchptr:ADDR,OFFSET,SIZE,N: prints each change of the bytes at (pointer at ADDR) + OFFSET for N retraces
+                addr, offset, size, limit, *texts = value.split(",")
+                start, last = game.retraces(), None
+                game.log.flush()
+                log_at = (game.out / "run.log").stat().st_size
+                while game.proc.poll() is None:
+                    now = game.retraces()
+                    if now - start > int(limit):
+                        break
+                    if texts:   # the lines of the game log with one of the texts, with the retrace count at which they were seen
+                        game.log.flush()
+                        with open(game.out / "run.log", "rb") as f:
+                            f.seek(log_at)
+                            data = f.read()
+                        data = data[:data.rfind(b"\n") + 1]
+                        log_at += len(data)
+                        for line in data.decode("latin-1").splitlines():
+                            if any(t in line for t in texts):
+                                print("watchptr log at retrace %d (%d after the start of the step): %s" % (now, now - start, line.strip()[:160]), flush=True)
+                    pointer = int(game.command("peek", addr=int(addr, 16), size=4)["hex"], 16)
+                    data = game.command("peek", addr=pointer + int(offset, 0), size=int(size))["hex"] if 0x80000000 <= pointer < 0x94000000 else "no object"
+                    if data != last:
+                        text = data
+                        if len(data) == 8:
+                            text += " (float %g)" % struct.unpack(">f", bytes.fromhex(data))[0]
+                        print("watchptr %s+%s: %s between retrace %d and %d (%d after the start of the step)" % (addr, offset, text, now, game.retraces(), now - start), flush=True)
+                        last = data
+                    time.sleep(0.004)
+            elif kind == "bot":   # the spray, and a press of A, the wave, Z or A+B after each row of 7 points (quick-time prompts, the reload)
+                parts = value.split(",")
+                count, every = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 2)
+                points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
+                extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
+                done = 0
+                while game.proc.poll() is None and done < count:
+                    at = game.command("state").get("state", {}).get("n", 0) + 4
+                    events = []   # (input frame, x, y, buttons)
+                    batch = min(35, count - done)   # the server keeps at most 256 open commands
+                    for i in range(batch):
+                        game.aim = points[(done + i) % len(points)]
+                        events += [(at, game.aim[0], game.aim[1], BUTTONS["B"]), (at + 1, game.aim[0], game.aim[1], 0)]
+                        at += every
+                        if (done + i) % 7 == 6:
+                            names, hold, place = extras[((done + i) // 7) % len(extras)]
+                            x, y = place or game.aim
+                            events += [(at, x, y, button_mask(names)), (at + hold, x, y, 0)]
+                            at += hold + 2
+                    for n, (frame, x, y, buttons) in enumerate(events):
+                        fields = dict(cmd="input", at_frame=frame, kpad={"x": x, "y": y, "buttons": buttons})
+                        if n == len(events) - 1:
+                            game.command(timeout=120.0, **fields)   # waits until the game has taken the last release
+                        else:
+                            with game.cv:
+                                ident = game.next_id
+                                game.next_id += 1
+                            game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
+                    done += batch
+                print("bot %s: %d points to retrace %d" % (value, done, game.retraces()), flush=True)
             elif kind == "speed":
                 game.command("speed", factor=int(value))
                 print("speed %s at retrace %d" % (value, game.retraces()), flush=True)
