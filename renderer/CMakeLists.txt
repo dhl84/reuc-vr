@@ -389,11 +389,11 @@ if(UC_FOLD_TEV)
   set(UC_FOLDED_DIR ${shader_dir}/folded CACHE INTERNAL "")
   add_custom_command(OUTPUT ${shader_dir}/folded.stamp
     COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/fold_tev_shaders.py --spirv-opt ${UC_SPIRV_OPT} --shaders ${shader_dir}
-            --out ${shader_dir}/folded ${CMAKE_SOURCE_DIR}/project/pipeline_keys.seed ${CMAKE_SOURCE_DIR}/project/pipeline_keys.quest
+            --out ${shader_dir}/folded ${UC_KEY_DIR}/pipeline_keys.seed ${UC_KEY_DIR}/pipeline_keys.quest
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${shader_dir}/folded_rp
     COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/spirv_relaxed_precision.py --dir ${shader_dir}/folded ${shader_dir}/folded_rp
     COMMAND ${CMAKE_COMMAND} -E touch ${shader_dir}/folded.stamp
-    DEPENDS ${CMAKE_SOURCE_DIR}/tools/fold_tev_shaders.py ${CMAKE_SOURCE_DIR}/tools/spirv_relaxed_precision.py ${CMAKE_SOURCE_DIR}/project/pipeline_keys.seed ${CMAKE_SOURCE_DIR}/project/pipeline_keys.quest ${shader_dir}/smoke.stereo.frag.spv ${shader_dir}/smoke.stereo.early.frag.spv
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/fold_tev_shaders.py ${CMAKE_SOURCE_DIR}/tools/spirv_relaxed_precision.py ${UC_KEY_DIR}/pipeline_keys.seed ${UC_KEY_DIR}/pipeline_keys.quest ${shader_dir}/smoke.stereo.frag.spv ${shader_dir}/smoke.stereo.early.frag.spv
             ${shader_dir}/smoke.stereo.tex.frag.spv ${shader_dir}/smoke.stereo.tex.early.frag.spv
     VERBATIM)
   add_custom_target(uc_folded_tev DEPENDS ${shader_dir}/folded.stamp)

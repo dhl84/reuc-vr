@@ -29,6 +29,8 @@ if [ "$TITLE" = dc ]; then
   TITLE_ARGS=(-DUC_TITLE=dc -DUC_GENERATED_DIR="$GEN")
   GRADLE_TITLE=(-PappId=org.uc.darksidechronicles.vr "-PappName=Darkside Chronicles VR" -PdiscId=SBDE08 -PgameFolder=DarksideChronicles "-PgameTitle=Resident Evil: The Darkside Chronicles")
 fi
+# UC_APP_ID / UC_APP_NAME: another application ID and name, so that a test build installs next to the release (another signing key).
+[ -n "${UC_APP_ID:-}" ] && GRADLE_TITLE+=(-PappId="$UC_APP_ID"); [ -n "${UC_APP_NAME:-}" ] && GRADLE_TITLE+=("-PappName=$UC_APP_NAME")
 BUILD="${UC_QUEST_BUILD_DIR:-$DEFAULT_BUILD}"; PGO_ARGS=(-DUC_PGO_GENERATE=OFF -DUC_PGO_PROFILE="$PGO_PROFILE")
 if [ "$PGO_MODE" = generate ]; then BUILD="$ROOT/build-android-pgo"; PGO_ARGS=(-DUC_PGO_GENERATE=ON)
 elif [ "$PGO_MODE" = off ]; then PGO_ARGS=(-DUC_PGO_GENERATE=OFF -DUC_PGO_PROFILE="$ROOT/project/pgo/none.profdata"); fi

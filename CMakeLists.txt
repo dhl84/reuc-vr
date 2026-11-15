@@ -20,8 +20,12 @@ option(UC_NATIVE_MODS "load native (DLL) mods" ${WIN32})
 # The game this build is made for: "uc" (The Umbrella Chronicles, RBUE08) or "dc" (The Darkside Chronicles, SBDE08; bring-up, see common/title.h).
 set(UC_TITLE "uc" CACHE STRING "game to build for: uc or dc")
 set_property(CACHE UC_TITLE PROPERTY STRINGS uc dc)
+# The pipeline key lists of the game (pipeline_keys.seed, and pipeline_keys.quest for the headset): the renderer compiles them at
+# start, and the headset build folds a TEV module for each key (renderer/CMakeLists.txt). Each game draws with its own keys.
+set(UC_KEY_DIR ${CMAKE_SOURCE_DIR}/project)
 if(UC_TITLE STREQUAL "dc")
   add_compile_definitions(UC_TITLE_DC=1)
+  set(UC_KEY_DIR ${CMAKE_SOURCE_DIR}/project/dc)
 elseif(NOT UC_TITLE STREQUAL "uc")
   message(FATAL_ERROR "UC_TITLE must be uc or dc, not ${UC_TITLE}")
 endif()

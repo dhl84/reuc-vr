@@ -155,7 +155,7 @@ if(DEFINED UC_GENERATED_INCLUDE_DIR AND EXISTS ${UC_GENERATED_INCLUDE_DIR}/game_
     list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:uc>/data/shaders/folded $<TARGET_FILE_DIR:uc>/data/shaders/folded_rp)
     list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_directory ${UC_FOLDED_DIR} $<TARGET_FILE_DIR:uc>/data/shaders/folded)
     list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_directory ${UC_FOLDED_DIR}_rp $<TARGET_FILE_DIR:uc>/data/shaders/folded_rp)   # UC_RELAXED_TEV
-    list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/project/pipeline_keys.quest $<TARGET_FILE_DIR:uc>/data)   # the headset's warm-up keys
+    list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_if_different ${UC_KEY_DIR}/pipeline_keys.quest $<TARGET_FILE_DIR:uc>/data)   # the headset's warm-up keys
   endif()
   if(UC_DIRECTX_SHADER_FILES)
     list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_if_different ${UC_DIRECTX_SHADER_FILES} $<TARGET_FILE_DIR:uc>/data/shaders)
@@ -164,7 +164,7 @@ if(DEFINED UC_GENERATED_INCLUDE_DIR AND EXISTS ${UC_GENERATED_INCLUDE_DIR}/game_
     list(APPEND uc_post_build COMMAND ${CMAKE_COMMAND} -E copy_if_different ${UC_UPSCALER_RUNTIME} ${UC_DLSS5_RUNTIME_FILES} $<TARGET_FILE_DIR:uc>)
   endif()
   add_custom_command(TARGET uc POST_BUILD ${uc_post_build}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/project/pipeline_keys.seed $<TARGET_FILE_DIR:uc>/data
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${UC_KEY_DIR}/pipeline_keys.seed $<TARGET_FILE_DIR:uc>/data
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3-shared> $<TARGET_FILE_DIR:uc> VERBATIM)
   # Linker map lets crash reports (exe offsets) be resolved to runtime function names offline.
   if(UC_MSVC_FRONTEND)
@@ -188,7 +188,7 @@ if(DEFINED UC_GENERATED_INCLUDE_DIR AND EXISTS ${UC_GENERATED_INCLUDE_DIR}/game_
   install(FILES ${CMAKE_SOURCE_DIR}/third_party/smaa/LICENSE.txt DESTINATION licenses/SMAA)
   install(FILES ${mimalloc_SOURCE_DIR}/LICENSE DESTINATION licenses/mimalloc)
   install(FILES ${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md DESTINATION .)   # credits and trademark line; the licence texts go to licenses/ (renderer, cmake/upscaler_sdks.cmake)
-  install(FILES ${CMAKE_SOURCE_DIR}/project/identified_sdk.txt ${CMAKE_SOURCE_DIR}/project/symbols.txt ${CMAKE_SOURCE_DIR}/project/gx_symbols.txt ${CMAKE_SOURCE_DIR}/project/pipeline_keys.seed DESTINATION data)
+  install(FILES ${CMAKE_SOURCE_DIR}/project/identified_sdk.txt ${CMAKE_SOURCE_DIR}/project/symbols.txt ${CMAKE_SOURCE_DIR}/project/gx_symbols.txt ${UC_KEY_DIR}/pipeline_keys.seed DESTINATION data)
 else()
   message(STATUS "active generation manifest not found: skipping uc_game (build.bat runs the translator first)")
 endif()
