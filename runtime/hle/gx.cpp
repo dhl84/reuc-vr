@@ -712,6 +712,7 @@ std::shared_ptr<const PaletteData> load_palette(const PaletteSource& source) {
     return std::make_shared<const PaletteData>(PaletteData{source.format,{bytes.begin(),bytes.end()}});
 }
 gx::TextureCache texture_cache;
+const bool texture_cache_title=(texture_cache.set_rewrite_limit(gx::small_texture_texels()),texture_cache.set_version_limit(uc::title::kTextureVersionLimit),true);   // SBDE08: light textures and movie frames, which the game rewrites every frame
 // The GX texture format with the size of an EFB copy of that copy format (0x27 GX_CTF_A8, 0x28 GX_CTF_R8, 0x13 GX_TF_Z16: two bytes for each texel).
 gx::TextureFormat copy_storage_format(uint32_t format) { return (format==0x27 || format==0x28) ? gx::TextureFormat::i8 : format==0x13 ? gx::TextureFormat::ia8 : gx::TextureFormat(format); }
 // EFB copies that the game reads from memory (common/title.h kEfbCopyReadbackTexels): small copies to GX_TF_I8.

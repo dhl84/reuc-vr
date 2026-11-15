@@ -64,6 +64,19 @@ inline constexpr bool kDepthCopyAsFar = true;
 // An intensity copy of at most this number of texels is read back from the GPU and written to the guest's texture when the GPU has
 // finished it, one or two frames later (runtime/hle/gx.cpp hle_GXCopyTex). 0: no copy is read back.
 inline constexpr uint32_t kEfbCopyReadbackTexels = 1024;
+// The game lights each model with a texture of 4x4 texels (8x8 for some), RGBA8, that it computes on the CPU from the lights at the
+// place of the model: the light object of a model (vtable 806F22B4) keeps the texels at +0x40, its update (8034F238) asks the light
+// manager (80758480, virtual +0x78 = 802D61D4) to write them, every frame, and the material of the model samples them as texture map 1.
+// The first chapter has about 80 such textures, and nearly every one gets new texels in every frame. A texture of at most this number
+// of texels is handled as one that the game rewrites: the texture cache keeps only its newest texels (gx::TextureCache), and the
+// Vulkan renderer takes its GPU image from a pool and uploads through one buffer of the frame (VulkanRenderer::make_texture).
+// Before, each rewrite was a new cache entry and a new GPU image with two memory allocations. 0: no texture is handled this way.
+inline constexpr uint32_t kSmallTextureTexels = 64;
+// The movie player of the game decodes each frame into the same 640x480 RGBA8 texture, so a movie is a new version of one texture
+// in every frame. The texture cache keeps the versions of a texture, because a game may write the same texels again; a movie never
+// does, and 700 frames of it filled the cache (1 GB) and kept their GPU images. When this number of older versions of one texture
+// (same address, size, format and palette) is in the cache, a new version drops them. 0: no limit.
+inline constexpr uint32_t kTextureVersionLimit = 2;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
@@ -91,6 +104,8 @@ inline constexpr uint32_t kMem2ArenaHi = 0x933E0000;
 inline constexpr uint32_t kEfbCopyLines = 480;
 inline constexpr bool kDepthCopyAsFar = false;
 inline constexpr uint32_t kEfbCopyReadbackTexels = 0;
+inline constexpr uint32_t kSmallTextureTexels = 0;
+inline constexpr uint32_t kTextureVersionLimit = 0;
 #endif
 }  // namespace uc::title
 

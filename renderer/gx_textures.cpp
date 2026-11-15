@@ -1,5 +1,6 @@
 #include "gx_textures.h"
 #include "texture_replacement.h"
+#include "../common/title.h"
 #include "../runtime/gx_watch_stamp.h"
 #include <cstdio>
 #include <cstdlib>
@@ -167,6 +168,10 @@ size_t decoded_bytes(const TextureDesc& desc) {
     return total;
 }
 } // namespace
+uint32_t small_texture_texels() {
+    static const uint32_t texels = [] { const char* value = std::getenv("UC_SMALL_TEXTURES"); return value && value[0] == '0' ? 0u : uc::title::kSmallTextureTexels; }();
+    return texels;
+}
 TextureCache::TextureCache(size_t budget) : budget_(budget), seen_generation_(replacement_generation()) {}
 uint64_t TextureCache::replacement_generation() { return texture_replacements().generation(); }
 
@@ -227,7 +232,9 @@ std::shared_ptr<const TexturePixels> TextureCache::snapshot(uint32_t address, co
         }
         return decode_texture(desc, encoded, colors);
     };
-    if (async_) {
+    // A small texture that the game rewrites (set_rewrite_limit): 64 texels decode faster than a job reaches a worker.
+    const bool rewritten = rewrite_texels_ && uint64_t(desc.width) * desc.height <= rewrite_texels_;
+    if (async_ && !rewritten) {
         auto pending = std::make_shared<TexturePixels>();
         pending->desc_width = desc.width; pending->desc_height = desc.height;
         pending->job = std::make_shared<TextureJob>();
@@ -262,6 +269,15 @@ std::shared_ptr<const TexturePixels> TextureCache::snapshot(uint32_t address, co
         if (++miss_lines % 256 == 0) std::fflush(miss_log);
     }
     ++decodes_;
+    if (rewritten || version_limit_) {   // no entry of this key holds the bytes that are in memory now (the search above): the game wrote over them
+        const auto known = by_address_.equal_range(address);
+        size_t older = 0;
+        if (!rewritten) for (auto it = known.first; it != known.second; ++it) older += same_key(*it->second);
+        if (rewritten || older >= version_limit_) for (auto it = known.first; it != known.second;) {
+            if (!same_key(*it->second)) { ++it; continue; }
+            resident_ -= it->second->bytes; entries_.erase(it->second); it = by_address_.erase(it); ++rewrites_;
+        }
+    }
     if (bytes <= budget_) {
         while (!entries_.empty() && (resident_ > budget_ - bytes || entries_.size() >= 4096)) {
             auto last = entries_.end(); --last;

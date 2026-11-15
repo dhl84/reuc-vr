@@ -826,10 +826,27 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
         texture.mip_levels=uint32_t(std::bit_width(std::max(texture.extent.width,texture.extent.height)));
         texture.auto_mips=texture.mip_levels>1;
     }
+    // A small texture that the game rewrites every frame (SBDE08's light textures, common/title.h kSmallTextureTexels): its image comes from
+    // the pool of such images that no submission uses any more, and its texels go through the staging buffer of the slot that uploads it
+    // (the uploads in render()). No image, memory or buffer is made for a rewrite once the pool is warm.
+    texture.pooled=pixels && !gpu_only && !texture.bc7 && texture.channels==gx::TextureChannels::rgba && !physical_extent.width &&
+        pixels->levels.size()==1 && uint64_t(level.width)*level.height<=gx::small_texture_texels();
+    if(texture.pooled) {
+        const auto found=std::find_if(recycled_textures_.begin(),recycled_textures_.end(),[&](const Texture& old) {
+            return old.extent.width==texture.extent.width && old.extent.height==texture.extent.height && old.mip_levels==texture.mip_levels && old.auto_mips==texture.auto_mips;
+        });
+        if(found!=recycled_textures_.end()) {
+            Texture reused=std::move(*found);
+            if(found!=recycled_textures_.end()-1) *found=std::move(recycled_textures_.back());
+            recycled_textures_.pop_back();
+            ++texture_reuses_;
+            return reused;
+        }
+    }
     try {
-        if(!gpu_only) texture.upload=make_buffer(upload_size,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        if(!gpu_only && !texture.pooled) texture.upload=make_buffer(upload_size,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         size_t at=0;
-        if(!gpu_only) for(uint32_t i=0;i<source_levels;++i) { const auto& mip=pixels ? pixels->levels[i] : white; std::memcpy(static_cast<std::byte*>(texture.upload.mapped)+at,mip.rgba.data(),mip.rgba.size()); at+=mip.rgba.size(); }
+        if(!gpu_only && !texture.pooled) for(uint32_t i=0;i<source_levels;++i) { const auto& mip=pixels ? pixels->levels[i] : white; std::memcpy(static_cast<std::byte*>(texture.upload.mapped)+at,mip.rgba.data(),mip.rgba.size()); at+=mip.rgba.size(); }
         VkImageCreateInfo create{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; create.imageType=VK_IMAGE_TYPE_2D; create.format=format;
         create.extent={texture.extent.width,texture.extent.height,1}; create.mipLevels=texture.mip_levels; create.arrayLayers=gpu_only ? layers_ : 1; create.samples=VK_SAMPLE_COUNT_1_BIT;
         create.tiling=VK_IMAGE_TILING_OPTIMAL; create.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|(gpu_only || texture.auto_mips ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
@@ -955,6 +972,15 @@ void VulkanRenderer::recycle_copy_texture(Texture& texture) {
     catch(...) { destroy_texture(texture); throw; }
     recycled_copy_bytes_+=recycled_copies_.back().allocation_size;
     texture={};
+}
+// The last slot let go of a texture. No submission uses the image of a pooled texture (make_texture) then, so it waits for the next
+// small texture of its size. The pool holds the images of a few frames; more than that is freed.
+void VulkanRenderer::release_texture(Texture& texture) {
+    if(texture.pooled && recycled_textures_.size()<kRecycledTextures) {
+        texture.source.reset(); texture.initialized=false; texture.uploader=nullptr;
+        try { recycled_textures_.push_back(std::move(texture)); texture={}; return; } catch(...) {}
+    }
+    destroy_texture(texture);
 }
 void VulkanRenderer::destroy_texture(Texture& texture) {
     for(int layer=0;layer<2;++layer) { intensity_copy_.free_set(texture.intensity_sets[layer]); if(texture.intensity_views[layer]) vkDestroyImageView(device,texture.intensity_views[layer],nullptr); }
@@ -1868,7 +1894,7 @@ void VulkanRenderer::retire_images(bool keep_buffers) {
     for (auto& slot : slots_) {
         if (!keep_buffers) {
             retire_textures(slot);
-            destroy_buffer(slot.vertices); destroy_buffer(slot.indices); destroy_buffer(slot.pixels); destroy_buffer(slot.readback); slot.readback_target.reset(); destroy_buffer(slot.uniforms); destroy_buffer(slot.palettes); destroy_buffer(slot.banks); destroy_buffer(slot.motions); slot.mesh_refs.clear();
+            destroy_buffer(slot.vertices); destroy_buffer(slot.indices); destroy_buffer(slot.pixels); destroy_buffer(slot.staging); destroy_buffer(slot.readback); slot.readback_target.reset(); destroy_buffer(slot.uniforms); destroy_buffer(slot.palettes); destroy_buffer(slot.banks); destroy_buffer(slot.motions); slot.mesh_refs.clear();
             for (Buffer* buffer:{&slot.xform_jobs,&slot.xform_chunks,&slot.xform_positions,&slot.xform_attributes,&slot.xform_indices}) destroy_buffer(*buffer);
         }
         destroy_slot_images(slot);
@@ -3330,7 +3356,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                     if(const auto pooled=texture_pool_.find(source.get()); pooled!=texture_pool_.end()) shared=pooled->second.lock();
                     if(!shared) {
                         auto texture=make_texture(source.get()); texture.source=source;
-                        shared=std::shared_ptr<Texture>(new Texture(std::move(texture)),[this](Texture* dead) { texture_pool_.erase(dead->source.get()); destroy_texture(*dead); delete dead; });
+                        shared=std::shared_ptr<Texture>(new Texture(std::move(texture)),[this](Texture* dead) { texture_pool_.erase(dead->source.get()); release_texture(*dead); delete dead; });
                         texture_pool_[source.get()]=shared;
                     }
                     slot.textures.push_back(std::move(shared));
@@ -3653,18 +3679,28 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         }
     }
     for (Texture* copy : copy_mips) record_copy_mips(slot.command, *copy);
+    VkDeviceSize staged=0;   // pooled textures (make_texture) have no buffer of their own: their texels go through one buffer of the slot
+    for (const auto& held : slot.textures) if (!held->initialized && held->pooled) staged+=held->source->levels[0].rgba.size();
+    if (staged>slot.staging.size) { destroy_buffer(slot.staging); slot.staging=make_buffer(std::max<VkDeviceSize>(staged*2,16384),VK_BUFFER_USAGE_TRANSFER_SRC_BIT); }
+    staged=0;
     for (const auto& pooled : slot.textures) {
         Texture& texture=*pooled;
         if (texture.initialized) continue;
         texture.uploader=&slot;
+        VkBuffer upload=texture.upload.buffer; VkDeviceSize upload_offset=0;
+        if (texture.pooled) {
+            const auto& rgba=texture.source->levels[0].rgba;
+            std::memcpy(static_cast<std::byte*>(slot.staging.mapped)+staged,rgba.data(),rgba.size());
+            upload=slot.staging.buffer; upload_offset=staged; staged+=rgba.size();
+        }
         barrier(slot.command,texture.image,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_2_NONE,0,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,texture.mip_levels);
         const uint32_t uploaded=texture.auto_mips ? 1 : texture.mip_levels;   // generated mips: only level 0 comes from the CPU
-        std::vector<VkBufferImageCopy> copies(uploaded); VkDeviceSize at=0;
+        std::vector<VkBufferImageCopy> copies(uploaded); VkDeviceSize at=upload_offset;
         for(uint32_t i=0;i<uploaded;++i) {
             const auto width=std::max(1u,texture.extent.width>>i),height=std::max(1u,texture.extent.height>>i);
             copies[i].bufferOffset=at; copies[i].imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,i,0,1}; copies[i].imageExtent={width,height,1}; at+=texture.bc7 ? gx::bc7_level_size(width,height) : VkDeviceSize(width)*height*4;
         }
-        vkCmdCopyBufferToImage(slot.command,texture.upload.buffer,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(copies.size()),copies.data());
+        vkCmdCopyBufferToImage(slot.command,upload,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(copies.size()),copies.data());
         if(texture.auto_mips) {   // each level a linear blit of the one above, as EFB copies make theirs (record_texture_copy)
             for(uint32_t i=1;i<texture.mip_levels;++i) {
                 barrier(slot.command,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,1,i-1);
@@ -5283,6 +5319,8 @@ void VulkanRenderer::shutdown() {
         copy_aliases_.clear(); latest_copies_.clear();
         for(auto& texture:recycled_copies_) destroy_texture(texture);
         recycled_copies_.clear(); recycled_copy_bytes_=0;
+        for(auto& texture:recycled_textures_) destroy_texture(texture);   // retire_images() above let go of the slots' textures
+        recycled_textures_.clear();
         if(depth_view_) vkDestroyImageView(device,depth_view_,nullptr);
         if(depth_) vkDestroyImage(device,depth_,nullptr);
         if(depth_memory_) vkFreeMemory(device,depth_memory_,nullptr);

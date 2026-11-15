@@ -67,6 +67,10 @@ struct TexturePixels {
 // Decodes texture data into owned RGBA8 pixels; guest addresses never escape.
 TexturePixels decode_texture(const TextureDesc& desc, std::span<const std::byte> pixels, PaletteView palette = {});
 size_t encoded_texture_size(const TextureDesc& desc);
+// The largest texture, in texels of level 0, that is handled as one that the game rewrites every frame (common/title.h
+// kSmallTextureTexels; 0 for a game without such textures). UC_SMALL_TEXTURES=0 turns the handling off, for a comparison with the
+// path of every other texture.
+uint32_t small_texture_texels();
 class TextureCache {
 public:
     explicit TextureCache(size_t budget = size_t(1) << 30);
@@ -78,6 +82,14 @@ public:
     // With async on, a cache miss returns at once and a small worker pool fills the pixels; the renderer calls TexturePixels::wait() before it reads them.
     void set_async(bool on) { async_ = on; }
     void set_budget(size_t bytes) { budget_ = bytes; }   // any thread (mods can switch texture packs on while the game runs)
+    // A texture of at most this number of texels (level 0) that the game rewrites (SBDE08's light textures, common/title.h kSmallTextureTexels):
+    // new bytes at the same address, size, format and palette replace the entries that hold the old bytes, and the decode runs on the
+    // calling thread. 0 (the default): every version stays in the cache until the budget evicts it.
+    void set_rewrite_limit(uint32_t texels) { rewrite_texels_ = texels; }
+    // A texture of any size that the game rewrites again and again (SBDE08's movie frames, common/title.h kTextureVersionLimit): when
+    // this number of entries holds older bytes of the address, size, format and palette, new bytes replace them. 0 (the default): no limit.
+    void set_version_limit(uint32_t versions) { version_limit_ = versions; }
+    uint64_t rewrites() const { return rewrites_; }   // entries dropped because the game wrote new texels over them; never reset
     size_t resident_bytes() const { return resident_; }
     uint64_t decodes() const { return decodes_; }
     uint64_t evictions() const { return evictions_; }   // entries dropped to fit the budget; never reset
@@ -98,7 +110,8 @@ private:
     std::atomic<size_t> budget_;
     size_t resident_ = 0;
     uint64_t seen_generation_ = 0;
-    uint64_t decodes_ = 0, evictions_ = 0;
+    uint64_t decodes_ = 0, evictions_ = 0, rewrites_ = 0;
+    uint32_t rewrite_texels_ = 0, version_limit_ = 0;
     bool async_ = false;
 };
 } // namespace gx

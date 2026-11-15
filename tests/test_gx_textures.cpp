@@ -180,6 +180,39 @@ int main() {
         for (int pass=0;pass<2;++pass) for (uint32_t i=0;i<20;++i) scene.snapshot(0x80400000+i*0x600000,big,big_texture);
         CHECK(scene.decodes()==20 && scene.evictions()==0);
     }
+    // Small textures that the game rewrites (set_rewrite_limit, SBDE08's light textures): new bytes replace the entry with the old ones, the
+    // texture that a caller still holds keeps its pixels, and the decode is done when snapshot() returns even with background decoding on.
+    {
+        gx::TextureCache lights; lights.set_async(true); lights.set_rewrite_limit(64);
+        std::vector<uint8_t> texels(64,10), large(128,10);   // 4x4 RGBA8 is one tile of 64 bytes; 16x8 I8 is four tiles of 32 bytes
+        const gx::TextureDesc light{4,4,gx::TextureFormat::rgba8}, other{16,8,gx::TextureFormat::i8};
+        auto v1=lights.snapshot(0x80500000,light,bytes(texels));
+        CHECK(!v1->job && v1->levels.size()==1 && v1->levels[0].rgba[0]==10 && lights.rewrites()==0);
+        const auto one_entry=lights.resident_bytes();
+        for (uint8_t value=20;value<60;++value) {
+            texels.assign(64,value); gx::note_write_range(0x80500000,64);
+            auto next=lights.snapshot(0x80500000,light,bytes(texels));
+            CHECK(next!=v1 && !next->job && next->levels[0].rgba[0]==value);
+        }
+        CHECK(lights.rewrites()==40 && lights.resident_bytes()==one_entry && lights.decodes()==41 && v1->levels[0].rgba[0]==10);
+        CHECK(lights.snapshot(0x80500000,light,bytes(texels))->levels[0].rgba[0]==59 && lights.decodes()==41);   // the newest version is a hit
+        // A texture above the limit keeps every version, as without the limit.
+        auto big1=lights.snapshot(0x80600000,other,bytes(large)); big1->wait();
+        large.assign(128,77); gx::note_write_range(0x80600000,128);
+        auto big2=lights.snapshot(0x80600000,other,bytes(large)); big2->wait();
+        large.assign(128,10); gx::note_write_range(0x80600000,128);
+        CHECK(lights.snapshot(0x80600000,other,bytes(large))==big1 && lights.rewrites()==40);
+        // A limit of versions (set_version_limit, SBDE08's movie frames): the third version of a texture drops the two before it.
+        lights.set_version_limit(2);
+        large.assign(128,78); gx::note_write_range(0x80600000,128);
+        auto big3=lights.snapshot(0x80600000,other,bytes(large)); big3->wait();
+        CHECK(lights.rewrites()==42 && big3->levels[0].rgba[0]==78 && big1->levels[0].rgba[0]==10);
+        large.assign(128,10); gx::note_write_range(0x80600000,128);
+        auto big4=lights.snapshot(0x80600000,other,bytes(large));
+        CHECK(big4!=big1 && lights.rewrites()==42);   // one older version (big3) is below the limit: it stays
+        large.assign(128,78); gx::note_write_range(0x80600000,128);
+        CHECK(lights.snapshot(0x80600000,other,bytes(large))==big3);
+    }
     gx::TextureCache many;
     std::vector<std::shared_ptr<const gx::TexturePixels>> expected;
     for(uint32_t i=0;i<512;++i) expected.push_back(many.snapshot(0x80010000+i*32,{1,1,gx::TextureFormat::i8},bytes(data)));

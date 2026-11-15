@@ -211,6 +211,7 @@ private:
         bool mips_pending=false;   // an EFB copy whose levels 1.. are not made yet: record_copy_mips, when a draw first samples it with a mip filter
         gx::TextureChannels channels=gx::TextureChannels::rgba;
         bool bc7=false;   // a texture replacement: BC7 blocks, not RGBA8
+        bool pooled=false;   // a small texture that the game rewrites: the image goes back to recycled_textures_, the texels are uploaded through Slot::staging
         VkImageView intensity_views[2]{}; VkDescriptorSet intensity_sets[2]{};   // an EFB copy to an intensity format: one layer each, for the conversion pass (intensity_copy_)
         VkDeviceSize allocation_size=0;
         std::shared_ptr<const gx::TexturePixels> source;
@@ -226,6 +227,7 @@ private:
         VkImageView view = VK_NULL_HANDLE;
         VkImage ui_image = VK_NULL_HANDLE; VkDeviceMemory ui_memory = VK_NULL_HANDLE; VkImageView ui_view = VK_NULL_HANDLE;   // HDR: the menu and prompts, composited at UI brightness
         Buffer vertices, indices, pixels, uniforms, palettes, banks, motions;   // vertices/indices: this frame's non-mesh draws; motions: MotionBlock per scene draw
+        Buffer staging;   // the texels of the pooled textures that this submission uploads (Texture::pooled)
         Buffer xform_jobs, xform_chunks, xform_positions, xform_attributes, xform_indices;   // the vertex pre-pass (xform_): its input table, outputs and the rebased indices
         VkDescriptorPool xform_pool = VK_NULL_HANDLE; VkDescriptorSet xform_set = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<const gx::MeshBuffers>> mesh_refs;   // keeps the meshes this submission draws alive until its fence completed
@@ -268,6 +270,7 @@ private:
     void record_copy_mips(VkCommandBuffer command, Texture& target);   // levels 1.. of an EFB copy from level 0 (SHADER_READ before and after)
     void recycle_copy_texture(Texture& texture);
     void destroy_texture(Texture& texture);
+    void release_texture(Texture& texture);
     void retire_textures(Slot& slot);
     void rebuild();
     void retire_images(bool keep_buffers=false);
@@ -633,6 +636,8 @@ private:
     VkImageView depth_view_=VK_NULL_HANDLE;
     static constexpr size_t kFrameSlots = 16;   // GPU submissions in flight (6 stalled the render thread behind the first heavy packet of a ~23-packet frame; 16 ends that stall, 48 gains ~5% more for much more host-visible memory); the guest's queue window is larger (gx::kMaxOutstandingPackets)
     std::unordered_map<const gx::TexturePixels*,std::weak_ptr<Texture>> texture_pool_;   // before slots_: the slots' textures erase themselves from it
+    static constexpr size_t kRecycledTextures = 512;
+    std::vector<Texture> recycled_textures_;   // images of pooled textures (Texture::pooled) that no slot holds; before slots_ for the same reason
     std::array<Slot, kFrameSlots> slots_{};
     // RT albedo/material targets (scene extent, created and destroyed with rt_material_active()) and the records of the frame: per frame-in-flight
     // buffers, grow-only, filled per scene packet from rt_record_count_ on. Read by RT passes at the scene boundary.
