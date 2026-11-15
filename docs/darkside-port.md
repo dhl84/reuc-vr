@@ -161,6 +161,33 @@ Checked on 15 November 2026 (first chapter, speed 1, retrace counts, not wall ti
 - Not checked: the speed of enemies and of model animations in a fight. Enemies come only after shots, and two runs of the spray input do not fight the same fight. The code of the four readers above says that model animations keep their speed.
 - Not done: the pause of the PC port (`game_pacing_set_paused`) does nothing in this game.
 
+## Controls
+
+The message file of the game (`Data/message/mes_us.txtres`) describes its controls. B fires. A wave of the Wii Remote or of the Nunchuk reloads, and B reloads when the magazine is empty. A held with a wave swings the knife. Waves shake off an enemy that holds the player. Each direction of the +Control Pad holds one weapon or herb. Plus pauses.
+
+A host has no accelerometer. The input sample carries a wave as one more button bit above the 16 bits of the Wii Remote (`common/title.h`, `kButtonWave`, 0x10000). While the bit is set, `KPADRead` reports a remote that swings from side to side: 3 g to the left and to the right in turn, with the matching `acc_value` and `acc_speed`. The step `press:WAVE*12` of `scripts/drive.py` sends it. In the first fight the ammunition ring showed 11 of 16 rounds after five shots, the same 90 retraces later, and 16 rounds after the wave.
+
+The PC action layer of `RBUE08` reads the game state of that game. For `SBDE08` one fixed mapping takes its place (`game/game_input.cpp`):
+
+- Interact, confirm and the knife action press A. Fire presses B. Back presses minus. Pause presses plus.
+- Reload, the knife action and a shake of the mouse or of the VR controller send the wave for 12 reads.
+- Next weapon and previous weapon press the next direction of the +Control Pad, in the order up, right, down, left.
+
+On the headset the trigger is fire, a trigger pull off the picture or the grip is reload, the lower face button is A, the upper face button is the next weapon, and a click of the stick is pause. The game takes B as OK in its menus, so the trigger also confirms. This mapping is not tested on a headset yet.
+
+The game draws its reticle at 1.25 times the pointer in x and 1.67 times in y, as `RBUE08` does, so the pointer of the VR controller needs no other scale.
+
+## The headset view
+
+`UC_VR_PREVIEW=1` shows the stereo view of the headset in the window of the PC build, the two eyes side by side. `UC_VR_YAW` and `UC_VR_PITCH` turn the head by degrees. `SBDE08` runs in it. Two things needed work, because `RBUE08` takes them from its game state:
+
+- The layout of the 2D draws. In a menu they are on a flat screen in the world. In a chapter the HUD follows the head. `SBDE08` gives no menu state, so the renderer decides from the frames (`VulkanRenderer::menu_layout`). A frame that drew the world is gameplay. 20 frames in a row without the world are a menu, a movie or a loading screen.
+- The reticle. The headset draws it where the controller points, not with the HUD. The laser dot of `SBDE08` comes from the call sites 800BB264 and 800BB4D8. Its rings are panes of the layout library (call site 804E0228, which draws every HUD pane) with a square texture at the centre of the dot. `gx::mark_reticle_draws_dc` (`renderer/late_aim.h`) marks them. The list of draws came from the step `draws` of `scripts/drive.py` at two aim points.
+
+Checked in the preview on 15 November 2026: the title screen, the profile screen and the movie are on the flat screen. The chapter is in stereo. With the head turned 25 degrees the HUD and the subtitles stay with the head, and the reticle stays with the world.
+
+Not done for the headset: the shot follows the pointer of the game and not the ray of the controller (the hooks of `game/xr_shot.cpp` name `RBUE08` functions), and nothing is moved to a later pointer (`late_aim`).
+
 ## State
 
 On 15 November 2026 the Windows build of `SBDE08` does this:
@@ -193,7 +220,7 @@ Not done yet:
 - The chapter is not played to its end. The test input shoots at a grid of points and does not win against the boss.
 - In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
 - `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
-- Keyboard, mouse, gamepad and VR controller input. The PC action layer reads `RBUE08` game state, so it is off, and only the Wii Remote sample of the test server reaches the game.
-- The Quest build, the VR view and the VR aim.
+- Keyboard, mouse, gamepad and VR controller input have one fixed mapping (see "Controls"). It is not tested with real devices.
+- The Quest app builds (`scripts/build-quest.sh` with `UC_TITLE=dc`), and the stereo view runs in the PC preview. Nothing is tested or measured on a headset yet.
 - The exposure read-back and the conversion of `GX_TF_I8` copies are in the Vulkan renderer only. The read-back takes the first layer (the left eye of a stereo view).
 - The HOME button dims the screen and shows the hand pointer, but the menu itself is not checked.
