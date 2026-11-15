@@ -58,6 +58,11 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 - The log line `[perf-dc]` gives, for each second, the small textures that took a GPU image of the pool, the read-backs of the exposure copy and their host time.
 - `UC_SMALL_TEXTURES=0` turns the handling of small rewritten textures off (see "The render thread"): the texture cache keeps every version, and the renderer makes a GPU image for each. Use it to compare.
 - The step `trace:NAME,N[,EVERY]` of `scripts/drive.py` writes the screen box of every draw of N frames to a file. The boxes of the same draws over the retraces show how the camera and the models move. Two runs can be compared this way (the pictures of two runs are never taken at the same game time).
+- `UC_DC_GOD=1` keeps the health of the two players and of the partner full (see "Play-through"). It is a test aid and is off by default.
+- The step `bot:N[,EVERY[,TEXT]]` of `scripts/drive.py` is the spray with one more press after each row of points: A at the right of the screen, the wave, Z, A in the middle, A+B, the wave, A at the left. It passes the quick-time prompts, reloads, takes a choice of ways and the prompt "Move". With TEXT, the step ends after the game log holds that text. An example is `chapterResult_us.arc`, which the game opens for the result screen of a chapter.
+- The step `live:NAME` takes its steps from a file while the game runs. Another program appends lines to the file. Use it for a screen that is not known yet: look at a frame, then send the next steps.
+- The step `watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]` reads a pointer and watches the value behind it. It prints each change of the value with the retrace count. It also prints each new log line that holds one of the texts.
+- `UC_AUDIO_DUMP=<prefix>` writes every block of mixed sound to `<prefix>.<pid>`. `scripts/audio_check.py` turns the file into a WAV file. It prints the level, the clipping and the spectrum of a WAV file. It also finds a decoded stream file of the game in a WAV file (see "Sound").
 
 The game ignores A, B and Z as "OK" while the pointer is exactly at the centre of the screen (0, 0). Move the pointer first, for example `aim:-0.2,0.1`.
 
@@ -77,6 +82,71 @@ The first line creates the save and passes the intro movie and the title screen.
 The fixed waits of the third and the last line do not fit every run: in one run the A press on Leon did not take, and the chapter's movie started 7900 retraces later, with the next A press. These steps wait for the movie and for the end of the loading instead: `aim:-0.27,-0.2 wait:60 until:MV_301_10.sfd,A,120,3000 waitlog:EZ0S_r302.arc,12000`. The game opens `EZ0S_r302.arc` when the walk into the village starts, about 6600 retraces after the movie file. The first voice line of the walk (`VO_3015000.brstm`) follows about 300 retraces later; `waitlog` on it gives two runs the same game time within a few retraces.
 
 To play on without the places of the enemies, repeat these steps: `spray:220,2 aim:0.47,-0.03 wait:6 press:A wait:20 shot:NAME`. `spray` shoots 220 times over a grid of points, one shot every 2 input frames. The A press at that place takes "Go Right" when the game shows a choice of ways; in a run without that press the choice waited for more than 25000 retraces. On 15 November 2026 a run of 90 such rounds (146000 retraces, `--seconds 1200 --speed 4`) went through the streets, the market, the spiders, the hut with the wounded man, the choice of ways and the flooded part of the village to the boss of the chapter. The player died at the boss several times; each time the game showed "You are Dead" and the screen "Loading data" and went on from its last checkpoint. No run stopped with an error.
+
+## Play-through
+
+On 15 November 2026 the Windows build was played from the first chapter on. The runs used the test aid `UC_DC_GOD=1`, the step `bot` of `scripts/drive.py`, and speed 4 or speed 6.
+
+### The health and the test aid
+
+- The health of a player is the float at `+0x974` of the player object. 50 is full and 0 is dead. This is the "LEON" bar of the HUD.
+- The setter 800AC7EC holds the value between 0 and 50. A hit subtracts its damage (800ACA74). A herb adds to the value (800AC86C).
+- The player manager is the object at 80736378. Its getter is 80046EFC. It keeps one handle for each of the two players at `+0xAC`. A handle is an id and an index into the object table at 80732B88. An entry of the table is an id and a pointer. The function 80046DC8 finds a player this way.
+- The partner is not a player object. This is the "KRAUSER" or "CLAIRE" bar. The object at 80735500 keeps four health values at `+0xF8` and their maxima at `+0xE8`. Its getter is 80049CC8. The HUD reads the value at 800B17C0.
+- `UC_DC_GOD=1` writes the full value to the two players and to the partner at every retrace (`game/uc_main.cpp`, constants in `common/title.h`). A hit takes less than the full health, so one write for each retrace is sufficient. The game still plays its hit reactions.
+- How it was found: the layout names `lifebar1p` and `gauge_1p` lead to the HUD code. The HUD update 800E9604 gets the float `+0x974` of the player at 800AD174. Two memory dumps, one before the damage and one after the death, showed 50 and 0 there.
+
+Checked with frames: the "LEON" bar stays full while zombies hold the player and during the boss fight. Without the aid the same fight takes the health from 50 to 0 in steps of 5 (see "The 60 Hz mode").
+
+### The steps from one chapter to the next
+
+The spray moves the pointer and presses in the same frame. In a menu such a press takes a button only by chance. These steps operate the menus:
+
+- After the last scene of a chapter the game opens `chapterResult_us.arc` and shows the screen "RESULTS". The button NEXT is at `aim:0.59,0.237`. More screens follow, one for each new weapon and archive item ("You got Sub Machinegun."). `aim:0.59,0.237 until:NEVERMATCH,A,90,1800` presses NEXT on all of them.
+- Then a menu shows CHRONICLES, ARCHIVES, CUSTOMIZE and MAIN MENU. `aim:0,-0.29 wait:60 press:A` takes CHRONICLES. At this press the game writes the save file. Before it, the save file holds only the last checkpoint of the chapter.
+- The next screen shows the weapons of the two characters. `aim:0.59,0.237 wait:60 press:A` takes NEXT, and the next chapter loads. A new scenario shows the character screen first: `aim:0.25,0.0 wait:60 press:A` takes the character at the right.
+- One chapter in a loop: `speed:4 wait:1500 press:A wait:600 speed:6 bot:20000,2,chapterResult_us.arc`, then the three steps above.
+
+The next steps go from the start of the game to a saved chapter. They need a save folder that has a file: copy the folder `saves` of an earlier run into the output folder of the new run.
+
+```
+aim:-0.2,0.1 until:menu01.brstm,A,60,6000 wait:300 speed:1 press:A wait:240
+aim:-0.16,-0.15 wait:40 press:A wait:240 aim:-0.21,0.26 wait:40 press:A wait:300 aim:0,-0.12 wait:40 press:A wait:300
+aim:-0.1,0.05 wait:60 press:A wait:300 aim:0.06,0.22 wait:120 press:A wait:240 aim:-0.16,0.115 wait:60 press:A wait:900
+```
+
+The first line goes to the profile screen. The second line takes FILE 01, YES and CHRONICLES. The third line takes the left scenario of the stage screen and the chapter piece at the bottom. Then it answers YES to "Do you want to resume the game from this checkpoint?". The chapter piece is at a different place for each chapter.
+
+### What ran
+
+| Chapter | Result |
+|---|---|
+| Operation Javier, Chapter 1 | Played from its start to the screen "RESULTS": the village, the flooded part and the boss in the church. Clear time 00:21:43, 42 enemies. |
+| Memories of a Lost City, Chapter 1 | Played to "RESULTS": the streets of the city and the gun shop. |
+| Memories of a Lost City, Chapter 2 | Played to "RESULTS": the police station. Clear time 00:09:45, 25 enemies. |
+| Memories of a Lost City, Chapter 3 | Played to "RESULTS". Clear time 00:15:43, 34 enemies. |
+| Memories of a Lost City, Chapter 4 | Played to "RESULTS" in the second run: the sewer with the spiders. The first run went back to the menus (see below). |
+| Memories of a Lost City, Chapter 5 | Played to "RESULTS". Clear time 00:23:35, 92 enemies. |
+| Memories of a Lost City, Chapter 6 | Played to "RESULTS" after the change for the point draw (see below). Before the change the run stopped 170 s into the chapter. |
+| Memories of a Lost City, Chapter 7 | Played to "RESULTS". Clear time 00:32:53, 84 enemies. |
+| Memories of a Lost City, Chapter 8 | Not played. The last run ended on the weapon screen before this chapter. |
+
+The clear time is the time of the game clock. A chapter of 15 minutes takes about 3 minutes at speed 6.
+
+After each chapter the game showed its result screens and the screens for new weapons and archive items. It wrote the save file, and the next run loaded it: the profile screen showed the picture of the file, and the game asked "Do you want to resume the game from this checkpoint?". The chapter screen showed one piece for each open chapter.
+
+One run stopped with an error: the point draw in the sixth chapter of "Memories of a Lost City". The log of each run was searched for the words "unsupported", "invalid", "exception", "fatal" and "assert".
+
+### Faults found and fixed
+
+- The piece under the pointer on the chapter screen and on the character screen was a dark square. The cause was the native `GXSetBlendMode`. The SDK function writes the subtract bit of the blend word at every call: it sets the bit for `GX_BM_SUBTRACT` and clears it for every other mode (803A7F98). The native kept the bit after it was set. After the first subtract draw, every draw that set its blend through this function was subtracted from the picture. The glow of the piece is an additive quad with an indirect texture (call site 804A0A20). The effect sprites (call site 8049CD48) use the same path. The bits that the native replaces are now a constant of each game (`kBlendModeBits` in `common/title.h`). `RBUE08` has the same SDK code, but it keeps its old value until one of its scenes with a subtract draw is checked.
+- The effect library draws one kind of particle as `GX_POINTS`, one point for each `GXBegin` (call site 804A1D10, in a display list). The native renderers have no point primitive. The draw stopped the game with "unsupported native draw topology" in the sixth chapter of "Memories of a Lost City". A point draw is dropped now (`kDropPointDraws` in `common/title.h`, `dropped_point_draw` in `runtime/hle/gx.cpp`), and the log names the first one. These particles are missing from the picture.
+- The test aid did not hold the partner's health at first. The partner's bar went down in the first chapter. In the fourth chapter of "Memories of a Lost City" one run opened `menu02.brstm` and went back to the menus. When the player is dead, the game opens this file: the three runs without the aid opened it after the health was 0, and no other run opened it. The players had the aid in that run, so the death of the partner is the probable cause. No frame shows it. The aid writes the partner's health now. Two more runs of that chapter reached "RESULTS", the first of them still without the write. The step `bot:N,2,menu02.brstm` ends at a game over.
+
+### Not faults
+
+- The log line `[save] call from 803C8934 failed: -105` comes at each save. `ISFS_CreateFile` answers "the file exists", and the game then writes the file. The save file loads in the next run.
+- With the game clock at speed 6 a chapter presents 75 to 235 frames for 360 retraces. At speed 1 the second chapter holds 30 frames for 60 retraces with 2.5 to 3 ms of render time for a frame.
 
 ## Frame pacing and load
 
@@ -158,8 +228,57 @@ Checked on 15 November 2026 (first chapter, speed 1, retrace counts, not wall ti
 - The camera of the walk, with the `trace` step (173 draws followed for 650 retraces after the first voice line, two runs at 30 Hz and one at 60 Hz): from 60 to 530 retraces the boxes of the 60 Hz run were where the 30 Hz runs had them 1 retrace before, which is the precision of the start. Then a guest frame of 133 ms made the 60 Hz run 4 retraces late (see the open item above). The distance of the box centres at the same times (RMS, median of the draws) was 0.006 screen units between the two 30 Hz runs and 0.011 to 0.013 between a 30 Hz run and the 60 Hz run, the late part included.
 - The movie of the chapter with its loading, at speed 4: 6671 retraces at 60 Hz, 6610 at 30 Hz.
 - Load at 60 Hz: 59.9 frames for 60 retraces in the walk without input (78 s), 59.4 with the spray input (40 s; the seconds below 59 hold a frame capture or a long guest frame). The render thread needs 1.6 to 1.7 ms for a frame, and the guest 14 to 15 million cycles (850 to 900 million each second).
-- Not checked: the speed of enemies and of model animations in a fight. Enemies come only after shots, and two runs of the spray input do not fight the same fight. The code of the four readers above says that model animations keep their speed.
+- The speed of the enemies was checked on 15 November 2026: one run for each mode, speed 2, no shot, no test aid. After the walk the zombies of the first fight hit the player ten times. Each hit takes 5 of the 50 health (see "Play-through"). The step `watchptr` gave the retrace of each hit. The table counts the retraces from the first voice line of the walk (`VO_3015000.brstm`).
+
+| | 30 Hz step | 60 Hz step |
+|---|---|---|
+| Last voice line before the hits (`VO_3015018.brstm`) | 6715 | 6718 |
+| Hits 1 to 10 | 7007, 7403, 7819, 8282, 8719, 9137, 9471, 9808, 10313, 10759 | 7001, 7425, 7799, 8238, 8578, 8949, 9315, 9769, 10115, 10602 |
+| Mean time between two hits | 417 | 400 |
+
+- The first hit comes at the same time in the two modes. The ten hits take 3752 retraces with the 30 Hz step and 3601 with the 60 Hz step. Enemies at twice the speed need about half of that time. After the first hit the two runs do not fight the same fight, because the zombies choose their attacks. The difference of 4 % is not more than that.
+- Not checked: the speed of model animations that are not part of a fight. The code of the four readers above says that they keep their speed.
 - Not done: the pause of the PC port (`game_pacing_set_paused`) does nothing in this game.
+
+## Sound
+
+No person listened to the game yet. On 15 November 2026 the sound was checked with numbers.
+
+How the port makes sound:
+
+- The game's sound library (NW4R) fills the parameter blocks of the SDK's voices. The native `hle_AXFrame` (`runtime/ax_audio.cpp`) runs every 3 ms of game time. It calls the game's voice callbacks and mixes the voices into 96 stereo frames: 32000 Hz, 16 bit.
+- The mixer decodes PCM and ADPCM samples and changes the rate with the nearest sample. It applies the envelope and the left and right volume of each voice. It has no auxiliary buses (reverb), no filters and no surround channel. These are shortcuts of the `RBUE08` port.
+- `AudioOutput::write` (`game/audio_output.cpp`) gives each block to an SDL audio stream. `--mute` sets the gain of that stream to 0.
+- `UC_AUDIO_DUMP=<prefix>` writes each block to a file before the stream gets it. The dump works with `--mute` and at each speed of the game clock, because the samples are game time.
+
+The check (`scripts/audio_check.py`, one run from the start of the game to the menu after the first chapter, 2153 s of sound):
+
+| Part of the run | RMS, dBFS | Peak, dBFS | Samples at full scale | Spectral flatness |
+|---|---|---|---|---|
+| Before the intro movie (20 s) | silence, all samples 0 | - | 0 % | - |
+| Intro movie, title and menus | -22.0 | 0.0 | 0.000 % | 0.07 |
+| Walk into the village, voices | -18.5 | 0.0 | 0.002 % | 0.06 |
+| Fights of the first chapter | -10.8 to -12.7 | 0.0 | 0.2 to 0.8 % | 0.18 to 0.27 |
+| Boss fight | -7.6 to -9.9 | 0.0 | 2.6 to 4.6 % | 0.11 to 0.26 |
+| Menu after the chapter | -21.1 | -4.3 | 0.000 % | 0.00 |
+
+A flatness of 1 is white noise, and a value near 0 is tones. The centre of the spectrum is between 380 and 1570 Hz. 0 to 4 % of the energy is above 8 kHz.
+
+Comparison with the stream files of the game, decoded with ffmpeg (`ffmpeg -i menu01.brstm menu01.wav`):
+
+- Title music (`menu01.brstm`, stereo, 32000 Hz). The capture holds it from 29.907 s. The log shows the open of the file at retrace 1807, which is 30.1 s. The music fades in for 2 s. After that, each window of one second has a correlation of 1.000 with the file in each channel. The gain is 0.394. The correlation with the other channel of the file is 0.18 to 0.44, so left and right are not exchanged. The file played 2 % faster or slower gives 0.10 to 0.11. A file of 44100 Hz or 48000 Hz played as 32000 Hz gives 0.04 to 0.05.
+- Voice line (`VO_3015000.brstm`, mono). The correlation is 0.814 at 203.166 s, with a gain of 0.585, the same in the two channels. The music of the scene plays at the same time. At wrong rates the value is below 0.12.
+- Boss music (`s30c12.brstm`). The correlation is 0.38 with a gain of 0.733, below the gunfire.
+- Gunfire has no stream file. In ten seconds of a fight the level of 10 ms windows goes from -25.7 to -6.1 dBFS, with a rhythm of 4.8 Hz.
+- The mean step between two samples was measured inside the blocks and across the block edges. The step across an edge is 0.92 to 1.08 times the step inside a block. The blocks join without clicks.
+
+Result: the output is the sound of the game at the right sample rate, in stereo, without gaps between blocks.
+
+Still open:
+
+- In the boss fight 2.6 to 4.6 % of the samples are at full scale. The music is 17 dB below full scale there, and the other sounds are 10 dB below. The test input fires without a stop and the creature hits the player all the time, so many voices play together. No recording of a console was compared. The sum of the voices is clamped to 16 bits, as the hardware does.
+- The quality of the sound was not judged: reverb, filters and the 4-tap rate change are not there.
+- The sound of the movies (`.sfd`) was not compared with a reference. Its level and spectrum are in the second row of the table.
 
 ## Controls
 
@@ -201,6 +320,8 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It plays the two movies of the first chapter, loads the chapter and runs it to its boss: the walk through the village, the first enemy, the HUD, shots that kill the enemy, the reload, the subtitles, the scenes in the streets and the market, the spiders, the scene with the wounded man, the choice of ways, the creatures in the water, the screen "You are Dead" and the return to the last checkpoint.
 - It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
 - The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
+- With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run and plays the first seven chapters of "Memories of a Lost City" (see "Play-through").
+- Its mixed sound is the sound of the game. The title music is equal to the stream file, sample for sample, at the right rate and in stereo (see "Sound").
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
 
@@ -212,12 +333,16 @@ Found on the way (each is a constant in `common/title.h` or a note in the code):
 - An EFB copy to `GX_TF_I8` holds `Y = 16 + 0.257 R + 0.504 G + 0.098 B` on the hardware, and the game's formulas expect that. The Vulkan renderer converts the copy on the GPU (`renderer/intensity_copy_pass.cpp`). Before, it read the green channel.
 - The exposure is a gain of `0.15 / brightness`, held between 0.75 and 1.25 (8036AFC4). After it the game draws its colour filter with six TEV stages (call site 802A0B04): 30 % less colour, a gain of 1 + (0.62, 0.56, 0.41) for red, green and blue in the first chapter, 8 % less blue, and a contrast curve `x (0.70 x + 0.30)`. The filter comes from the game's data. With the smallest exposure a part of the scene that is brighter than about 0.83 before the filter comes out as pale yellow (255, 255, about 210) without detail. Ground in direct sun does that: its material is twice the texture times the light (TEV scale 2), and the sun has the colour 255. No reference picture of the console was compared.
 - NW4R reads its stream files under a mutex that it takes with `OSTryLockMutex` and gives back with `OSUnlockMutex`. `OSUnlockMutex` is a native that keeps the state of a mutex outside the guest, and `OSTryLockMutex` was the SDK's code, which works on the fields of the guest's mutex. The first reader kept the mutex for ever, every later reader slept, and its read ended with "cancelled" when the game stopped the sound. `OSTryLockMutex` is a native now (`project/dc/hle_manual.txt`).
+- The native `GXSetBlendMode` kept the subtract bit of the blend word after the first subtract draw. Later draws that set their blend through this function were subtracted from the picture (see "Play-through").
+- The effect library draws one kind of particle as `GX_POINTS`. The native renderers have no point primitive, and such a draw stopped the game. The draw is dropped now (`kDropPointDraws` in `common/title.h`).
 
 Not done yet:
 
 - The game draws no shadows: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel (there is no depth copy yet), and a copy that names lines below 480 takes the 480 lines of the native colour buffer. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
-- Sound is not checked. The runs so far were muted. The streams are read; nobody has listened to them.
-- The chapter is not played to its end. The test input shoots at a grid of points and does not win against the boss.
+- No person listened to the sound. The numbers are in "Sound". In the boss fight of the first chapter 2.6 to 4.6 % of the samples are at full scale.
+- The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
+- The particles that the game draws as `GX_POINTS` are missing. A point primitive needs the point size (`GXSetPointSize` is not a native) and a square for each point in the renderers.
+- After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
 - In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
 - `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
 - Keyboard, mouse, gamepad and VR controller input have one fixed mapping (see "Controls"). It is not tested with real devices.
