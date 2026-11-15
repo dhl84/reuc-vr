@@ -882,7 +882,11 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             packet_dump.packet(*pending);
             // A deterministic replay can isolate the first faulty pass at a known packet serial.
             static const uint64_t capture_pass_serial=std::getenv("UC_CAPTURE_PASS_SERIAL") ? std::strtoull(std::getenv("UC_CAPTURE_PASS_SERIAL"),nullptr,10) : 0;
-            const bool capture_passes=options.capture_scene_passes || capture_pass_serial;
+            // UC_CAPTURE_PASS_GO=<file>: the passes of one frame (24 at most), from the first packet after a present once the file exists.
+            static const char* capture_pass_go=kPublicRelease ? nullptr : std::getenv("UC_CAPTURE_PASS_GO");
+            const bool capture_passes=options.capture_scene_passes || capture_pass_serial || capture_pass_go;
+            if(capture_pass_go) { if(!scene_capture_started && at_frame_boundary && std::filesystem::exists(capture_pass_go)) scene_capture_started=true; }
+            else
             if(capture_passes && !scene_capture_started) scene_capture_started=capture_pass_serial ? pending_serial>=capture_pass_serial : std::any_of(pending->draws.begin(),pending->draws.end(),[](const auto& draw){return draw.callsite==0x80366E14;});
             if(capture_passes && scene_capture_started && scene_capture_pass<(capture_pass_serial ? 1u : 24u)) {
                 scene_capture_serial=pending_serial; ++scene_capture_pass;

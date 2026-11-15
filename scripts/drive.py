@@ -18,6 +18,9 @@ A STEP is one of:
   until:TEXT,BUTTONS[,EVERY[,N]]   press BUTTONS every EVERY retraces (default 60) until TEXT appears in the game log (at most N retraces, default 20000)
   dump:NAME         write MEM1 (24 MB) and MEM2 (64 MB) to <folder>/NAME.mem1 and <folder>/NAME.mem2
   waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
+  spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
+                    one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
+  touch:NAME        create the empty file <folder>/NAME (a diagnostic such as UC_PACKET_DUMP=<folder>/packets.txt|go starts when its .go file appears)
 
 The saves of the run go to <folder>/saves (the game never touches other saves). The log of the game goes to <folder>/run.log.
 The protocol is docs/testing/test-server.md. The script needs no keyboard or mouse input and does not activate the window.
@@ -219,6 +222,32 @@ def main():
                         found = True
                         break
                 print("waitpeek %s %s: %s at retrace %d" % (parts[0], want, "found" if found else "NOT FOUND", game.retraces()), flush=True)
+            elif kind == "spray":   # the inputs carry their input frame, so the rate does not depend on the speed of the run
+                parts = value.split(",")
+                count, every, mask = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 8), button_mask(parts[2] if len(parts) > 2 else "B")
+                points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
+                done = 0
+                while game.proc.poll() is None and done < count:
+                    frame = game.command("state").get("state", {}).get("n", 0) + 4
+                    batch = min(40, count - done)   # two commands for each point; the server keeps at most 256 open
+                    for i in range(batch):
+                        game.aim = points[(done + i) % len(points)]
+                        last = i == batch - 1
+                        # the press at the new place for one frame, then the release
+                        for at, buttons in ((frame + i * every, mask), (frame + i * every + 1, 0)):
+                            fields = dict(cmd="input", at_frame=at, kpad={"x": game.aim[0], "y": game.aim[1], "buttons": buttons})
+                            if last and not buttons:
+                                game.command(timeout=120.0, **fields)   # waits until the game has taken the last release
+                            else:
+                                with game.cv:
+                                    ident = game.next_id
+                                    game.next_id += 1
+                                game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
+                    done += batch
+                print("spray %s: %d points to retrace %d" % (value, done, game.retraces()), flush=True)
+            elif kind == "touch":
+                (game.out / value).touch()
+                print("touch %s at retrace %d" % (value, game.retraces()), flush=True)
             elif kind == "state":
                 st = game.command("state").get("state", {})
                 print("state: input frame %s retrace %s" % (st.get("n"), st.get("retraces")), flush=True)

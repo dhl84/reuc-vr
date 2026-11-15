@@ -18,6 +18,8 @@
 #include <cstdint>
 namespace uc {
 // Diagnostic: UC_PACKET_DUMP=<file>[|skip[|count]] lists every rendered packet (copy target, draws with callsite, textures, blend) of `count` presented frames after `skip` presents.
+// UC_PACKET_DUMP_TEV=1 adds the TEV state of each draw: for each stage the raw colour and alpha combiner words, the order and the
+// constant selectors, then the colour registers, the constant colours, the alpha compare, depth and channel words, and the fog.
 class PacketDump {
 public:
     PacketDump() {
@@ -230,6 +232,32 @@ public:
             if(gx::is_perspective(draw.transforms->projection)) std::fprintf(file_," persp");
             else if(const auto range=gx::ortho_range(draw,0)) { std::fprintf(file_," ortho x %.3f..%.3f",(*range)[0],(*range)[1]); if(const auto y=gx::ortho_range(draw,1)) std::fprintf(file_," y %.3f..%.3f",(*y)[0],(*y)[1]); }   // after the ultrawide narrowing
             std::fprintf(file_,"\n");
+            static const bool tev=std::getenv("UC_PACKET_DUMP_TEV")!=nullptr;
+            if(tev) {
+                const auto& u=*draw.uniforms;
+                std::fprintf(file_,"    tev");
+                for(uint32_t stage=0;stage<draw.material.stages && stage<16;++stage) { const auto& t=draw.material.stage[stage]; std::fprintf(file_," [%u c %06X a %06X o %03X k %03X i %06X]",stage,t.color,t.alpha,t.order,t.konst,u.ind_cmd[stage]); }
+                std::fprintf(file_,"\n    reg");
+                for(const auto& r:u.registers) std::fprintf(file_," (%.3f %.3f %.3f %.3f)",r[0],r[1],r[2],r[3]);
+                std::fprintf(file_," konst");
+                for(const auto& k:u.konst) std::fprintf(file_," (%.3f %.3f %.3f %.3f)",k[0],k[1],k[2],k[3]);
+                std::fprintf(file_,"\n    pixel %06X %06X %06X %u channels %08X %08X %08X %08X swaps %02X %02X %02X %02X fog %06X %06X %06X %06X %06X",u.pixel[0],u.pixel[1],u.pixel[2],u.pixel[3],u.channels[0],u.channels[1],u.channels[2],u.channels[3],
+                    draw.material.swaps[0],draw.material.swaps[1],draw.material.swaps[2],draw.material.swaps[3],u.fog[0],u.fog[1],u.fog[2],u.fog[3],u.fog[4]);
+                std::fprintf(file_," mat (%.3f %.3f %.3f %.3f) amb (%.3f %.3f %.3f %.3f)",u.materials[0][0],u.materials[0][1],u.materials[0][2],u.materials[0][3],u.ambient[0][0],u.ambient[0][1],u.ambient[0][2],u.ambient[0][3]);
+                const auto view=draw.vertex_view();
+                if(!view.empty()) std::fprintf(file_," v0 pos (%.2f %.2f %.2f) col (%u %u %u %u) uv (%.3f %.3f)",view[0].position[0],view[0].position[1],view[0].position[2],unsigned(view[0].color[0][0]),unsigned(view[0].color[0][1]),unsigned(view[0].color[0][2]),unsigned(view[0].color[0][3]),view[0].texcoord[0][0],view[0].texcoord[0][1]);
+                std::fprintf(file_,"\n");
+                for(uint32_t channel=0;channel<4;++channel) {   // the lights of each lit channel (colour 0, colour 1, alpha 0, alpha 1)
+                    const uint32_t control=u.channels[channel];
+                    if(!(control&2)) continue;
+                    const uint32_t mask=((control>>2)&15)|(((control>>11)&15)<<4);
+                    for(uint32_t light=0;light<8;++light) if(mask&(1u<<light)) {
+                        const auto& l=u.lights[light];
+                        std::fprintf(file_,"    light %u of channel %u color (%.3f %.3f %.3f %.3f) pos (%.1f %.1f %.1f) dir (%.2f %.2f %.2f) cos (%.3f %.3f %.3f) dist (%.4g %.4g %.4g)\n",light,channel,l.color[0],l.color[1],l.color[2],l.color[3],
+                            l.position[0],l.position[1],l.position[2],l.direction[0],l.direction[1],l.direction[2],l.cosine[0],l.cosine[1],l.cosine[2],l.distance[0],l.distance[1],l.distance[2]);
+                    }
+                }
+            }
         }
         std::fflush(file_);
         if(packet.present) ++frame_;
