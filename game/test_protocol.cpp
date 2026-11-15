@@ -136,7 +136,7 @@ std::variant<TestRequest, TestParseError> parse_test_request(std::string_view li
             case TestDevice::kpad:
                 only(*body, {"x", "y", "buttons"});
                 in.x = float(number(*body, "x", -1, 1, false)); in.y = float(number(*body, "y", -1, 1, false));
-                in.buttons = uint32_t(number(*body, "buttons", 0, 0xFFFF, true));
+                in.buttons = uint32_t(number(*body, "buttons", 0, 0xFFFF | uc::title::kTestPadButtons, true));
                 if (in.buttons & ~uc::title::kTestPadButtons) throw std::runtime_error("buttons outside the test pad mask");
                 break;
             case TestDevice::key: only(*body, {"code", "down"}); in.code = uint32_t(number(*body, "code", 1, 511, true)); in.down = boolean(*body, "down"); break;

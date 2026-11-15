@@ -160,19 +160,36 @@ static InputSample game_input_sample_unfiltered(const ppc::Ctx& c,const InputSam
         if(!input->using_host_input())return raw;
         // Keyboard, mouse, gamepad and VR controller: one fixed mapping, because the menu and gameplay states of this game are not
         // known yet. The game takes B as OK in its menus too, so the trigger (fire) both shoots and confirms.
+        // The game's own controls (its message file): B fires, a wave of the remote reloads, A with a wave swings the knife, waves shake
+        // an enemy off, the +Control Pad changes the weapon (one weapon or herb for each direction), plus pauses.
+        //   reload, a shake of the mouse or of the VR controller: the wave (common/title.h kButtonWave), for kWaveSamples reads
+        //   knife (a key, or A held with a swing): A and the wave
+        //   next / previous weapon: the next direction of the +Control Pad, in the order up, right, down, left
         input->context(InputContext::gameplay);
+        input->qte_window(true);   // a shake is an action at any time: this game reloads with it
+        constexpr unsigned kWaveSamples=12,kPadSamples=6;
+        constexpr uint32_t kDirections[4]={0x8,0x2,0x4,0x1};   // up, right, down, left
+        struct DcPad { unsigned wave=0,pad=0,direction=0; uint32_t last=0; };
+        static DcPad pads[2];
+        auto& pad=pads[player&1];
         const auto frame=input->consume_actions();
-        const auto buttons=[](uint64_t actions) {
-            uint32_t bits=0;
-            if(actions&(bit(Action::interact)|bit(Action::confirm)))bits|=kButtonA;
-            if(actions&bit(Action::fire))bits|=kButtonB;
-            if(actions&bit(Action::back))bits|=0x1000;    // minus: Back
-            if(actions&bit(Action::pause))bits|=0x10;     // plus: pause
-            return bits;
-        };
-        auto result=raw;
-        result.held=buttons(frame.held); result.pressed=buttons(frame.pressed); result.released=buttons(frame.released)&~result.held;
         const auto actions=frame.held|frame.pressed;
+        uint64_t pulses=frame.pressed;
+        for(size_t i=0;i<frame.count;++i) if(frame.events[i].down) pulses|=bit(frame.events[i].action);
+        uint32_t held=0;
+        if(actions&(bit(Action::interact)|bit(Action::confirm)|bit(Action::knife)))held|=kButtonA;
+        if(actions&bit(Action::fire))held|=kButtonB;
+        if(actions&bit(Action::back))held|=0x1000;    // minus: Back
+        if(actions&bit(Action::pause))held|=0x10;     // plus: pause
+        const uint64_t waves=bit(Action::reload)|bit(Action::knife)|bit(Action::qte_shake);
+        if(pulses&waves)pad.wave=kWaveSamples;
+        else if(frame.held&waves)pad.wave=std::max(pad.wave,2u);
+        if(pulses&bit(Action::weapon_next)) { pad.direction=(pad.direction+1)&3; pad.pad=kPadSamples; }
+        if(pulses&bit(Action::weapon_previous)) { pad.direction=(pad.direction+3)&3; pad.pad=kPadSamples; }
+        if(pad.wave) { held|=uc::title::kButtonWave; --pad.wave; }
+        if(pad.pad) { held|=kDirections[pad.direction]; --pad.pad; }
+        auto result=raw;
+        result.held=held; result.pressed=held&~pad.last; result.released=pad.last&~held; pad.last=held;
         const float x=float(bool(actions&bit(Action::camera_right)))-float(bool(actions&bit(Action::camera_left)))+frame.camera[0]/127.f;
         const float y=float(bool(actions&bit(Action::camera_up)))-float(bool(actions&bit(Action::camera_down)))+frame.camera[1]/127.f;
         result.stick_x=std::clamp(x,-1.f,1.f); result.stick_y=std::clamp(y,-1.f,1.f);

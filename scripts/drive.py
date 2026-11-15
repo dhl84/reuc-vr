@@ -42,7 +42,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from uctest.transport import PipeTransport  # noqa: E402
 
 # Names follow docs/testing/test-server.md (plus 0x1000, minus 0x10). A name of the form 0x.... sends that mask as it is.
-BUTTONS = {"A": 0x800, "B": 0x400, "PLUS": 0x1000, "MINUS": 0x10}
+BUTTONS = {"A": 0x800, "B": 0x400, "PLUS": 0x1000, "MINUS": 0x10, "LEFT": 0x1, "RIGHT": 0x2, "DOWN": 0x4, "UP": 0x8, "Z": 0x2000, "C": 0x4000,
+           "WAVE": 0x10000}   # WAVE: The Darkside Chronicles only, a swing of the Wii Remote (common/title.h kButtonWave)
 
 
 def button_mask(names):

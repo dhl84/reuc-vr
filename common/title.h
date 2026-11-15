@@ -23,7 +23,11 @@ inline constexpr uint32_t kKpadStatusSize = 176;
 // The PC action layer (game/game_input.cpp) reads RBUE08 game state to place the Wii Remote buttons. It is off for this game:
 // the Wii Remote sample goes to the game as it is.
 inline constexpr bool kNativeActionMap = false;
-inline constexpr uint32_t kTestPadButtons = 0xFFFF;   // the test server may send every Wii Remote and Nunchuk button (bring-up)
+// The player reloads with a wave of the Wii Remote, swings the knife with A held and a wave, and waves to shake an enemy off. A host
+// has no accelerometer, so the input sample carries a wave as one more button bit, above the 16 of the Wii Remote: while it is held,
+// KPADRead (runtime/native_input.cpp) reports a remote that swings from side to side. 0: the game has no such bit.
+inline constexpr uint32_t kButtonWave = 0x10000;
+inline constexpr uint32_t kTestPadButtons = 0x1FFFF;   // the test server may send every Wii Remote and Nunchuk button, and the wave (bring-up)
 inline constexpr bool kKpadReadError = true;
 inline constexpr uint8_t kKpadPointerValid = 2;            // dpd_valid_fg: both sensor bar points seen (test value, see docs/darkside-port.md)
 // OSThread of the SDK's DefaultThread. __OSThreadInit is the same code in both games (8037E618 here, 80261104 in RBUE08);
@@ -87,6 +91,7 @@ inline constexpr bool kJoinSkipsDetached = false;
 inline constexpr uint32_t kKpadStatusSize = 132;
 inline constexpr bool kNativeActionMap = true;
 inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
+inline constexpr uint32_t kButtonWave = 0;
 inline constexpr bool kKpadReadError = false;
 inline constexpr uint8_t kKpadPointerValid = 1;
 // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.

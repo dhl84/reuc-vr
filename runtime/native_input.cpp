@@ -607,6 +607,9 @@ void hle_KPADRead(ppc::Ctx& c) {
 #if defined(UC_TRACE) || defined(__ANDROID__)   // Quest: pairs with xr_android.cpp's [xr-input] lines (only on presses: a few lines a minute)
     if (sample.pressed) std::fprintf(stderr,"[input] pressed %08X held %08X aim %.3f %.3f\n",sample.pressed,sample.held,sample.x,sample.y);
 #endif
+    // The wave of the remote travels as a button bit above the remote's own (common/title.h kButtonWave).
+    const bool wave=uc::title::kButtonWave && ((sample.held|sample.pressed)&uc::title::kButtonWave);
+    if(uc::title::kButtonWave) { sample.held&=~uc::title::kButtonWave; sample.pressed&=~uc::title::kButtonWave; sample.released&=~uc::title::kButtonWave; }
     std::memset(c.mem+(buffer&0x3FFFFFFF),0,size);
     gx::note_write_range(buffer,size);
     ppc::wr32(c,buffer,sample.held); ppc::wr32(c,buffer+4,sample.pressed); ppc::wr32(c,buffer+8,sample.released);
@@ -616,6 +619,12 @@ void hle_KPADRead(ppc::Ctx& c) {
     // shortcut: mouse has no motion sensor; neutral gravity/horizon/distance until native action mapping (TD-041).
     ppc::wrf32(c,buffer+0x10,-1); ppc::wrf32(c,buffer+0x18,1);
     ppc::wrf32(c,buffer+0x34,1); ppc::wrf32(c,buffer+0x48,1); ppc::wrf32(c,buffer+0x58,-1);
+    if(wave) {   // a remote that swings from side to side: 3 g to the left, then 3 g to the right, in turn at each read
+        static bool side[2]={};
+        bool& right=side[channel&1]; right=!right;
+        ppc::wrf32(c,buffer+0x0C,right ? 3.f : -3.f);                        // acc.x (acc.y keeps gravity, -1)
+        ppc::wrf32(c,buffer+0x18,3.1622777f); ppc::wrf32(c,buffer+0x1C,6);   // acc_value: the length of acc; acc_speed: the length of its change
+    }
     ppc::wr8(c,buffer+0x5C,1); // Nunchuk, matching WPADProbe.
     ppc::wr8(c,buffer+0x5E,sample.valid ? uc::title::kKpadPointerValid : 0); ppc::wr8(c,buffer+0x5F,5);
     ppc::wrf32(c,buffer+0x60,sample.stick_x); ppc::wrf32(c,buffer+0x64,sample.stick_y);
