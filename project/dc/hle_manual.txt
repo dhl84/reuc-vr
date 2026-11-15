@@ -11,3 +11,4 @@
 @80412770 KPADInit  # called once from 8029DC10 with (0, 0), just before the function below, as KPADInit is in RBUE08 (8003C5A4)
 @80412BB0 KPADEnableMotor  # same first 14 instructions as RBUE08 802F2C60; called right after KPADInit in both games
 @803C63EC ISFS_GetFileStats  # (fd, stats*): same alignment test and -101 result as RBUE08 802A8724; one caller at 803C93E8
+@8037CF94 OSTryLockMutex  # the SDK routine after __OSUnlockAllMutex (8037CF28): it takes the mutex when its thread word (offset 8) is 0 or the caller, counts at offset 12 and returns 1, else returns 0; two callers, both in the locked file stream of NW4R (8050901C, 805090F0), which give the mutex back with OSUnlockMutex (8037CE60), a native that keeps its state outside the guest

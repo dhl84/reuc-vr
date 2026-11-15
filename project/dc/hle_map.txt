@@ -395,3 +395,6 @@
 @803A9C58 RestGpr29  # RestGpr29, carried exact
 @803A9C5C RestGpr30  # RestGpr30, carried inside
 @803A9C60 RestGpr31  # RestGpr31, carried inside
+
+# --- Manual entries that the reference map does not have (hle_manual.txt)
+@8037CF94 OSTryLockMutex  # manual

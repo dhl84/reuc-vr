@@ -46,6 +46,16 @@ void hle_OSUnlockMutex(ppc::Ctx& c) {
     if (m.owner != os_sched().current()) return;
     if (--m.count == 0) { m.owner = nullptr; os_sched().wake_all(key); }   // all waiters retry: a suspended one must not hold up the rest
 }
+// OSTryLockMutex(mutex) -> 1 when the caller has the mutex now, 0 when another thread has it. SBDE08 only (project/dc/hle_manual.txt):
+// its NW4R reads a file under a mutex that it takes with this call and gives back with OSUnlockMutex (8050901C). The SDK's own code
+// works on the fields of the guest's mutex, which the natives above never write: the first caller kept the mutex for ever there.
+void hle_OSTryLockMutex(ppc::Ctx& c) {
+    MutexState& m = g_mutex[c.r[3]];
+    Thread* me = os_sched().current();
+    if (m.owner && m.owner != me) { c.r[3] = 0; return; }
+    m.owner = me; ++m.count;
+    c.r[3] = 1;
+}
 
 void hle_OSInitMessageQueue(ppc::Ctx& c) { g_queue[c.r[3]] = {{}, c.r[5]}; }   // (queue, array, count)
 static void send(ppc::Ctx& c, bool front) {                                     // (queue, msg, flags); OS_MESSAGE_BLOCK = 1
