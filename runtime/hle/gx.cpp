@@ -1101,6 +1101,11 @@ void live_end(uint32_t who,std::span<const std::byte> bytes) {
     capture->write_attribute(who,bytes);
     auto draw = capture->take_draw(); add_guest_stat(vertex_count,capture->vertex_count()); add_guest_stat(draw_count,1);
     if(replaying)return;
+    if(uc::title::kDropPointDraws && draw.primitive==0xB8) {   // GX_POINTS: no native primitive yet (common/title.h)
+        static uint64_t dropped=0;
+        if(!dropped++) std::fprintf(stderr,"[gx] GX_POINTS draws are not drawn: the first one is from call site %08X\n",draw.callsite);
+        return;
+    }
     draw.transforms=live_transforms;
     draw.texture=live_texture;
     draw.material=live_material; draw.uniforms=live_uniforms; draw.texture_bank=texture_bank(*draw.state,texture_matrices);
