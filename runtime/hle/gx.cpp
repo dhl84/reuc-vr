@@ -1,3 +1,4 @@
+#include "title.h"
 #include <cstdlib>
 #include "gx.h"
 #include "gx_scene.h"
@@ -987,12 +988,12 @@ void post_finish(uc::Sched* sched, uint64_t serial,uint64_t generation) {
     },uc::Sched::EventKind::Gx,generation);
 }
 void request_finish(ppc::Ctx& ctx) {
-    if (front_list) throw gx::Error(gx::ErrorCode::sequence,0x802848AC,0,1);
+    if (front_list) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x802848AC),0,1);
     finish_primitive();
     auto& sched = *scheduler;
     bool interrupts = sched.set_interrupts(false);
-    memory.read(ctx.r[13] - 25328, 1);
-    ppc::wr8(ctx, ctx.r[13] - 25328, 0);
+    memory.read(ctx.r[13]+UC_SDA13(-25328), 1);
+    ppc::wr8(ctx, ctx.r[13]+UC_SDA13(-25328), 0);
     if (packets) {
         // Registered before the builder can seal the packet: its completion always finds the request (det_early stays the race of the
         // unthreaded builder, whose seal happens right here).
@@ -1056,7 +1057,7 @@ void live_end(uint32_t who,std::span<const std::byte> bytes) {
     draw.blend=live_blend;
 #ifdef UC_TRACE
     static uint32_t movie_draw_logs=0;
-    if (draw.callsite==0x801619C4 && draw.texture && movie_draw_logs++<8) {
+    if (draw.callsite==UC_ADDR(0x801619C4) && draw.texture && movie_draw_logs++<8) {
         draw.texture->wait();
         std::array<uint8_t,4> low{255,255,255,255},high{};
         const auto& rgba=draw.texture->levels[0].rgba;
@@ -1374,13 +1375,13 @@ bool recording_push() { return front_list && !front_list->overflow; }   // the c
 void front_effect(FrontEffect effect) { if (recording_push()) front_list->effects.push_back(effect); }
 }
 void hle_GXBegin(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80284FD0, c);
+    uc::gx_audit_enter(UC_ADDR(0x80284FD0), c);
     if (front_list) {
-        if (recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,0x80284FD0,0,1);
-        const uint32_t primitive=c.r[3], vat=c.r[4], count=c.r[5], sdk=read32(c.r[2]-8968);
-        const uint32_t callsite=c.lr ? c.lr-4 : 0x80284FD0;
-        if (read32(sdk+0x5FC)) uc::call_guest(c,0x80284D58,{});
-        if (!read32(sdk)) uc::call_guest(c,0x8028511C,{});
+        if (recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x80284FD0),0,1);
+        const uint32_t primitive=c.r[3], vat=c.r[4], count=c.r[5], sdk=read32(c.r[2]+UC_SDA2(-8968));
+        const uint32_t callsite=c.lr ? c.lr-4 : UC_ADDR(0x80284FD0);
+        if (read32(sdk+0x5FC)) uc::call_guest(c,UC_ADDR(0x80284D58),{});
+        if (!read32(sdk)) uc::call_guest(c,UC_ADDR(0x8028511C),{});
         uc::gx_fifo_store(1,uint8_t(primitive) | uint8_t(vat));
         uc::gx_fifo_store(2,uint16_t(count));
         if (!uint16_t(count)) return;   // the list keeps the header; a primitive without vertices draws nothing
@@ -1397,14 +1398,14 @@ void hle_GXBegin(ppc::Ctx& c) {
         }
         return;
     }
-    const uint32_t sdk=read32(c.r[2]-8968),dirty=read32(sdk+0x5FC);
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968)),dirty=read32(sdk+0x5FC);
     if(dirty&0x04000000) {
         for(uint32_t reg=0;reg<2;++reg) { const uint32_t value=read32(sdk+0x80+reg*4); back([reg,value] { set_matrix_index(reg,value,false); }); }
         ppc::wr32(c,sdk+0x5FC,dirty&~0x04000000u);
     }
     if (!uint16_t(c.r[5])) return;   // a primitive without vertices (an empty quad batch) draws nothing
     const auto* block=sdk_view(sdk);
-    const uint32_t callsite=c.lr ? c.lr - 4 : 0x80284FD0;
+    const uint32_t callsite=c.lr ? c.lr - 4 : UC_ADDR(0x80284FD0);
     front_check_view(block);   // what deriving the snapshot throws comes before the sequence check, as in capture->begin(snapshot(...))
     if (front_prim.active) throw gx::Error(gx::ErrorCode::sequence,callsite,0,uint16_t(c.r[5]));
     const size_t expected=front_draw_size(block,uint8_t(c.r[3]),uint8_t(c.r[4]),uint16_t(c.r[5]),callsite);
@@ -1417,12 +1418,12 @@ void hle_GXBegin(ppc::Ctx& c) {
     uc::gx_fifo_window={prim.bytes.data(),prim.bytes.data()+expected}; uc::gx_fifo_outside=false;
 }
 void hle_GXSetArray(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802841DC, c);
+    uc::gx_audit_enter(UC_ADDR(0x802841DC), c);
     uint32_t attr = c.r[3] == 25 ? 10 : c.r[3];
-    if (attr < 9 || attr > 24) throw gx::Error(gx::ErrorCode::layout, 0x802841DC, 24, attr);
+    if (attr < 9 || attr > 24) throw gx::Error(gx::ErrorCode::layout, UC_ADDR(0x802841DC), 24, attr);
     const gx::Array array{c.r[4],uint8_t(c.r[5])};
     if (front_list) {
-        if (recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,0x802841DC,0,1);
+        if (recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x802841DC),0,1);
         uc::gx_fifo_store(1,8); uc::gx_fifo_store(1,0xA0+attr-9); uc::gx_fifo_store(4,c.r[4] & 0x3FFFFFFF);
         uc::gx_fifo_store(1,8); uc::gx_fifo_store(1,0xB0+attr-9); uc::gx_fifo_store(4,c.r[5]);
         back([attr,array] { brec->input_state.arrays[attr-9]=array; dirty_state(); brec->native.geometry.push_back(Resource::ArrayBinding{attr-9,array}); });
@@ -1431,32 +1432,32 @@ void hle_GXSetArray(ppc::Ctx& c) {
     back([attr,array] { state.arrays[attr - 9] = array; dirty_state(); });
 }
 void hle_GXSetDrawDone(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802848AC,c);
+    uc::gx_audit_enter(UC_ADDR(0x802848AC),c);
     uc::PendingHle pending(*scheduler,c);
     request_finish(c);
 }
 void hle_GXWaitDrawDone(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80284944, c);
+    uc::gx_audit_enter(UC_ADDR(0x80284944), c);
     auto& sched = *scheduler;
     uc::PendingHle pending(sched,c,hle_GXWaitDrawDone);
     bool interrupts = sched.set_interrupts(false);
-    while (std::to_integer<uint8_t>(memory.read(c.r[13] - 25328, 1)[0]) == 0) sched.block_on(c.r[13] - 25336);
+    while (std::to_integer<uint8_t>(memory.read(c.r[13]+UC_SDA13(-25328), 1)[0]) == 0) sched.block_on(c.r[13]+UC_SDA13(-25336));
     pending.committed();
     sched.set_interrupts(interrupts);
 }
 void hle_GXDrawDone(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80284990,c);
+    uc::gx_audit_enter(UC_ADDR(0x80284990),c);
     uc::PendingHle pending(*scheduler,c,hle_GXWaitDrawDone);
     request_finish(c);
     hle_GXWaitDrawDone(c);
 }
 void hle_GXBeginDisplayList(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80288528,c);
-    if (front_list || front_prim.active) throw gx::Error(gx::ErrorCode::sequence,0x80288528,0,1);
-    const uint32_t address = c.r[3], capacity = c.r[4], sdk = read32(c.r[2]-8968);
+    uc::gx_audit_enter(UC_ADDR(0x80288528),c);
+    if (front_list || front_prim.active) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x80288528),0,1);
+    const uint32_t address = c.r[3], capacity = c.r[4], sdk = read32(c.r[2]+UC_SDA2(-8968));
     if ((address & 31) || capacity < 32 || (capacity & 31)) throw gx::Error(gx::ErrorCode::layout,address,32,capacity);
     memory.read(address,capacity); memory.read(sdk,0x600);
-    if (read32(sdk+0x5FC)) uc::call_guest(c,0x80284D58,{}); // SDK dirty flush occurs before recording
+    if (read32(sdk+0x5FC)) uc::call_guest(c,UC_ADDR(0x80284D58),{}); // SDK dirty flush occurs before recording
     auto list = std::make_unique<FrontList>();
     list->address=address; list->capacity=capacity; list->sdk=sdk; list->owner=producer();
     list->restore=std::to_integer<uint8_t>(memory.read(sdk+0x5F9,1)[0])!=0;
@@ -1479,12 +1480,12 @@ void hle_GXBeginDisplayList(ppc::Ctx& c) {
     uc::gx_fifo_window={front_list->bytes.get(),nullptr}; uc::gx_fifo_outside=false; list_window();
 }
 void hle_GXEndDisplayList(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802885D8,c);
-    if (!front_list) throw gx::Error(gx::ErrorCode::sequence,0x802885D8,1,0);
+    uc::gx_audit_enter(UC_ADDR(0x802885D8),c);
+    if (!front_list) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x802885D8),1,0);
     if (front_list->owner!=producer()) throw gx::Error(gx::ErrorCode::producer,front_list->address,front_list->owner,producer());
     if (!front_list->overflow && front_list->prim_open)
         throw gx::Error(gx::ErrorCode::truncated,front_list->prim_callsite,front_list->prim_expected,front_list->prim_expected-size_t(front_list->prim_end-uc::gx_fifo_window.at));
-    uc::call_guest(c,0x80284504,{}); // verified GXFlush: dirty state followed by 32 NOP bytes
+    uc::call_guest(c,UC_ADDR(0x80284504),{}); // verified GXFlush: dirty state followed by 32 NOP bytes
     const size_t used=list_used();
     auto list=std::move(front_list); uc::gx_fifo_window={}; uc::gx_fifo_outside=true;
     const uint32_t length=list->overflow ? 0 : uint32_t(used) & ~31u;
@@ -1592,12 +1593,12 @@ void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,
 }
 void hle_GXCallDisplayList(ppc::Ctx& c) {
     CallTimer timer(0);
-    uc::gx_audit_enter(0x80288684,c);
-    const uint32_t address=c.r[3],length=c.r[4],sdk=read32(c.r[2]-8968);
-    if (live_primitive() || recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,0x80288684,0,1);
+    uc::gx_audit_enter(UC_ADDR(0x80288684),c);
+    const uint32_t address=c.r[3],length=c.r[4],sdk=read32(c.r[2]+UC_SDA2(-8968));
+    if (live_primitive() || recording_primitive()) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x80288684),0,1);
     checked_resource(address,length);
-    if (read32(sdk+0x5FC)) uc::call_guest(c,0x80284D58,{});
-    if (!read32(sdk)) uc::call_guest(c,0x8028511C,{});
+    if (read32(sdk+0x5FC)) uc::call_guest(c,UC_ADDR(0x80284D58),{});
+    if (!read32(sdk)) uc::call_guest(c,UC_ADDR(0x8028511C),{});
     if (front_list) {
         if (producer()!=front_list->owner) throw gx::Error(gx::ErrorCode::producer,address,front_list->owner,producer());
         uc::gx_fifo_store(1,0x40); uc::gx_fifo_store(4,address); uc::gx_fifo_store(4,length);
@@ -1622,9 +1623,9 @@ void hle_GXCallDisplayList(ppc::Ctx& c) {
 
 namespace {
 void projection(ppc::Ctx& c,const std::array<float,6>& p,uint32_t type) {
-    matrix_boundary(0x8028873C);
+    matrix_boundary(UC_ADDR(0x8028873C));
     const auto matrix=gx::make_projection(p,type);
-    const uint32_t sdk=read32(c.r[2]-8968);
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968));
     memory.read(sdk+0x528,28);
     ppc::wr32(c,sdk+0x528,type);
     for (size_t i=0;i<6;++i) ppc::wr32(c,sdk+0x52C+uint32_t(i*4),std::bit_cast<uint32_t>(p[i]));
@@ -1634,7 +1635,7 @@ void projection(ppc::Ctx& c,const std::array<float,6>& p,uint32_t type) {
 }
 }
 void hle_GXSetProjection(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x8028873C,c);
+    uc::gx_audit_enter(UC_ADDR(0x8028873C),c);
     const uint32_t address=c.r[3],type=c.r[4]; memory.read(address,48);
     std::array<float,6> p{};
     const uint32_t offsets[]={0,type==1 ? 12u : 8u,20,type==1 ? 28u : 24u,40,44};
@@ -1642,16 +1643,16 @@ void hle_GXSetProjection(ppc::Ctx& c) {
     projection(c,p,type);
 }
 void hle_GXSetProjectionv(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802887A0,c);
+    uc::gx_audit_enter(UC_ADDR(0x802887A0),c);
     const uint32_t address=c.r[3]; memory.read(address,28);
     std::array<float,6> p{};
     for (size_t i=0;i<6;++i) p[i]=std::bit_cast<float>(read32(address+4+uint32_t(i*4)));
     projection(c,p,std::bit_cast<float>(read32(address))==0 ? 0 : 1);
 }
 void hle_GXLoadPosMtxImm(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x8028882C,c); matrix_boundary(0x8028882C);
+    uc::gx_audit_enter(UC_ADDR(0x8028882C),c); matrix_boundary(UC_ADDR(0x8028882C));
     const uint32_t row=c.r[4]; const auto matrix=position_matrix(c.r[3]);
-    if (row>61) throw gx::Error(gx::ErrorCode::layout,0x8028882C,61,row);   // gx::set_position_matrix's check
+    if (row>61) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x8028882C),61,row);   // gx::set_position_matrix's check
     if (front_list) {
         uc::gx_fifo_store(1,0x10); uc::gx_fifo_store(4,0x000B0000|row*4);
         for (const auto& values : matrix) for (float value : values) uc::gx_fifo_store(4,std::bit_cast<uint32_t>(value));
@@ -1659,34 +1660,34 @@ void hle_GXLoadPosMtxImm(ppc::Ctx& c) {
     } else back([row,matrix] { gx::set_position_matrix(transforms,row,matrix); matrix_rows(texture_matrices,nullptr,row,matrix,3); dirty_material(); });
 }
 void hle_GXLoadPosMtxIndx(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x8028887C,c); matrix_boundary(0x8028887C);
+    uc::gx_audit_enter(UC_ADDR(0x8028887C),c); matrix_boundary(UC_ADDR(0x8028887C));
     const uint16_t index=uint16_t(c.r[3]); const uint32_t row=c.r[4];
-    if (row>61) throw gx::Error(gx::ErrorCode::layout,0x8028887C,61,row);
+    if (row>61) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x8028887C),61,row);
     if (front_list) {
         uc::gx_fifo_store(1,0x20); uc::gx_fifo_store(4,uint32_t(index)<<16|0xB000|row*4);
         if (recording_push()) back([index,row] { brec->native.geometry.push_back(Resource::IndexedPosition{index,row}); });
     } else back([index,row] { indexed_position(transforms,texture_matrices,state,index,row); dirty_material(); });
 }
 void hle_GXLoadNrmMtxIndx3x3(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80288900,c); matrix_boundary(0x80288900);
+    uc::gx_audit_enter(UC_ADDR(0x80288900),c); matrix_boundary(UC_ADDR(0x80288900));
     const uint16_t index=uint16_t(c.r[3]); const uint32_t row=c.r[4];
-    if (row>61) throw gx::Error(gx::ErrorCode::layout,0x80288900,61,row);
+    if (row>61) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x80288900),61,row);
     if (front_list) {
         uc::gx_fifo_store(1,0x28); uc::gx_fifo_store(4,uint32_t(index)<<16|0x8000|(0x400+row*3));
         if (recording_push()) back([index,row] { brec->native.geometry.push_back(Resource::IndexedNormal{index,row}); });
     } else back([index,row] { indexed_normal(transforms,state,index,row); });
 }
 void hle_GXSetCurrentMtx(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80288934,c); matrix_boundary(0x80288934);
-    const uint32_t sdk=read32(c.r[2]-8968),row=c.r[3]&63;
+    uc::gx_audit_enter(UC_ADDR(0x80288934),c); matrix_boundary(UC_ADDR(0x80288934));
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968)),row=c.r[3]&63;
     ppc::wr32(c,sdk+0x80,(read32(sdk+0x80)&~63u)|row);
     ppc::wr32(c,sdk+0x5FC,read32(sdk+0x5FC)|0x04000000);
     const bool push=recording_push();
     back([row,push] { if (brec) { if (push) brec->native.geometry.push_back(Resource::Current{row}); } else transforms.current=row; });
 }
 void hle_GXSetMatrixIndex(ppc::Ctx& c) {
-    matrix_boundary(0x80288BFC);
-    const auto reg=int32_t(c.r[3])<5 ? 0u : 1u,sdk=read32(c.r[2]-8968),value=read32(sdk+0x80+reg*4);
+    matrix_boundary(UC_ADDR(0x80288BFC));
+    const auto reg=int32_t(c.r[3])<5 ? 0u : 1u,sdk=read32(c.r[2]+UC_SDA2(-8968)),value=read32(sdk+0x80+reg*4);
     uc::gx_fifo_store(1,8); uc::gx_fifo_store(1,0x30+reg*0x10); uc::gx_fifo_store(4,value);
     uc::gx_fifo_store(1,0x10); uc::gx_fifo_store(4,0x1018+reg); uc::gx_fifo_store(4,value);
     const bool push=recording_push();
@@ -1694,14 +1695,14 @@ void hle_GXSetMatrixIndex(ppc::Ctx& c) {
     ppc::wr16(c,sdk+2,1);
 }
 void hle_ResResetMatrixIndices(ppc::Ctx&) {
-    matrix_boundary(0x803740B8);
+    matrix_boundary(UC_ADDR(0x803740B8));
     constexpr uint32_t values[]={0x3CF3CF00,0x00F3CF3C};
     for(uint32_t reg=0;reg<2;++reg) { uc::gx_fifo_store(1,8); uc::gx_fifo_store(1,0x30+reg*0x10); uc::gx_fifo_store(4,values[reg]); }
     uc::gx_fifo_store(1,0x10); uc::gx_fifo_store(4,0x00011018);
     for(uint32_t reg=0;reg<2;++reg) { uc::gx_fifo_store(4,values[reg]); const bool push=recording_push(); back([reg,value=values[reg],push] { set_matrix_index(reg,value,push); }); }
 }
 void hle_ResTexMatrixIndices(ppc::Ctx& c) {
-    matrix_boundary(0x80374114); memory.read(c.r[3],32);
+    matrix_boundary(UC_ADDR(0x80374114)); memory.read(c.r[3],32);
     uint32_t values[2]={};
     for(uint32_t i=0;i<8;++i) values[i/4]|=read32(c.r[3]+i*4)<<(i<4 ? 6+i*6 : (i-4)*6);
     uc::gx_fifo_store(1,0x10); uc::gx_fifo_store(4,0x00011018);
@@ -1709,9 +1710,9 @@ void hle_ResTexMatrixIndices(ppc::Ctx& c) {
 }
 
 void hle_GXLoadTexObjPreLoaded(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802869A0,c); matrix_boundary(0x802869A0);
-    const uint32_t object=c.r[3],region=c.r[4],map=c.r[5],sdk=read32(c.r[2]-8968);
-    if (map>7) throw gx::Error(gx::ErrorCode::layout,0x802869A0,7,map);
+    uc::gx_audit_enter(UC_ADDR(0x802869A0),c); matrix_boundary(UC_ADDR(0x802869A0));
+    const uint32_t object=c.r[3],region=c.r[4],map=c.r[5],sdk=read32(c.r[2]+UC_SDA2(-8968));
+    if (map>7) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x802869A0),7,map);
     memory.read(object,32); memory.read(region,8); memory.read(sdk,0x600);
     const auto flags=std::to_integer<uint8_t>(memory.read(object+31,1)[0]);
     const uint32_t image0=read32(object+8),format=read32(object+20);
@@ -1729,9 +1730,9 @@ void hle_GXLoadTexObjPreLoaded(ppc::Ctx& c) {
         std::fprintf(stderr,"[texture-plane] map %u address %08X %ux%u format %u caller %08X outer %08X\n",map,source.address,source.desc.width,source.desc.height,format,c.lr,outer);
     }
 #endif
-    const uint32_t tables[]={28936,28928,28920,28912,28904,28896};
+    const int32_t tables[]={UC_SDA13(-28936),UC_SDA13(-28928),UC_SDA13(-28920),UC_SDA13(-28912),UC_SDA13(-28904),UC_SDA13(-28896)};
     uint32_t words[]={read32(object),read32(object+4),image0,read32(region),read32(region+4),read32(object+12)};
-    for (size_t i=0;i<6;++i) words[i]=(words[i]&0xFFFFFF)|(uint32_t(std::to_integer<uint8_t>(memory.read(c.r[13]-tables[i]+map,1)[0]))<<24);
+    for (size_t i=0;i<6;++i) words[i]=(words[i]&0xFFFFFF)|(uint32_t(std::to_integer<uint8_t>(memory.read(c.r[13]+tables[i]+map,1)[0]))<<24);
     // Keep verified SDK byte identity for native resource version checks; no BP interpretation.
     for (auto word : words) { uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word); }
     ppc::wr32(c,object,words[0]); ppc::wr32(c,object+4,words[1]); ppc::wr32(c,object+8,words[2]); ppc::wr32(c,object+12,words[5]);
@@ -1740,7 +1741,7 @@ void hle_GXLoadTexObjPreLoaded(ppc::Ctx& c) {
         const auto palette_region=uc::call_guest(c,read32(sdk+0x51C),{read32(object+24)});
         memory.read(palette_region,16);
         source.palette=palette_region&0x3FFFFFFF;
-        const auto tag=std::to_integer<uint8_t>(memory.read(c.r[13]-28888+map,1)[0]);
+        const auto tag=std::to_integer<uint8_t>(memory.read(c.r[13]+UC_SDA13(-28888)+map,1)[0]);
         const auto word=(read32(palette_region+4)&0xFFFFFF)|(uint32_t(tag)<<24);
         ppc::wr32(c,palette_region+4,word);
         uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word);
@@ -1751,18 +1752,18 @@ void hle_GXLoadTexObjPreLoaded(ppc::Ctx& c) {
     back([map,source,push] { if (brec) { if (push) brec->native.geometry.push_back(Resource::TextureBinding{map,source}); } else bound_textures[map]=source; });
 }
 void hle_GXLoadTlut(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80286B80,c); matrix_boundary(0x80286B80);
-    const uint32_t object=c.r[3],name=c.r[4],sdk=read32(c.r[2]-8968);
+    uc::gx_audit_enter(UC_ADDR(0x80286B80),c); matrix_boundary(UC_ADDR(0x80286B80));
+    const uint32_t object=c.r[3],name=c.r[4],sdk=read32(c.r[2]+UC_SDA2(-8968));
     memory.read(object,12);
     const uint32_t region=uc::call_guest(c,read32(sdk+0x51C),{name});
     memory.read(region,16);
     const uint32_t format=read32(object),image=read32(object+4),count_word=read32(object+8);
     const PaletteSource source{(image&0xFFFFFF)<<5,count_word>>16,gx::PaletteFormat((format>>10)&3)};
     auto loaded=load_palette(source);   // immediate: the guest may reuse the palette's memory once the TMEM load is in the FIFO
-    uc::call_guest(c,0x80287720,{});
+    uc::call_guest(c,UC_ADDR(0x80287720),{});
     uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,image);
     uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,read32(region));
-    uc::call_guest(c,0x80287720,{});
+    uc::call_guest(c,UC_ADDR(0x80287720),{});
     const uint32_t binding=(format&~1023u)|(read32(region)&1023);
     ppc::wr32(c,region+4,binding); ppc::wr32(c,region+8,image); ppc::wr32(c,region+12,count_word);
     ppc::wr32(c,object,binding);
@@ -1773,12 +1774,12 @@ void hle_GXLoadTlut(ppc::Ctx& c) {
     });
 }
 void hle_GXSetCopyClear(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802855C8,c); matrix_boundary(0x802855C8);
+    uc::gx_audit_enter(UC_ADDR(0x802855C8),c); matrix_boundary(UC_ADDR(0x802855C8));
     const auto bytes=memory.read(c.r[3],4);
     CopyState next;
     for (size_t i=0;i<4;++i) next.color[i]=std::to_integer<uint8_t>(bytes[i]);
     next.depth=c.r[4]&0xFFFFFF;
-    const uint32_t sdk=read32(c.r[2]-8968); memory.read(sdk+2,2);
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968)); memory.read(sdk+2,2);
     if (front_list) {
         const uint32_t words[]={0x4F000000u|next.color[0]|uint32_t(next.color[3])<<8,0x50000000u|next.color[2]|uint32_t(next.color[1])<<8,0x51000000u|next.depth};
         for (uint32_t word : words) { uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word); }
@@ -1787,13 +1788,13 @@ void hle_GXSetCopyClear(ppc::Ctx& c) {
     ppc::wr16(c,sdk+2,0);
 }
 void hle_GXCopyDisp(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80285838,c);
-    if (front_list) throw gx::Error(gx::ErrorCode::sequence,0x80285838,0,1); // TD-034: recorded copies need a verified native resource boundary
+    uc::gx_audit_enter(UC_ADDR(0x80285838),c);
+    if (front_list) throw gx::Error(gx::ErrorCode::sequence,UC_ADDR(0x80285838),0,1); // TD-034: recorded copies need a verified native resource boundary
     finish_primitive();
     const uint32_t xfb=c.r[3];
     if (xfb&31) throw gx::Error(gx::ErrorCode::layout,xfb,32,xfb&31);
     memory.read(xfb,32);
-    const uint32_t sdk=read32(c.r[2]-8968);
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968));
     const bool clear=c.r[4]!=0;
     ppc::wr32(c,sdk+0x23C,(read32(sdk+0x23C)&~0xFF000800u)|0x52004000u|(clear ? 0x800u : 0));
     memory.read(sdk+2,2); ppc::wr16(c,sdk+2,0);
@@ -1806,8 +1807,8 @@ void hle_GXCopyDisp(ppc::Ctx& c) {
     ++copies;
 }
 void hle_GXSetTexCopySrc(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80285334,c); finish_primitive();
-    const auto x=c.r[3],y=c.r[4],width=c.r[5],height=c.r[6],sdk=read32(c.r[2]-8968);
+    uc::gx_audit_enter(UC_ADDR(0x80285334),c); finish_primitive();
+    const auto x=c.r[3],y=c.r[4],width=c.r[5],height=c.r[6],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(!width || !height || x>=640 || width>640-x || y>=480 || height>480-y) throw std::invalid_argument("invalid native EFB texture source rectangle");
     memory.read(sdk+0x240,8);
     texture_copy_source={x,y,width,height};
@@ -1815,8 +1816,8 @@ void hle_GXSetTexCopySrc(ppc::Ctx& c) {
     ppc::wr32(c,sdk+0x244,0x4A000000u|(width-1)|(height-1)<<10);
 }
 void hle_GXSetTexCopyDst(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80285398,c); finish_primitive();
-    const auto width=c.r[3],height=c.r[4],format=c.r[5],half=c.r[6],sdk=read32(c.r[2]-8968);
+    uc::gx_audit_enter(UC_ADDR(0x80285398),c); finish_primitive();
+    const auto width=c.r[3],height=c.r[4],format=c.r[5],half=c.r[6],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(!width || !height || width>1024 || height>1024 || (format!=4 && format!=6 && format!=0x27) || half>1) {
         std::fprintf(stderr,"[efb-destination-invalid] %ux%u format %08X half %u caller %08X\n",width,height,format,half,c.lr);
         throw std::invalid_argument("unsupported native EFB texture destination");
@@ -1832,8 +1833,8 @@ void hle_GXSetTexCopyDst(ppc::Ctx& c) {
     texture_copy_format=format;
 }
 void hle_GXCopyTex(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80285974,c); finish_primitive();
-    const auto address=c.r[3],sdk=read32(c.r[2]-8968);
+    uc::gx_audit_enter(UC_ADDR(0x80285974),c); finish_primitive();
+    const auto address=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if((address&31) || c.r[4]>1 || !texture_copy_source[2] || !texture_copy_width || !texture_copy_height) throw std::invalid_argument("invalid native EFB texture copy request");
     memory.read(address,gx::encoded_texture_size({texture_copy_width,texture_copy_height,texture_copy_format==0x27 ? gx::TextureFormat::i8 : gx::TextureFormat(texture_copy_format),1}));
     memory.read(sdk,0x254);
@@ -1876,25 +1877,25 @@ void publish_blend(ppc::Ctx& c,uint32_t sdk,uint32_t word) {
 }
 }
 void hle_GXSetBlendMode(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80288274,c); matrix_boundary(0x80288274);
-    if (c.r[3]>3 || c.r[4]>7 || c.r[5]>7 || c.r[6]>15) throw gx::Error(gx::ErrorCode::layout,0x80288274,3,c.r[3]);
-    const auto sdk=read32(c.r[2]-8968),mode=c.r[3];
+    uc::gx_audit_enter(UC_ADDR(0x80288274),c); matrix_boundary(UC_ADDR(0x80288274));
+    if (c.r[3]>3 || c.r[4]>7 || c.r[5]>7 || c.r[6]>15) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x80288274),3,c.r[3]);
+    const auto sdk=read32(c.r[2]+UC_SDA2(-8968)),mode=c.r[3];
     const auto word=(read32(sdk+0x220)&~0xF7E3u)|(mode&1)|(mode==2 ? 2u : 0u)|(mode==3 ? 0x800u : 0u)|(c.r[4]<<8)|(c.r[5]<<5)|(c.r[6]<<12);
     publish_blend(c,sdk,word);
 }
 void hle_GXSetColorUpdate(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802882C4,c); matrix_boundary(0x802882C4);
-    if (c.r[3]>1) throw gx::Error(gx::ErrorCode::layout,0x802882C4,1,c.r[3]);
-    const auto sdk=read32(c.r[2]-8968); publish_blend(c,sdk,(read32(sdk+0x220)&~8u)|(c.r[3]<<3));
+    uc::gx_audit_enter(UC_ADDR(0x802882C4),c); matrix_boundary(UC_ADDR(0x802882C4));
+    if (c.r[3]>1) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x802882C4),1,c.r[3]);
+    const auto sdk=read32(c.r[2]+UC_SDA2(-8968)); publish_blend(c,sdk,(read32(sdk+0x220)&~8u)|(c.r[3]<<3));
 }
 void hle_GXSetAlphaUpdate(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x802882F0,c); matrix_boundary(0x802882F0);
-    if (c.r[3]>1) throw gx::Error(gx::ErrorCode::layout,0x802882F0,1,c.r[3]);
-    const auto sdk=read32(c.r[2]-8968); publish_blend(c,sdk,(read32(sdk+0x220)&~16u)|(c.r[3]<<4));
+    uc::gx_audit_enter(UC_ADDR(0x802882F0),c); matrix_boundary(UC_ADDR(0x802882F0));
+    if (c.r[3]>1) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x802882F0),1,c.r[3]);
+    const auto sdk=read32(c.r[2]+UC_SDA2(-8968)); publish_blend(c,sdk,(read32(sdk+0x220)&~16u)|(c.r[3]<<4));
 }
 void hle_ResTevApply(ppc::Ctx& c) {
-    matrix_boundary(0x80366E78);
-    const auto object=read32(c.r[3]),sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80366E78));
+    const auto object=read32(c.r[3]),sdk=read32(c.r[2]+UC_SDA2(-8968));
     memory.read(object,32); memory.read(sdk,0x600);
     const auto count=std::to_integer<uint8_t>(memory.read(object+12,1)[0]);
     const auto bytes=memory.read(object+32,gx::tev_material_size(count));
@@ -1931,9 +1932,9 @@ void hle_ResTevApply(ppc::Ctx& c) {
     }
 }
 void hle_ResColorApply(ppc::Ctx& c) {
-    matrix_boundary(0x80367024);
+    matrix_boundary(UC_ADDR(0x80367024));
     const auto bytes=memory.read(read32(c.r[3]),128);
-    const auto sdk=read32(c.r[2]-8968);
+    const auto sdk=read32(c.r[2]+UC_SDA2(-8968));
     memory.read(sdk,4);
     if(front_list) {
         uc::gx_fifo_store(1,0x40); uc::gx_fifo_store(4,read32(c.r[3])); uc::gx_fifo_store(4,128);
@@ -1962,8 +1963,8 @@ void hle_ResColorApply(ppc::Ctx& c) {
     ppc::wr16(c,sdk+2,0);
 }
 void hle_ResPixelApply(ppc::Ctx& c) {
-    matrix_boundary(0x80366FF4);
-    const auto object=read32(c.r[3]),sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80366FF4));
+    const auto object=read32(c.r[3]),sdk=read32(c.r[2]+UC_SDA2(-8968));
     const auto pixel=gx::import_pixel_material(memory.read(object,32));
     memory.read(sdk,0x600);
     back([pixel] { color_uniforms.pixel={pixel.alpha,pixel.depth,pixel.destination_alpha,0}; dirty_material(); });
@@ -1973,12 +1974,12 @@ void hle_ResPixelApply(ppc::Ctx& c) {
     publish_blend(c,sdk,blend);
 }
 void hle_GXSetAlphaCompare(ppc::Ctx& c) {
-    matrix_boundary(0x80287B80);
+    matrix_boundary(UC_ADDR(0x80287B80));
     if(c.r[3]>7 || c.r[4]>255 || c.r[5]>3 || c.r[6]>7 || c.r[7]>255) throw std::invalid_argument("invalid native alpha compare");
     const auto word=c.r[4]|c.r[7]<<8|c.r[3]<<16|c.r[6]<<19|c.r[5]<<22;
     back([word] { color_uniforms.pixel[0]=word; dirty_material(); });
     uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,0xF3000000|word);
-    ppc::wr16(c,read32(c.r[2]-8968)+2,0);
+    ppc::wr16(c,read32(c.r[2]+UC_SDA2(-8968))+2,0);
 }
 namespace {
 std::span<const std::byte> mesh_resource(ppc::Ctx& c,uint32_t descriptor,uint32_t skip) {
@@ -1990,8 +1991,8 @@ std::span<const std::byte> mesh_resource(ppc::Ctx& c,uint32_t descriptor,uint32_
 }
 }
 void hle_ResMeshSetup(ppc::Ctx& c) {
-    uc::gx_audit_enter(0x80366D3C,c);
-    matrix_boundary(0x80366D3C);
+    uc::gx_audit_enter(UC_ADDR(0x80366D3C),c);
+    matrix_boundary(UC_ADDR(0x80366D3C));
     if(front_list) throw std::invalid_argument("recorded native mesh setup requires implementation");
     const auto bytes=mesh_resource(c,24,c.r[5] ? 32 : 0);
     if(bytes.size()<96 || bytes.size()>224 || (bytes.size()&31)) {
@@ -2000,7 +2001,7 @@ void hle_ResMeshSetup(ppc::Ctx& c) {
         std::fprintf(stderr,"\n");
     }
     const auto parsed=gx::import_mesh_setup(bytes);
-    const auto sdk=read32(c.r[2]-8968); memory.read(sdk,0x600);
+    const auto sdk=read32(c.r[2]+UC_SDA2(-8968)); memory.read(sdk,0x600);
     if(parsed.descriptors) { ppc::wr32(c,sdk+0x14,parsed.low); ppc::wr32(c,sdk+0x18,parsed.high); }
     ppc::wr32(c,sdk+0x1C,parsed.vat[0]); ppc::wr32(c,sdk+0x3C,parsed.vat[1]); ppc::wr32(c,sdk+0x5C,parsed.vat[2]);
     back([arrays=parsed.arrays,addresses=parsed.addresses,strides=parsed.strides] {
@@ -2071,9 +2072,9 @@ std::shared_ptr<const CachedMesh> native_mesh(std::span<const std::byte> bytes,c
         const auto count=uint16_t(std::to_integer<uint8_t>(bytes[at])<<8|std::to_integer<uint8_t>(bytes[at+1])); at+=2;
         if(!count) continue;
         if(opcode!=0x80 && opcode!=0x90 && opcode!=0x98 && opcode!=0xA0) throw std::invalid_argument("unsupported native mesh triangle primitive");
-        const auto length=gx::encoded_draw_size(layout,opcode,0,count,0x80366E14);
-        if(length>bytes.size()-at) throw gx::Error(gx::ErrorCode::truncated,0x80366E14,length,bytes.size()-at);
-        decoder.begin(layout,opcode,0,count,0,0x80366E14);
+        const auto length=gx::encoded_draw_size(layout,opcode,0,count,UC_ADDR(0x80366E14));
+        if(length>bytes.size()-at) throw gx::Error(gx::ErrorCode::truncated,UC_ADDR(0x80366E14),length,bytes.size()-at);
+        decoder.begin(layout,opcode,0,count,0,UC_ADDR(0x80366E14));
         decoder.write_attribute(0,bytes.subspan(at,length)); at+=length;
         auto draw=decoder.take_draw();
         for(size_t i=0;i<sources.size();++i) if(const auto& incoming=decoder.sources()[i];incoming) {
@@ -2193,7 +2194,7 @@ void mesh_draw(const SdkRef& block,uint32_t lr,uint32_t object,uint32_t address,
                 const auto& geometry=std::get<MeshGeometry>(operation);
                 if(uniforms_dirty) { gx::share(mesh_uniforms_block,uniforms); uniforms_dirty=false; }
                 auto& draw=draws.emplace_back();
-                draw.callsite=0x80366E14; draw.primitive=0x90; draw.vat=0; draw.state=mesh_state;
+                draw.callsite=UC_ADDR(0x80366E14); draw.primitive=0x90; draw.vat=0; draw.state=mesh_state;
                 draw.mesh=geometry.buffers;
                 if(transforms_dirty) { gx::share(mesh_transforms_block,transforms); transforms_dirty=false; }
                 draw.transforms=mesh_transforms_block; draw.material=material; draw.uniforms=mesh_uniforms_block; draw.texture_bank=texture_bank(*draw.state,texture_matrices); draw.blend=blend_state; draw.texture=textures[0];
@@ -2221,12 +2222,12 @@ void mesh_draw(const SdkRef& block,uint32_t lr,uint32_t object,uint32_t address,
 }
 void hle_ResMeshDraw(ppc::Ctx& c) {
     CallTimer timer(1);
-    uc::gx_audit_enter(0x80366E14,c);
-    matrix_boundary(0x80366E14);
+    uc::gx_audit_enter(UC_ADDR(0x80366E14),c);
+    matrix_boundary(UC_ADDR(0x80366E14));
     if(front_list) throw std::invalid_argument("recorded native mesh draw requires implementation");
     scheduler->safe_point(); // Service audio/VI between complete native mesh calls.
     const auto bytes=mesh_resource(c,36,0);
-    const uint32_t sdk=read32(c.r[2]-8968);
+    const uint32_t sdk=read32(c.r[2]+UC_SDA2(-8968));
     const auto* block=sdk_view(sdk);
     front_check_view(block);   // derive_state's errors at the call
     known_sdk=sdk;
@@ -2239,8 +2240,8 @@ void hle_ResMeshDraw(ppc::Ctx& c) {
 }
 namespace {
 void native_tev_color(ppc::Ctx& c,bool signed_color,bool konst) {
-    matrix_boundary(konst ? 0x802879CC : signed_color ? 0x80287968 : 0x80287908);
-    const auto id=c.r[3],pointer=c.r[4],sdk=read32(c.r[2]-8968);
+    matrix_boundary(konst ? UC_ADDR(0x802879CC) : signed_color ? UC_ADDR(0x80287968) : UC_ADDR(0x80287908));
+    const auto id=c.r[3],pointer=c.r[4],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(id>3) throw gx::Error(gx::ErrorCode::layout,pointer,3,id);
     memory.read(pointer,signed_color ? 8 : 4); memory.read(sdk,4);
     std::array<float,4> value{}; std::array<uint32_t,4> channels{};
@@ -2266,23 +2267,23 @@ void hle_GXSetTevColor(ppc::Ctx& c) { native_tev_color(c,false,false); }
 void hle_GXSetTevColorS10(ppc::Ctx& c) { native_tev_color(c,true,false); }
 void hle_GXSetTevKColor(ppc::Ctx& c) { native_tev_color(c,false,true); }
 void hle_GXSetTevDirect(ppc::Ctx& c) {
-    matrix_boundary(0x80287650);
-    const auto stage=c.r[3],sdk=read32(c.r[2]-8968);
-    if(stage>15) throw gx::Error(gx::ErrorCode::layout,0x80287650,15,stage);
+    matrix_boundary(UC_ADDR(0x80287650));
+    const auto stage=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
+    if(stage>15) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x80287650),15,stage);
     native_bp((0x10+stage)<<24);
     ppc::wr16(c,sdk+2,0);
 }
 // Fog and indirect setters, call-level replacements of the RBUE08 SDK bodies (bit layouts from their disassembly).
 // The FIFO words stay byte-identical for display lists; native state comes from the arguments, never from FIFO decoding.
 void hle_GXSetTevIndirect(ppc::Ctx& c) {
-    matrix_boundary(0x802872A4);
+    matrix_boundary(UC_ADDR(0x802872A4));
     const auto stage=c.r[3],utc_lod=ppc::rd8(c,c.r[1]+11),alpha=read32(c.r[1]+12); // 9th/10th arguments on the caller's stack
-    if(stage>15) throw gx::Error(gx::ErrorCode::layout,0x802872A4,15,stage);
+    if(stage>15) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x802872A4),15,stage);
     native_bp((0x10+stage)<<24|(c.r[4]&3)|(c.r[5]&3)<<2|(c.r[6]&7)<<4|(alpha&3)<<7|(c.r[7]&15)<<9|(c.r[8]&7)<<13|(c.r[9]&7)<<16|(utc_lod&1u)<<19|(c.r[10]&1)<<20);
-    ppc::wr16(c,read32(c.r[2]-8968)+2,0);
+    ppc::wr16(c,read32(c.r[2]+UC_SDA2(-8968))+2,0);
 }
 void hle_GXSetIndTexMtx(ppc::Ctx& c) {
-    matrix_boundary(0x8028730C);
+    matrix_boundary(UC_ADDR(0x8028730C));
     const auto id=c.r[3];
     const uint32_t index=(id>=1 && id<=3) ? id-1 : (id>=5 && id<=7) ? id-5 : (id>=9 && id<=11) ? id-9 : 0;
     memory.read(c.r[4],24);
@@ -2295,11 +2296,11 @@ void hle_GXSetIndTexMtx(ppc::Ctx& c) {
     const uint32_t exponent=uint32_t(int32_t(c.r[5])+17);
     for(uint32_t column=0;column<3;++column)
         native_bp((index*3+6+column)<<24|fixed(column)|fixed(3+column)<<11|((exponent>>(column*2))&3)<<22);
-    ppc::wr16(c,read32(c.r[2]-8968)+2,0);
+    ppc::wr16(c,read32(c.r[2]+UC_SDA2(-8968))+2,0);
 }
 void hle_GXSetIndTexCoordScale(ppc::Ctx& c) {
-    matrix_boundary(0x80287460);
-    const auto stage=c.r[3],sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80287460));
+    const auto stage=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(stage<4) {
         const uint32_t at=sdk+(stage<2 ? 0x178 : 0x17C),shift=(stage&1)*8;
         const auto word=(read32(at)&~(0xFFu<<shift)&0xFFFFFF)|(c.r[4]&15)<<shift|(c.r[5]&15)<<(shift+4)|(stage<2 ? 0x25u : 0x26u)<<24;
@@ -2309,8 +2310,8 @@ void hle_GXSetIndTexCoordScale(ppc::Ctx& c) {
     ppc::wr16(c,sdk+2,0);
 }
 void hle_GXSetIndTexOrder(ppc::Ctx& c) {
-    matrix_boundary(0x80287564);
-    const auto stage=c.r[3],sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80287564));
+    const auto stage=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
     const uint32_t coord=c.r[4]==255 ? 0 : c.r[4],map=c.r[5]==255 ? 0 : c.r[5];
     auto word=read32(sdk+0x170);
     if(stage<4) word=(word&~(0x3Fu<<(stage*6)))|(map&7)<<(stage*6)|(coord&7)<<(stage*6+3);
@@ -2324,7 +2325,7 @@ uint32_t fog_float(float value) { const auto bits=std::bit_cast<uint32_t>(value)
 }
 // GXSetFog (80287DC4): single-precision steps and constants as in the SDK body (0, 0.5, 1, 2, 8388638 from SDA2).
 void hle_GXSetFog(ppc::Ctx& c) {
-    matrix_boundary(0x80287DC4);
+    matrix_boundary(UC_ADDR(0x80287DC4));
     const auto type=c.r[3];
     const float start=float(c.f[1]),end=float(c.f[2]),nearz=float(c.f[3]),farz=float(c.f[4]);
     const auto color=read32(c.r[4]);
@@ -2352,18 +2353,18 @@ void hle_GXSetFog(ppc::Ctx& c) {
     native_bp(b_word); native_bp(e_word);
     native_bp(0xF1000000|fog_float(cvalue)|((type>>3)&1)<<20|(type&7)<<21);
     native_bp(0xF2000000|color>>8);
-    ppc::wr16(c,read32(c.r[2]-8968)+2,0);
+    ppc::wr16(c,read32(c.r[2]+UC_SDA2(-8968))+2,0);
 }
 void hle_ResChannelApply(ppc::Ctx& c) {
-    matrix_boundary(0x80376148);
+    matrix_boundary(UC_ADDR(0x80376148));
     if(front_list) throw std::invalid_argument("recorded native channel resource requires implementation");
-    const auto data=read32(c.r[3]),sdk=read32(c.r[2]-8968);
+    const auto data=read32(c.r[3]),sdk=read32(c.r[2]+UC_SDA2(-8968));
     struct { std::array<std::pair<uint32_t,uint32_t>,16> items; size_t size=0;
         void emplace_back(uint32_t address,uint32_t value) { items[size++]={address,value}; }   // at most 13 updates
         auto begin() const { return items.begin(); } auto end() const { return items.begin()+size; } } updates;
     if(data) {
         memory.read(data,40); memory.read(sdk,0x600); memory.read(c.r[8],4);
-        const auto count=ppc::rd8(c,0x806A0041);
+        const auto count=ppc::rd8(c,UC_ADDR(0x806A0041));
         if(count>2) throw std::invalid_argument("invalid native material channel count");
         for(uint32_t channel=0;channel<count;++channel) {
             const auto at=data+channel*20,flags=read32(at);
@@ -2395,18 +2396,18 @@ void hle_ResChannelApply(ppc::Ctx& c) {
         const auto data=read32(c.r[3]);
         if(data) {
             memory.read(data,40); memory.read(c.r[8],4);
-            std::fprintf(stderr,"[native-channel] data %08X masks %u:%u ambient %08X disable %u count %u words",data,c.r[4],c.r[5],read32(c.r[8]),c.r[9],unsigned(ppc::rd8(c,0x806A0041)));
+            std::fprintf(stderr,"[native-channel] data %08X masks %u:%u ambient %08X disable %u count %u words",data,c.r[4],c.r[5],read32(c.r[8]),c.r[9],unsigned(ppc::rd8(c,UC_ADDR(0x806A0041))));
             for(uint32_t i=0;i<10;++i) std::fprintf(stderr," %08X",read32(data+i*4));
             std::fprintf(stderr,"\n");
         }
     }
     if(data) {
-        const auto mode=0x806A0040u,flags=read32(mode+8);
+        const auto mode=UC_ADDR(0x806A0040)u,flags=read32(mode+8);
         if((flags&4) && (flags&3)!=3) {
             const auto tex=ppc::rd8(c,mode),channels=ppc::rd8(c,mode+1),tev=ppc::rd8(c,mode+2),indirect=ppc::rd8(c,mode+3),cull=read32(mode+4);
             if(tex>8 || channels>2 || !tev || tev>16 || indirect>4 || cull>3) throw std::invalid_argument("invalid native material generation mode");
-            memory.read(c.r[2]-5488+cull,1);
-            const auto word=uint32_t(tex)|(uint32_t(channels)<<4)|(uint32_t(tev-1)<<10)|(uint32_t(indirect)<<16)|(uint32_t(ppc::rd8(c,c.r[2]-5488+cull))<<14);
+            memory.read(c.r[2]+UC_SDA2(-5488)+cull,1);
+            const auto word=uint32_t(tex)|(uint32_t(channels)<<4)|(uint32_t(tev-1)<<10)|(uint32_t(indirect)<<16)|(uint32_t(ppc::rd8(c,c.r[2]+UC_SDA2(-5488)+cull))<<14);
             updates.emplace_back(sdk+0x254,(read32(sdk+0x254)&~0x7FC3Fu)|(word&0x7FC3Fu));
             updates.emplace_back(mode+8,flags|3);
         }
@@ -2414,19 +2415,19 @@ void hle_ResChannelApply(ppc::Ctx& c) {
     for(const auto& [address,value]:updates) ppc::wr32(c,address,value);
 }
 void hle_ResGenerationMode(ppc::Ctx& c) {
-    matrix_boundary(0x80373D00);
-    const auto tex=c.r[3],channels=c.r[4],tev=c.r[5],indirect=c.r[6],cull=c.r[7],sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80373D00));
+    const auto tex=c.r[3],channels=c.r[4],tev=c.r[5],indirect=c.r[6],cull=c.r[7],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(tex>8 || channels>2 || !tev || tev>16 || indirect>4 || cull>3) throw std::invalid_argument("invalid native resource generation mode");
-    memory.read(sdk,0x600); memory.read(c.r[2]-5488+cull,1);
-    const auto native_cull=ppc::rd8(c,c.r[2]-5488+cull);
+    memory.read(sdk,0x600); memory.read(c.r[2]+UC_SDA2(-5488)+cull,1);
+    const auto native_cull=ppc::rd8(c,c.r[2]+UC_SDA2(-5488)+cull);
     if(native_cull>3) throw std::invalid_argument("invalid native cull conversion");
     const auto word=tex|(channels<<4)|((tev-1)<<10)|(indirect<<16)|(uint32_t(native_cull)<<14);
     ppc::wr32(c,sdk+0x254,(read32(sdk+0x254)&~0x7FC3Fu)|(word&0x7FC3Fu));
     if(recording_push()) { front_effect({FrontEffect::num_channels,channels}); back([channels] { brec->native.geometry.push_back(Resource::NumChannels{channels}); }); }
 }
 void hle_GXSetNumChans(ppc::Ctx& c) {
-    matrix_boundary(0x80286190);
-    const auto count=c.r[3],sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x80286190));
+    const auto count=c.r[3],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(count>2) throw std::invalid_argument("invalid native color channel count");
     memory.read(sdk,0x600);
     ppc::wr32(c,sdk+0x254,(read32(sdk+0x254)&~0x70u)|(count<<4));
@@ -2434,8 +2435,8 @@ void hle_GXSetNumChans(ppc::Ctx& c) {
     if(recording_push()) { front_effect({FrontEffect::num_channels,count}); back([count] { brec->native.geometry.push_back(Resource::NumChannels{count}); }); }
 }
 void hle_GXSetChanCtrl(ppc::Ctx& c) {
-    matrix_boundary(0x802861B4);
-    const auto channel=c.r[3],enable=c.r[4],ambient=c.r[5],material=c.r[6],mask=c.r[7],diffuse=c.r[8],attenuation=c.r[9],sdk=read32(c.r[2]-8968);
+    matrix_boundary(UC_ADDR(0x802861B4));
+    const auto channel=c.r[3],enable=c.r[4],ambient=c.r[5],material=c.r[6],mask=c.r[7],diffuse=c.r[8],attenuation=c.r[9],sdk=read32(c.r[2]+UC_SDA2(-8968));
     if(channel>5 || enable>1 || ambient>1 || material>1 || mask>255 || diffuse>2 || attenuation>2) throw std::invalid_argument("invalid native color channel control");
     memory.read(sdk,0x600);
     const uint32_t attenuation_modes[]={1,3,2};
@@ -2449,10 +2450,10 @@ void hle_GXSetChanCtrl(ppc::Ctx& c) {
     if(channel>=4) publish((channel&1)+2);
 }
 void hle_GXLoadLightObjImm(ppc::Ctx& c) {
-    matrix_boundary(0x80285F64);
+    matrix_boundary(UC_ADDR(0x80285F64));
     const auto pointer=c.r[3],mask=c.r[4];
     if(!mask || mask>255) throw std::invalid_argument("invalid native light id");
-    memory.read(pointer,64); memory.read(read32(c.r[2]-8968),4);
+    memory.read(pointer,64); memory.read(read32(c.r[2]+UC_SDA2(-8968)),4);
     const auto id=uint32_t(std::bit_width(mask)-1);
     gx::LightUniform light;
     for(uint32_t lane=0;lane<4;++lane) light.color[lane]=float(ppc::rd8(c,pointer+12+lane));
@@ -2469,14 +2470,14 @@ void hle_GXLoadLightObjImm(ppc::Ctx& c) {
     }
     const bool push=recording_push();
     back([id,light,push] { color_uniforms.lights[id]=light; dirty_material(); if(brec && push) brec->native.geometry.push_back(Resource::Light{id,light}); });
-    ppc::wr16(c,read32(c.r[2]-8968)+2,1);
+    ppc::wr16(c,read32(c.r[2]+UC_SDA2(-8968))+2,1);
 }
 void hle_GXLoadNrmMtxImm(ppc::Ctx& c) {
-    matrix_boundary(0x802888A8);
+    matrix_boundary(UC_ADDR(0x802888A8));
     const auto pointer=c.r[3],row=c.r[4]; memory.read(pointer,44);
     gx::NormalMatrix normal{};
     for(uint32_t i=0;i<9;++i) normal[i/3][i%3]=ppc::rdf32(c,pointer+(i/3)*16+(i%3)*4);
-    if (row>61) throw gx::Error(gx::ErrorCode::layout,0x802888A8,61,row);   // gx::set_normal_matrix's check
+    if (row>61) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x802888A8),61,row);   // gx::set_normal_matrix's check
     if(front_list) {
         uc::gx_fifo_store(1,0x10); uc::gx_fifo_store(4,0x00080400|row*3);
         for(const auto& values:normal) for(auto value:values) uc::gx_fifo_store(4,std::bit_cast<uint32_t>(value));
@@ -2484,7 +2485,7 @@ void hle_GXLoadNrmMtxImm(ppc::Ctx& c) {
     } else back([row,normal] { gx::set_normal_matrix(transforms,row,normal); });
 }
 void hle_GXLoadTexMtxImm(ppc::Ctx& c) {
-    matrix_boundary(0x80288954);
+    matrix_boundary(UC_ADDR(0x80288954));
     const auto pointer=c.r[3],id=c.r[4],type=c.r[5];
     if(type>1 || id>125) throw gx::Error(gx::ErrorCode::layout,pointer,125,id);
     const auto count=type ? 8u : 12u;

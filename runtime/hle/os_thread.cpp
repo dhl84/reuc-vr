@@ -1,3 +1,4 @@
+#include "title.h"
 #include "hle/os.h"
 #include "dispatch.h"
 #include "hle/os_layout.h"
@@ -98,15 +99,15 @@ void hle_OSCancelThread(ppc::Ctx& c) {   // (thread); a cancelled thread is mori
     PendingHle pending(os_sched(),c);
     os_sched().cancel(t);
 }
-// The SDK's scheduler-lock counter lives in a small-data word (r13-26464); both functions also drive the scheduler.
+// The SDK's scheduler-lock counter lives in a small-data word (common/title.h); both functions also drive the scheduler.
 void hle_OSDisableScheduler(ppc::Ctx& c) {
-    uint32_t a = c.r[13] - 26464, prev = ppc::rd32(c, a);
+    uint32_t a = c.r[13] + uc::title::kSdaSchedulerLock, prev = ppc::rd32(c, a);
     ppc::wr32(c, a, prev + 1);
     os_sched().lock_scheduler();
     c.r[3] = prev;
 }
 void hle_OSEnableScheduler(ppc::Ctx& c) {
-    uint32_t a = c.r[13] - 26464, prev = ppc::rd32(c, a);
+    uint32_t a = c.r[13] + uc::title::kSdaSchedulerLock, prev = ppc::rd32(c, a);
     ppc::wr32(c, a, prev - 1);
     c.r[3] = prev;
     PendingHle pending(os_sched(),c);

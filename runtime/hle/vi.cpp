@@ -1,3 +1,4 @@
+#include "title.h"
 #include "vi.h"
 #include "guest_call.h"
 #include "hle/os.h"
@@ -7,7 +8,7 @@ using namespace uc;
 
 namespace {
 constexpr uint32_t kViKey = 0xF4000001u;
-constexpr uint32_t kRetraceCount = uint32_t(-25948), kPostCb = uint32_t(-25992), kPreCb = uint32_t(-25996);   // offsets from r13 (retrace handler at 8026D1C0, setters at 8026D8C4 / 8026D908)
+constexpr uint32_t kRetraceCount = uint32_t(uc::title::kSdaViRetraceCount), kPostCb = uint32_t(uc::title::kSdaViPostCb), kPreCb = uint32_t(uc::title::kSdaViPreCb);   // offsets from r13 (common/title.h)
 struct Vi {
     std::atomic<uint64_t> retraces{0};
     std::atomic<uint32_t> cur_fb{0}, next_fb{0}, tv{0};

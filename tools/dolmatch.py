@@ -9,6 +9,7 @@
 #   carried_symbols.txt     <new addr> <name> carried <method> from <ref addr>     (same format as symbols.txt)
 #   carried_hle_addresses.txt   every "@address Name" line of hle_map.txt with the address in the new DOL, or "missing"
 #   sda_offsets.txt         r13 / r2 displacement pairs seen at the same place in matched functions, with vote counts
+#   same_code.txt           functions that are the same code in both programs, as ranges
 #   data_addresses.txt      absolute data address pairs (lis + low half) seen at the same place in matched functions
 #
 # Method, in order:
@@ -338,6 +339,13 @@ def main():
         n, method = match[r]
         nm = names.get(r, [""])[0]
         lines.append("%08X %08X %s %d %s" % (n, r, method, len(nf.get(n, ())), nm))
+    same = ["# Functions that are the same code in both programs (relocations masked): <ref start> <new start> <size words>.",
+            "# An address inside such a function moves by the same offset (tools/title_map.py)."]
+    for r in sorted(match):
+        n, method = match[r]
+        if method != "inside" and r in rmask and n in nmask and rmask[r][0] == nmask[n][0]:
+            same.append("%08X %08X %d" % (r, n, len(rf[r])))
+    (out / "same_code.txt").write_text("\n".join(same) + "\n", encoding="utf-8")
     (out / "matched_functions.txt").write_text("# <new addr> <ref addr> <method> <size words> [name]\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
     sym = []

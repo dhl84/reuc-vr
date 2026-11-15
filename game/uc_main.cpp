@@ -389,7 +389,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         uc::write_crash_bundle(dir, threads, uc::gx_state_summary());
     });
     for (const char* n : {"identified_sdk.txt", "symbols.txt", "gx_symbols.txt"}) {   // installed next to the exe, or the project folder of a build tree
-        for (const fs::path& d : {exe_dir() / "data", exe_dir() / ".." / ".." / "project"}) if (fs::exists(d / n)) { uc::symbols_load((d / n).string()); break; }
+        for (const fs::path& d : {exe_dir() / "data", exe_dir() / ".." / ".." / uc::title::kProjectDir}) if (fs::exists(d / n)) { uc::symbols_load((d / n).string()); break; }
     }
 
     // The game: an unpacked disc (the folder holding DATA) or the player's disc image itself (.wbfs or .iso), read in place.

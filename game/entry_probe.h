@@ -52,3 +52,17 @@ template <uint32_t a> constexpr bool plain_entry() {
 #else
 #define UC_ENTER(a) UC_FN_COUNT_HOOK(a) auto uc_xr_shot_scope=uc::xr_shot_scope<a>(c); auto uc_prompt_scope=uc::prompt_scope<a>(c); auto uc_audio_scope=uc::audio_start_scope<a>(c); auto uc_post_scope=uc::mods::post_scope<a>(c); do { if constexpr((a)==0x80049D64u)uc::audio_wait_ready(c); if constexpr((a)==0x80068DD8u)uc::audio_gap_audit_request(c); if constexpr((a)==0x802E3C10u || (a)==0x802E3C94u)uc::audio_gap_audit_wpad(c,a); if constexpr((a)==0x800676A0u)uc::game_event_probe(c); if constexpr((a)==0x8038BC60u || (a)==0x803CFA84u)uc::picture_entry_probe(c,a); if constexpr((a)==0x8038AEB0u)uc::layout_entry_probe(c); if (uc::mods::hook_enter<a>(c)) return; } while(0)
 #endif
+#if defined(UC_TITLE_DC)
+// The Darkside Chronicles (SBDE08): every probe, scope and mod hook above is keyed by an RBUE08 address, so none of them may run here.
+// Until the entries of this game are found, a translated function only reports its entry in a trace build.
+#include "gx_audit.h"
+#undef UC_PLAIN_ENTRY
+#undef UC_ENTER
+#ifdef UC_TRACE
+#define UC_PLAIN_ENTRY(a) false
+#define UC_ENTER(a) do { ppc::trace_enter(a); uc::gx_audit_enter(a, c); } while (0)
+#else
+#define UC_PLAIN_ENTRY(a) true
+#define UC_ENTER(a) ((void)0)
+#endif
+#endif

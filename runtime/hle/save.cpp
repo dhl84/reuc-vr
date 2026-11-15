@@ -1,3 +1,4 @@
+#include "title.h"
 #include "save.h"
 #include "gx_vertices.h"
 #include "guest_call.h"
@@ -9,7 +10,7 @@
 
 namespace {
 uc::SaveFs* files; // configured before guest threads; all operations run under the scheduler baton
-constexpr char kHome[]="/title/00010000/52425545/data";
+constexpr auto& kHome=uc::title::kSaveHome;
 gx::Memory memory(const ppc::Ctx& c) {
     return {{reinterpret_cast<const std::byte*>(c.mem),24u<<20},{reinterpret_cast<const std::byte*>(c.mem+0x10000000),64u<<20},{}};
 }
@@ -83,20 +84,20 @@ void save_hle_shutdown() { files=nullptr; }
 }
 void hle_NANDInit(ppc::Ctx& c) {
     call(c,[&] {
-        check(c,c.r[13]-25056,4); check(c,0x804291C0,64); check(c,0x8061F6C0,64);
-        if (ppc::rd32(c,c.r[13]-25056)==2) return 0;
+        check(c,c.r[13]+uc::title::kSdaNandState,4); check(c,uc::title::kNandHomeA,64); check(c,uc::title::kNandHomeB,64);
+        if (ppc::rd32(c,c.r[13]+uc::title::kSdaNandState)==2) return 0;
         if (auto result=files->initialize()) return result;
-        for (const auto* directory:{"/title","/title/00010000","/title/00010000/52425545",kHome,"/tmp"}) {
+        for (const auto* directory:{"/title","/title/00010000",uc::title::kTitleDir,static_cast<const char*>(kHome),"/tmp"}) {
             const auto result=files->create_dir(directory);
             if (result && result!=-105) return result;
             bool is_directory=false;
             if (files->attributes(directory,is_directory) || !is_directory) return -101;
         }
-        std::memcpy(c.mem+0x004291C0,kHome,sizeof(kHome));
-        std::memcpy(c.mem+0x0061F6C0,kHome,sizeof(kHome));
-        gx::note_write_range(0x004291C0,sizeof(kHome));
-        gx::note_write_range(0x0061F6C0,sizeof(kHome));
-        ppc::wr32(c,c.r[13]-25056,2);
+        std::memcpy(c.mem+(uc::title::kNandHomeA&0x3FFFFFFF),kHome,sizeof(kHome));
+        std::memcpy(c.mem+(uc::title::kNandHomeB&0x3FFFFFFF),kHome,sizeof(kHome));
+        gx::note_write_range(uc::title::kNandHomeA&0x3FFFFFFF,sizeof(kHome));
+        gx::note_write_range(uc::title::kNandHomeB&0x3FFFFFFF,sizeof(kHome));
+        ppc::wr32(c,c.r[13]+uc::title::kSdaNandState,2);
         std::fprintf(stderr,"[save] native NAND home %s ready\n",kHome);
         return 0;
     });

@@ -1,3 +1,4 @@
+#include "title.h"
 #include "ax_audio.h"
 #include "audio_gap_audit.h"
 #include "gx_vertices.h"
@@ -154,15 +155,15 @@ void hle_AIStartDMA(ppc::Ctx&) {
 }
 void hle_AXFrame(ppc::Ctx& c) {
     // Verified RBUE08 AX service/frame callback and320-byte PBs, without DSP command/mail execution.
-    ram(c).read(c.r[13]-25636,4);
-    const auto count=ppc::rd32(c,c.r[13]-25524),base=ppc::rd32(c,c.r[13]-25536);
+    ram(c).read(c.r[13]+uc::title::kSdaAxCallback,4);
+    const auto count=ppc::rd32(c,c.r[13]+uc::title::kSdaAxVoiceCount),base=ppc::rd32(c,c.r[13]+uc::title::kSdaAxVoiceBase);
     if (count>128) throw std::invalid_argument("invalid AX voice count");
     if (count) {
         ram(c).read(base,size_t(count)*320);
-        uc::call_guest(c,0x80275F34,{0x5F50});
-        uc::call_guest(c,0x80273688,{});
+        uc::call_guest(c,uc::title::kAxSyncPbs,{0x5F50});
+        uc::call_guest(c,uc::title::kAxServiceCallbacks,{});
     }
-    const auto callback=ppc::rd32(c,c.r[13]-25636);
+    const auto callback=ppc::rd32(c,c.r[13]+uc::title::kSdaAxCallback);
     if (callback) uc::call_guest(c,callback,{});
     std::array<int32_t,192> mix{};
     const bool audit=uc::audio_gap_audit_enabled();
