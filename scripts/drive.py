@@ -21,6 +21,7 @@ A STEP is one of:
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
   touch:NAME        create the empty file <folder>/NAME (a diagnostic such as UC_PACKET_DUMP=<folder>/packets.txt|go starts when its .go file appears)
+  speed:N           set the speed of the game clock to N (1 to 32) from here on: reach a scene at speed 4, then measure at speed 1
 
 The saves of the run go to <folder>/saves (the game never touches other saves). The log of the game goes to <folder>/run.log.
 The protocol is docs/testing/test-server.md. The script needs no keyboard or mouse input and does not activate the window.
@@ -245,6 +246,9 @@ def main():
                                 game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
                     done += batch
                 print("spray %s: %d points to retrace %d" % (value, done, game.retraces()), flush=True)
+            elif kind == "speed":
+                game.command("speed", factor=int(value))
+                print("speed %s at retrace %d" % (value, game.retraces()), flush=True)
             elif kind == "touch":
                 (game.out / value).touch()
                 print("touch %s at retrace %d" % (value, game.retraces()), flush=True)

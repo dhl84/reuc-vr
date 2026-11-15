@@ -2,6 +2,7 @@
 #include "texture_replacement.h"
 #include "../runtime/gx_watch_stamp.h"
 #include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <array>
 #include <deque>
@@ -246,6 +247,19 @@ std::shared_ptr<const TexturePixels> TextureCache::snapshot(uint32_t address, co
         built.desc_width = desc.width; built.desc_height = desc.height;
         result = std::make_shared<const TexturePixels>(std::move(built));
         for (const auto& level : result->levels) bytes += level.rgba.size();
+    }
+    // Diagnostic: UC_TEXTURE_MISS_LOG=<file> writes one line per cache miss (at most 200000): the address, the size, the format, and how many
+    // entries of the cache have this address and this key. An entry with the same key means that the pixel bytes changed; entries with the
+    // address and another key mean that the size, the format or the palette changed; none means a new address.
+    static std::FILE* miss_log = [] { const char* path = std::getenv("UC_TEXTURE_MISS_LOG"); return path ? std::fopen(path, "w") : nullptr; }();
+    static unsigned miss_lines = 0;
+    if (miss_log && miss_lines < 200000) {
+        unsigned at_address = 0, with_key = 0;
+        const auto known = by_address_.equal_range(address);
+        for (auto it = known.first; it != known.second; ++it) { ++at_address; with_key += same_key(*it->second); }
+        std::fprintf(miss_log, "%08X %ux%u format %u levels %u palette %zu at_address %u with_key %u decodes %llu\n", unsigned(address | 0x80000000u), unsigned(desc.width), unsigned(desc.height), unsigned(desc.format),
+                     unsigned(desc.levels), palette.bytes.size(), at_address, with_key, static_cast<unsigned long long>(decodes_));
+        if (++miss_lines % 256 == 0) std::fflush(miss_log);
     }
     ++decodes_;
     if (bytes <= budget_) {

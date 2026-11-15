@@ -64,6 +64,7 @@
 #include "reticle_style.h"
 #include "frame_limit.h"
 #include "cpu_sampler.h"
+#include "write_trap.h"
 #include "audio_output.h"
 #include "ax_audio.h"
 #include "det_trace.h"
@@ -500,6 +501,16 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         if (options.stop_retrace && retraces >= options.stop_retrace) det_stop = true;
         static const char* sample_flag = std::getenv("UC_CPU_SAMPLE_FLAG"); static const char* sample_from = std::getenv("UC_CPU_SAMPLE_RETRACE");
         if (sample_flag && sample_from && retraces == std::strtoull(sample_from, nullptr, 10)) { if (std::FILE* f = std::fopen(sample_flag, "w")) std::fclose(f); }   // starts the CPU sampler (cpu_sampler.cpp) at this retrace
+#if defined(UC_TITLE_DC)
+        // Measurement aids for the frame pacing of this game (docs/darkside-port.md). Its clock is the object at 80736D10: the frame wait at 802D8308
+        // waits until the retrace count of the clock reaches the word at +0x34 (1 in the menus, 2 in a chapter) and makes the time step from it.
+        // UC_DC_FRAME_TARGET=1 keeps that word at 1, so the game runs its 60 Hz step in a chapter too (an experiment, off by default).
+        // UC_WRITE_TRAP=<report>|<addresses> (game/write_trap.h) arms here when <report>.go exists: this game has no frame wait native that arms it.
+        static const char* frame_target = std::getenv("UC_DC_FRAME_TARGET");
+        if (frame_target && frame_target[0] == '1') { uint8_t* word = boot.mem + (0x80736D44u & 0x3FFFFFFFu); if (word[0] == 0 && word[1] == 0 && word[2] == 0 && word[3] == 2) word[3] = 1; }
+        static const bool write_trap = std::getenv("UC_WRITE_TRAP") != nullptr;
+        if (write_trap) uc::write_trap_step(sched.irq_ctx());
+#endif
     });
 
     const uint32_t kMainThread = uc::title::kDefaultThread;   // the start code runs on the SDK's DefaultThread (common/title.h)
@@ -1286,6 +1297,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     };
     if (!options.headless) SDL_AddEventWatch(watch, &watch_state);
     uc::cpu_sampler_start_once("main");
+    uc::cpu_sampler_start_once("all");
     while (!close && !runner.done.load()) {
         ++profile_loops;
         if (!options.headless) {
@@ -1382,6 +1394,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 std::fprintf(stderr,"[window] input focus %u\n",window ? unsigned((SDL_GetWindowFlags(window.get())&SDL_WINDOW_INPUT_FOCUS)!=0) : 0u);
                 { static const bool dump_threads=std::getenv("UC_DUMP_THREADS")!=nullptr; if(dump_threads) std::fputs(sched.dump_contexts().c_str(),stderr); }   // bring-up; read without the baton, so a value may be mid-update
                 { const auto sw=sched.switch_stats(); static uint64_t last_switches=0,last_wake=0,last_run[32]={}; std::fprintf(stderr,"[sched] switches %llu avg wake %.1f us, run ms:",(unsigned long long)(sw.switches-last_switches),(sw.switches-last_switches) ? (sw.wake_ns-last_wake)/1e3/double(sw.switches-last_switches) : 0.0); last_switches=sw.switches; last_wake=sw.wake_ns; for(int id=1;id<32;++id) { const auto ns=sched.thread_run_ns(id); if(ns-last_run[id]) std::fprintf(stderr," #%d(%08X) %.0f",id,sched.thread_entry(id),(ns-last_run[id])/1e6); last_run[id]=ns; } std::fputc(10,stderr); }
+                { static uint64_t last_thread_cycles[32]={}; std::fprintf(stderr,"[sched-cycles] guest Mcycles:"); for(int id=1;id<32;++id) { const auto cycles=sched.thread_run_cycles(id); if(cycles-last_thread_cycles[id]) std::fprintf(stderr," #%d %.1f",id,(cycles-last_thread_cycles[id])/1e6); last_thread_cycles[id]=cycles; } std::fputc(10,stderr); }   // the CPU work of each guest thread this second: [sched] run ms also counts the time a thread waits while it holds the baton
                 { const auto depth=packets.depth(); std::fprintf(stderr,"[packets] queued %zu outstanding %zu presenting in flight %zu\n",depth.queued,depth.outstanding,depth.frames_in_flight); }   // outstanding must stay near the guest lead (tens), never creep to kMaxOutstandingPackets
                 std::fprintf(stderr,"[guest-blocked] renderer wait %.2f ms total (window %.2f, packets %llu),main loop waited %.2f ms this second, GPU busy %.2f ms total, frame latency avg %.2f max %.2f ms over %llu frames\n",gx::seal_wait_ns()/1e6,gx::seal_window_wait_ns()/1e6,(unsigned long long)gx::seal_count(),loop_wait_ns/1e6,renderer.gpu_busy_ns()/1e6,gx::frame_latency().total_ns/1e6/std::max<uint64_t>(gx::frame_latency().frames,1),gx::frame_latency().max_ns/1e6,(unsigned long long)gx::frame_latency().frames); loop_wait_ns=0;
                 std::fprintf(stderr,"[game-pacing] calls %llu retraces %llu timestep %.6f sec threshold2 %llu adjusted %llu wait %.2f ms\n",(unsigned long long)pacing.calls,(unsigned long long)pacing.retraces,pacing.timestep_ns/1e9,(unsigned long long)pacing.threshold_two,(unsigned long long)pacing.adjusted,pacing.wait_ns/1e6);

@@ -171,6 +171,7 @@ public:
     uint64_t guest_cycles() const { uint64_t sum = 0; for (const auto& c : run_cycles_) sum += c.load(); return sum; }
     uint64_t idle_ns() const { return idle_ns_.load(); }   // time every guest thread was blocked and the scheduler waited for an event
     uint64_t thread_run_ns(int id) const { return id > 0 && id < 32 ? run_ns_[id].load() : 0; }
+    uint64_t thread_run_cycles(int id) const { return id > 0 && id < 32 ? run_cycles_[id].load() : 0; }   // CPU cycles of one guest thread (see run_cycles_)
     std::string idle_report() const;   // idle waits of 1 ms or more, grouped by the blocked threads and the wait keys they sat on (frame-log notes)
     uint32_t thread_entry(int id) const { return id > 0 && id < 32 ? entry_[id].load() : 0; }
 };
