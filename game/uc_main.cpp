@@ -506,6 +506,22 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         // hle_DcFrameWait (game/game_pacing.cpp).
         static const bool write_trap = std::getenv("UC_WRITE_TRAP") != nullptr;
         if (write_trap) uc::write_trap_step(sched.irq_ctx());
+        // UC_DC_GOD=1 (test aid, off by default): the health of both players stays full (common/title.h kDcPlayerHealth). A hit takes
+        // less than the full health, so the write at every retrace is enough; the game still plays its hit reactions.
+        static const bool god = [] { const char* v = std::getenv("UC_DC_GOD"); return v && v[0] == '1'; }();
+        if (god) {
+            ppc::Ctx& c = sched.irq_ctx();
+            static bool said = false;
+            for (uint32_t player = 0; player < 2; ++player) {
+                const uint32_t handle = uc::title::kDcPlayerHandles + player * 8, id = ppc::rd32(c, handle), index = ppc::rd32(c, handle + 4);
+                if (!id || index >= 300) continue;   // the table has 300 entries (80046E94)
+                const uint32_t entry = uc::title::kDcObjectTable + index * 8, object = ppc::rd32(c, entry + 4);
+                if (ppc::rd32(c, entry) != id || object < 0x80004000 || (object >= 0x81800000 && object < 0x90000000) || object >= 0x93400000) continue;
+                const uint32_t full = uc::title::kDcFullHealthBits, at = object + uc::title::kDcPlayerHealth;
+                if (ppc::rd32(c, at) != full) ppc::wr32(c, at, full);
+                if (!said) { said = true; std::fprintf(stderr, "[dc-god] UC_DC_GOD=1: the health of the players stays full (player object %08X)\n", object); }
+            }
+        }
 #endif
     });
 

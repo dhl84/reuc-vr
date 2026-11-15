@@ -81,6 +81,13 @@ inline constexpr uint32_t kSmallTextureTexels = 64;
 // does, and 700 frames of it filled the cache (1 GB) and kept their GPU images. When this number of older versions of one texture
 // (same address, size, format and palette) is in the cache, a new version drops them. 0: no limit.
 inline constexpr uint32_t kTextureVersionLimit = 2;
+// The health of a player (the "LEON" bar of the HUD) is the float at +0x974 of the player object: 50 is full, 0 is dead. Its setter
+// (800AC7EC) holds it between 0 and 50, a hit takes its damage away (800ACA74), a herb adds (800AC86C). The player manager is the
+// object at 80736378 (its getter is 80046EFC). It keeps a handle of two words for each of the two players at +0xAC: an id and an
+// index into the object table at 80732B88, whose entries are an id and a pointer (80046DC8 looks a player up this way). The test aid
+// UC_DC_GOD=1 (game/uc_main.cpp) writes 50 to both players at every retrace.
+inline constexpr uint32_t kDcPlayerHandles = 0x80736378 + 0xAC, kDcObjectTable = 0x80732B88, kDcPlayerHealth = 0x974;
+inline constexpr uint32_t kDcFullHealthBits = 0x42480000;   // 50.0f
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
