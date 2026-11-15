@@ -308,6 +308,23 @@ Checked in the preview on 15 November 2026: the title screen, the profile screen
 
 Not done for the headset: the shot follows the pointer of the game and not the ray of the controller (the hooks of `game/xr_shot.cpp` name `RBUE08` functions), and nothing is moved to a later pointer (`late_aim`).
 
+## On the headset
+
+First runs on a Quest 3, 15 November 2026. The game was played from the PC, with nobody in the headset.
+
+How to play it from the PC. Put a file `args.txt` in the folder of the app (`/sdcard/Android/data/org.uc.darksidechronicles.vr/files`) with the lines `--test-server`, a name, `--save-root` and a folder inside the app folder. Start the app. Then run `python -I scripts/drive_quest.py --package org.uc.darksidechronicles.vr --name NAME --out <folder> steps...`. The script forwards the test channels of the app with adb and runs the steps of `scripts/drive.py`. The step `shot` pulls the frame from the headset. Hold the menu presses long (`press:A*40`): at 72 Hz the test server applied a short press and its release between two reads of the game. Delete `args.txt` after the tests, or the app starts in test mode.
+
+The crash of the shader compiler. On the Quest a pipeline key without a folded TEV module goes through the driver's own specialization of the large TEV shader. The Adreno compiler fails there with `VkResult -13`, or it crashes (`libllvm-qgl.so+0x6425A0`). `RBUE08` ships a key list and folded modules for it. `SBDE08` had none, and the app crashed in its first minute, twice. Two changes fix it:
+
+- Each game has its own key lists (`UC_KEY_DIR`: `project/dc/pipeline_keys.seed` and `pipeline_keys.quest` for this game). `tools/merge_pipeline_keys.py` adds the keys that a run recorded in `data/pipeline_keys.bin`. The seed list has the 1,418 keys of the PC play-through. The build folds 6,776 modules from the lists.
+- The compile guard (`renderer/compile_guard.h`) marks a compile in which the driver crashed. The next start does not compile that pipeline again.
+
+With both, the app played from the start through the menus, both movies and the walk into the first fight in three runs (14, 6 and 6 minutes), and no run crashed.
+
+The frame rate. With native eye images (2064x2208) at 90 Hz the menus ran at 60 fps and the first fight at 30 to 35 fps. The GPU took 23 ms a frame. With the preset "72 Hz, no space warp" (eye images 1514x1620, render scale 2.25, high foveation) the first fight ran at 66 fps on average, and 104 of 110 seconds were at 60 fps or more. The GPU took 11 to 15 ms a frame there. This preset is now the default of the app (`xr/xr_settings.h`). The step of the game at 72 Hz is the timer step of `hle_DcFrameWait`.
+
+Not done on the headset: play by a person with the controllers, the sound, space warp, later chapters, and a key list from the headset itself (the list has 5 keys from it).
+
 ## State
 
 On 15 November 2026 the Windows build of `SBDE08` does this:
@@ -347,6 +364,6 @@ Not done yet:
 - In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
 - `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
 - Keyboard, mouse, gamepad and VR controller input have one fixed mapping (see "Controls"). It is not tested with real devices.
-- The Quest app builds (`scripts/build-quest.sh` with `UC_TITLE=dc`), and the stereo view runs in the PC preview. Nothing is tested or measured on a headset yet.
+- The Quest app runs on a Quest 3 (see "On the headset"). A person has not played it with the controllers yet.
 - The exposure read-back and the conversion of `GX_TF_I8` copies are in the Vulkan renderer only. The read-back takes the first layer (the left eye of a stereo view).
 - The HOME button dims the screen and shows the hand pointer, but the menu itself is not checked.

@@ -52,7 +52,15 @@ typedef struct {
 #endif
 #define LG_XR_DEFAULT_WIDTH  LG_XR_NATIVE_WIDTH
 #define LG_XR_DEFAULT_HEIGHT LG_XR_NATIVE_HEIGHT
+/* The Darkside Chronicles (UC_TITLE_DC): its scene and its post-processing passes cost more GPU time than The Umbrella Chronicles'. On a
+ * Quest 3 the first fight ran at 30 to 35 fps with native eye images at 90 Hz (GPU 23 ms a frame). With the render scale 2.25 at 72 Hz
+ * it ran at 66 fps on average, 60 or more in 104 of 110 seconds (15 November 2026). So that game starts with the "72 Hz, no space warp"
+ * preset of the Display page. */
+#ifdef UC_TITLE_DC
+#define LG_XR_DEFAULT_RENDER_SCALE 2.25f
+#else
 #define LG_XR_DEFAULT_RENDER_SCALE 0.0f
+#endif
 #define LG_XR_OLD_QUEST_HEIGHT 1440   /* the version 2-3 default eye height on the Quest: moves to native */
 /* ... dual off, stats panel on (vr.cfg "stats off" hides it), medium foveation */
 /* foveation off (version 3): the game draws its own picture and only the screen pass renders into the eye image, so foveating it saved
@@ -62,7 +70,11 @@ typedef struct {
 /* render scale 1.0 and 1548x1656 eye images on the Quest (version 7): 60 fps (see LG_XR_DEFAULT_WIDTH) */
 /* display refresh 90 Hz (version 8): at 120 Hz the compositor's work per refresh left frames missing their slot (40 fps); at 90 the live
  * fight holds 60 */
+#ifdef UC_TITLE_DC
+#define LG_XR_DEFAULT_REFRESH 72
+#else
 #define LG_XR_DEFAULT_REFRESH 90
+#endif
 /* game crosshair shown again (version 10): with it hidden the owner could not aim properly by the laser alone */
 /* Version 12: medium foveation by default, retaining native eye/scene size. Version 13: high foveation, FXAA off (Quest). */
 /* Version 14: the gun model hidden on the Quest (GPU time: the present pass 1.8-2.1 -> 1.4-1.5 ms in r020; Gun model on the main page). */
