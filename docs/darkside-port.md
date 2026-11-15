@@ -321,7 +321,7 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It plays the two movies of the first chapter, loads the chapter and runs it to its boss: the walk through the village, the first enemy, the HUD, shots that kill the enemy, the reload, the subtitles, the scenes in the streets and the market, the spiders, the scene with the wounded man, the choice of ways, the creatures in the water, the screen "You are Dead" and the return to the last checkpoint.
 - It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
 - The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
-- With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run and plays the first seven chapters of "Memories of a Lost City" and most of the eighth (see "Play-through").
+- With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run. It plays the first seven chapters of "Memories of a Lost City" and most of the eighth (see "Play-through").
 - Its mixed sound is the sound of the game. The title music is equal to the stream file, sample for sample, at the right rate and in stereo (see "Sound").
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
