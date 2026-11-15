@@ -11,6 +11,7 @@ A STEP is one of:
   aim:X,Y           move the pointer (each value from -1 to 1; 0,0 is the centre of the screen)
   shot[:NAME]       save the current frame as a PNG in <folder>
   state             print the input frame counter and the retrace counter
+  draws             print every draw of the current frame
   peek:ADDR,SIZE    print SIZE bytes of guest memory at hexadecimal ADDR
   peekptr:ADDR,OFFSET,SIZE   read the pointer at ADDR, then print SIZE bytes at pointer + OFFSET
 
@@ -153,6 +154,14 @@ def main():
                     game.next_id += 1
                 game.pipe.send_line(json.dumps(dict(id=ident, cmd="input", kpad={"x": game.aim[0], "y": game.aim[1], "buttons": mask}, hold_frames=int(hold or 60))))
                 print("hold %s" % value, flush=True)
+            elif kind == "draws":   # every draw of the frame: pass, call site, vertex count, texture size, screen box (0..100 percent)
+                reply = game.command("draws", timeout=60.0)
+                draws = reply.get("draws", [])
+                print("draws: %d" % len(draws), flush=True)
+                for d in draws:
+                    box = d.get("bbox", [0, 0, 0, 0])
+                    pct = [round((v + 1) * 50) for v in box]
+                    print("  pass %s site %s vertices %s tex %s box x %d..%d y %d..%d" % (d.get("pass"), d.get("callsite"), d.get("vertices"), d.get("tex"), pct[0], pct[2], pct[1], pct[3]), flush=True)
             elif kind == "state":
                 st = game.command("state").get("state", {})
                 print("state: input frame %s retrace %s" % (st.get("n"), st.get("retraces")), flush=True)
