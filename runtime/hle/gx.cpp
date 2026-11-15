@@ -1097,15 +1097,18 @@ void live_begin(const SdkRef& block,uint8_t primitive,uint8_t vat,uint16_t count
     gx::share(live_transforms,transforms);
     live_blend=blend_state;
 }
+// GX_POINTS: the native renderers have no point primitive, so a title may drop such a draw (common/title.h kDropPointDraws).
+bool dropped_point_draw(const gx::DrawPacket& draw) {
+    if(!uc::title::kDropPointDraws || draw.primitive!=0xB8) return false;
+    static uint64_t dropped=0;
+    if(!dropped++) std::fprintf(stderr,"[gx] GX_POINTS draws are not drawn: the first one is from call site %08X%c",draw.callsite,10);
+    return true;
+}
 void live_end(uint32_t who,std::span<const std::byte> bytes) {
     capture->write_attribute(who,bytes);
     auto draw = capture->take_draw(); add_guest_stat(vertex_count,capture->vertex_count()); add_guest_stat(draw_count,1);
     if(replaying)return;
-    if(uc::title::kDropPointDraws && draw.primitive==0xB8) {   // GX_POINTS: no native primitive yet (common/title.h)
-        static uint64_t dropped=0;
-        if(!dropped++) std::fprintf(stderr,"[gx] GX_POINTS draws are not drawn: the first one is from call site %08X\n",draw.callsite);
-        return;
-    }
+    if(dropped_point_draw(draw)) return;
     draw.transforms=live_transforms;
     draw.texture=live_texture;
     draw.material=live_material; draw.uniforms=live_uniforms; draw.texture_bank=texture_bank(*draw.state,texture_matrices);
@@ -1632,7 +1635,7 @@ void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,
     catch(...) { list_readbacks.clear(); throw; }
     list_readbacks.clear();
     for (auto& item : imported) {
-        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); draws.push_back(std::move(*draw)); }
+        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); if(!dropped_point_draw(*draw)) draws.push_back(std::move(*draw)); }
         else {
             auto& command=std::get<CopiedTexture>(item); copy_state=command.clear_state;
             submit_batch(inputs,false,command.clear,0,std::move(command.request));
