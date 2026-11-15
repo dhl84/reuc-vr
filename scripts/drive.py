@@ -14,6 +14,9 @@ A STEP is one of:
   draws             print every draw of the current frame
   peek:ADDR,SIZE    print SIZE bytes of guest memory at hexadecimal ADDR
   peekptr:ADDR,OFFSET,SIZE   read the pointer at ADDR, then print SIZE bytes at pointer + OFFSET
+  waitlog:TEXT[,N]  wait until TEXT appears in the game log after the place of the last waitlog or until step (at most N retraces, default 20000)
+  until:TEXT,BUTTONS[,EVERY[,N]]   press BUTTONS every EVERY retraces (default 60) until TEXT appears in the game log (at most N retraces, default 20000)
+  dump:NAME         write MEM1 (24 MB) and MEM2 (64 MB) to <folder>/NAME.mem1 and <folder>/NAME.mem2
 
 The saves of the run go to <folder>/saves (the game never touches other saves). The log of the game goes to <folder>/run.log.
 The protocol is docs/testing/test-server.md. The script needs no keyboard or mouse input and does not activate the window.
@@ -57,6 +60,7 @@ class Game:
         self.cv = threading.Condition()
         self.next_id = 1
         self.aim = (0.0, 0.0)
+        self.log_pos = 0
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):
@@ -104,6 +108,36 @@ class Game:
                 return
             time.sleep(0.05)
         raise RuntimeError("the game ended (exit code %s)" % self.proc.returncode)
+
+
+def log_has(game, text):
+    """True when the game log holds the text after the place of the last match. The next search starts after the match."""
+    game.log.flush()
+    with open(game.out / "run.log", "rb") as f:
+        f.seek(game.log_pos)
+        data = f.read()
+    at = data.find(text.encode())
+    if at < 0:
+        game.log_pos += max(0, len(data) - len(text))
+        return False
+    game.log_pos += at + len(text)
+    return True
+
+
+def wait_log(game, text, limit, press=None, every=60):
+    start = game.retraces()
+    last = None
+    while game.proc.poll() is None:
+        if log_has(game, text):
+            return True
+        now = game.retraces()
+        if now - start > limit:
+            return False
+        if press is not None and (last is None or now - last >= every):
+            game.command("input", kpad={"x": game.aim[0], "y": game.aim[1], "buttons": press}, hold_frames=4)
+            last = now
+        time.sleep(0.02)
+    raise RuntimeError("the game ended (exit code %s)" % game.proc.returncode)
 
 
 def main():
@@ -162,6 +196,20 @@ def main():
                     box = d.get("bbox", [0, 0, 0, 0])
                     pct = [round((v + 1) * 50) for v in box]
                     print("  pass %s site %s vertices %s tex %s box x %d..%d y %d..%d" % (d.get("pass"), d.get("callsite"), d.get("vertices"), d.get("tex"), pct[0], pct[2], pct[1], pct[3]), flush=True)
+            elif kind == "waitlog":
+                text, _, limit = value.partition(",")
+                found = wait_log(game, text, int(limit or 20000))
+                print("waitlog %s: %s at retrace %d" % (text, "found" if found else "NOT FOUND", game.retraces()), flush=True)
+            elif kind == "until":
+                parts = value.split(",")
+                found = wait_log(game, parts[0], int(parts[3]) if len(parts) > 3 else 20000, button_mask(parts[1]), int(parts[2]) if len(parts) > 2 else 60)
+                print("until %s: %s at retrace %d" % (parts[0], "found" if found else "NOT FOUND", game.retraces()), flush=True)
+            elif kind == "dump":
+                for suffix, base, size in ((".mem1", 0x80000000, 24 << 20), (".mem2", 0x90000000, 64 << 20)):
+                    with open(game.out / (value + suffix), "wb") as f:
+                        for at in range(0, size, 262144):
+                            f.write(bytes.fromhex(game.command("peek", timeout=60.0, addr=base + at, size=262144)["hex"]))
+                print("dump %s at retrace %d" % (value, game.retraces()), flush=True)
             elif kind == "state":
                 st = game.command("state").get("state", {})
                 print("state: input frame %s retrace %s" % (st.get("n"), st.get("retraces")), flush=True)

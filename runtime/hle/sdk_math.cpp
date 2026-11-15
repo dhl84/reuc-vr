@@ -3,6 +3,7 @@
 // it writes and the registers it returns are bit-identical to the emulated psq/ps code, minus the register-file and per-access overhead.
 // tests/test_sdk_math_hle.cpp runs the original op sequences against these. Only the registers that carry results (f1) are written back;
 // the other floating-point scratch registers are caller-saved by the calling convention.
+#include "title.h"
 #include "ppc_rt.h"
 #include "dispatch.h"
 #include "rollback_memory.h"
@@ -180,7 +181,7 @@ void hle_PSMTXCopy(ppc::Ctx& c) {
 void hle_PSMTXConcat(ppc::Ctx& c) {
     float_gqr(c);
     const uint32_t a = c.r[3], b = c.r[4], ab = c.r[5];
-    const uint32_t k = (uint32_t(int32_t(-32660)) << 16) + 13368u;   // a constant (0, 1) pair in the game's data
+    const uint32_t k = UC_ADDR(0x806C3438);   // a constant (0, 1) pair in the game's data (lis r6,-32660; addi r6,r6,13368 in RBUE08)
     const PS a0 = ld(c, a + 0), b0 = ld(c, b + 0), b1 = ld(c, b + 8), b2 = ld(c, b + 16), a2 = ld(c, a + 16), kk = ld(c, k), b3 = ld(c, b + 24);
     const PS a1 = ld(c, a + 8), a3 = ld(c, a + 24), b4 = ld(c, b + 32), b5 = ld(c, b + 40), a4 = ld(c, a + 32), a5 = ld(c, a + 40);
     PS r12 = muls0(b0, a0.p0), r13 = muls0(b1, a0.p0), r14 = muls0(b0, a2.p0), r15 = muls0(b1, a2.p0);
@@ -294,7 +295,7 @@ void hle_PSVECNormalize(ppc::Ctx& c) {
     float_gqr(c);
     const PS xy = ld(c, c.r[3] + 0), z = ld1(c, c.r[3] + 8);
     const PS sq = mul(xy, xy);
-    const double half = f32_at(c, c.r[2] - 9472), three = f32_at(c, c.r[2] - 9468);
+    const double half = f32_at(c, c.r[2] + UC_SDA2(-9472)), three = f32_at(c, c.r[2] + UC_SDA2(-9468));
     PS len2 = madd(z, z, sq);
     len2 = sum0(len2, sq, z);
     const double estimate = 1.0 / std::sqrt(double(len2.p0));               // frsqrte (the emulation computes it exactly)
@@ -318,7 +319,7 @@ void hle_PSVECSquareMag(ppc::Ctx& c) {
 void hle_PSVECMag(ppc::Ctx& c) {
     float_gqr(c);
     const PS xy = mul(ld(c, c.r[3] + 0), ld(c, c.r[3] + 0));
-    const double half = f32_at(c, c.r[2] - 9472), three = f32_at(c, c.r[2] - 9468);
+    const double half = f32_at(c, c.r[2] + UC_SDA2(-9472)), three = f32_at(c, c.r[2] + UC_SDA2(-9468));
     const PS z = ls(c, c.r[3] + 8);
     const double zero = rs(half - half);
     const PS len2 = sum0(madd(z, z, xy), xy, xy);

@@ -57,6 +57,7 @@ UC_TITLE_ADDR(0x80374114, 0x804BE014)   // function, exact
 UC_TITLE_ADDR(0x80376148, 0x804C0108)   // function, exact
 UC_TITLE_ADDR(0x806A0040, 0x8080AC00)   // data, 27 votes
 UC_TITLE_ADDR(0x806A0041, 0x8080AC01)   // manual
+UC_TITLE_ADDR(0x806C3438, 0x80865618)   // data, 1 votes
 UC_TITLE_SDA13(-28936, -25024)   // 1 votes
 UC_TITLE_SDA13(-28928, -25016)   // 1 votes
 UC_TITLE_SDA13(-28920, -25008)   // 1 votes
@@ -67,5 +68,7 @@ UC_TITLE_SDA13(-28888, -24976)   // 1 votes
 UC_TITLE_SDA13(-25336, -7840)   // 4 votes
 UC_TITLE_SDA13(-25328, -7832)   // 5 votes
 UC_TITLE_SDA13(-25324, -7828)   // 4 votes
+UC_TITLE_SDA2(-9472, 1328)   // 3 votes
+UC_TITLE_SDA2(-9468, 1332)   // 3 votes
 UC_TITLE_SDA2(-8968, 1816)   // 201 votes
 UC_TITLE_SDA2(-5488, 5616)   // 2 votes
