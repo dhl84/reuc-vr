@@ -342,7 +342,7 @@ Not done yet:
 - The game draws no shadows: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel (there is no depth copy yet), and a copy that names lines below 480 takes the 480 lines of the native colour buffer. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
 - No person listened to the sound. The numbers are in "Sound". In long fights 2.6 to 7.2 % of the samples are at full scale.
 - The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
-- The particles that the game draws as `GX_POINTS` are missing. A point primitive needs the point size (`GXSetPointSize` is not a native) and a square for each point in the renderers.
+- The particles that the game draws as `GX_POINTS` are missing. A point primitive needs a square for each point in the renderers. It also needs the point size. `GXSetPointSize` (803A4C68) keeps it in the word at `+0x7C` of the SDK state: bits 8 to 15 are the size in sixths of a pixel, and bits 19 to 21 are the texture offset. The effect library sets the texture offset 5, so the texture covers the point.
 - After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
 - In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
 - `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
