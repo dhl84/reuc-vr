@@ -157,7 +157,26 @@ static InputSample game_input_sample_unfiltered(const ppc::Ctx& c,const InputSam
     const auto state=input_probe_snapshot(c);
     if(!uc::title::kNativeActionMap) {   // SBDE08: no game state is known yet, so the Wii Remote sample goes to the game as it is
         if(player==0)test_state_publish(state,uint8_t(InputContext::menu));   // the test server answers an input command from this
-        return raw;
+        if(!input->using_host_input())return raw;
+        // Keyboard, mouse, gamepad and VR controller: one fixed mapping, because the menu and gameplay states of this game are not
+        // known yet. The game takes B as OK in its menus too, so the trigger (fire) both shoots and confirms.
+        input->context(InputContext::gameplay);
+        const auto frame=input->consume_actions();
+        const auto buttons=[](uint64_t actions) {
+            uint32_t bits=0;
+            if(actions&(bit(Action::interact)|bit(Action::confirm)))bits|=kButtonA;
+            if(actions&bit(Action::fire))bits|=kButtonB;
+            if(actions&bit(Action::back))bits|=0x1000;    // minus: Back
+            if(actions&bit(Action::pause))bits|=0x10;     // plus: pause
+            return bits;
+        };
+        auto result=raw;
+        result.held=buttons(frame.held); result.pressed=buttons(frame.pressed); result.released=buttons(frame.released)&~result.held;
+        const auto actions=frame.held|frame.pressed;
+        const float x=float(bool(actions&bit(Action::camera_right)))-float(bool(actions&bit(Action::camera_left)))+frame.camera[0]/127.f;
+        const float y=float(bool(actions&bit(Action::camera_up)))-float(bool(actions&bit(Action::camera_down)))+frame.camera[1]/127.f;
+        result.stick_x=std::clamp(x,-1.f,1.f); result.stick_y=std::clamp(y,-1.f,1.f);
+        return result;
     }
     const auto context=game_input_context(state,player);
     if(player==0) {

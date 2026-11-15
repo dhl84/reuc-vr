@@ -9,6 +9,7 @@ namespace uc::title {
 #if defined(UC_TITLE_DC)
 inline constexpr const char* kDiscId = "SBDE08";
 inline constexpr const char* kName = "Resident Evil: The Darkside Chronicles";
+inline constexpr const char* kSharedFolder = "DarksideChronicles";   // /sdcard/<folder> on the Quest (game/android_main.cpp, quest/reuc/build.gradle)
 inline constexpr const char* kProjectDir = "project/dc";   // symbol lists of a build tree (game/uc_main.cpp)
 inline constexpr bool kActiveThreadQueue = true;           // the native thread calls keep __OSActiveThreadQueue (runtime/hle/os_thread.cpp)
 // OSJoinThread of the SDK does not wait for a detached thread (attribute bit 0): it returns FALSE at once. The game's loader threads
@@ -59,6 +60,7 @@ inline constexpr bool kDepthCopyAsFar = true;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
+inline constexpr const char* kSharedFolder = "UmbrellaChronicles";
 inline constexpr const char* kProjectDir = "project";
 inline constexpr bool kActiveThreadQueue = false;
 inline constexpr bool kJoinSkipsDetached = false;

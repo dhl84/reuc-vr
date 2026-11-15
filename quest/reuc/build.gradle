@@ -7,7 +7,13 @@ android {
     compileSdkVersion 35
 
     defaultConfig {
-        applicationId "org.uc.umbrellachronicles.vr"
+        // The game of this APK. The defaults are The Umbrella Chronicles; scripts/build-quest.sh passes the values of another game
+        // (-PappId, -PappName, -PdiscId, -PgameFolder, -PgameTitle), so that its app installs next to this one.
+        applicationId(project.findProperty("appId") ?: "org.uc.umbrellachronicles.vr")
+        resValue("string", "app_name", project.findProperty("appName") ?: "Umbrella Chronicles VR")
+        resValue("string", "disc_id", project.findProperty("discId") ?: "RBUE08")
+        resValue("string", "game_folder", project.findProperty("gameFolder") ?: "UmbrellaChronicles")
+        resValue("string", "game_title", project.findProperty("gameTitle") ?: "Resident Evil: The Umbrella Chronicles")
         minSdkVersion 29
         targetSdkVersion 32
         versionCode((project.findProperty("appVersionCode") ?: "1") as int)

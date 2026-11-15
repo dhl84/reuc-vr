@@ -83,7 +83,8 @@ public class UmbrellaChroniclesVR extends SDLActivity {
             return null;
         }
 
-        File shared = new File(Environment.getExternalStorageDirectory(), "UmbrellaChronicles");
+        final String disc = getString(R.string.disc_id), app = getString(R.string.app_name);   // the game this APK was built for (quest/reuc/build.gradle)
+        File shared = new File(Environment.getExternalStorageDirectory(), getString(R.string.game_folder));
         File download = new File(Environment.getExternalStorageDirectory(), "Download");
         File image = null;
         for (File base : new File[] { own, shared, download }) {
@@ -98,20 +99,20 @@ public class UmbrellaChroniclesVR extends SDLActivity {
         if (image != null) {
             String id = discId(image);
             Log.i(TAG, "game: disc image " + image + ", " + id);
-            if (!"RBUE08".equals(id)) {
+            if (!disc.equals(id)) {
                 msg = image.getName() + " is " + (id == null ? "not a Wii disc image" : "the disc " + id) +
-                      "; the app needs the NTSC-U release RBUE08.";
+                      "; the app needs the NTSC-U release " + disc + ".";
             } else if (!getResources().getBoolean(R.bool.common_key_embedded) &&
                        !new File(image.getParentFile(), "common-key.bin").canRead() && !(own != null && new File(own, "common-key.bin").canRead())) {
                 msg = "Reading " + image.getName() + " needs the Wii common key: put common-key.bin (16 bytes) next to it.";
             }
         } else if (dol == null) {
             if (!Environment.isExternalStorageManager()) {
-                msg = "Allow Umbrella Chronicles VR to access all files, copy your disc image (RBUE08 .wbfs) to " + shared +
+                msg = "Allow " + app + " to access all files, copy your disc image (" + disc + " .wbfs) to " + shared +
                       ", then start it again.";
                 askForFileAccess();
             } else {
-                msg = "Game not found: copy your disc image (RBUE08 .wbfs or .iso) to " + shared;
+                msg = "Game not found: copy your disc image (" + disc + " .wbfs or .iso) to " + shared;
             }
         } else {
             String want = getString(R.string.dol_sha256).trim();
@@ -119,7 +120,7 @@ public class UmbrellaChroniclesVR extends SDLActivity {
             Log.i(TAG, "game: " + dol + ", main.dol " + have);
             if (!want.isEmpty() && !want.equalsIgnoreCase(have)) {
                 msg = "This is a different version of the game (main.dol " + have.substring(0, 12) +
-                      "), the app needs the NTSC-U release RBUE08 (main.dol " + want.substring(0, 12) + ").";
+                      "), the app needs the NTSC-U release " + disc + " (main.dol " + want.substring(0, 12) + ").";
             }
         }
         writeHelp(own, msg);
@@ -202,11 +203,11 @@ public class UmbrellaChroniclesVR extends SDLActivity {
         File help = new File(own, "HOW-TO-ADD-THE-GAME.txt");
         if (msg == null) { help.delete(); return; }
         String text =
-            "Umbrella Chronicles VR needs your own copy of Resident Evil: The Umbrella Chronicles (Wii, NTSC-U, RBUE08).\n\n" +
+            getString(R.string.app_name) + " needs your own copy of " + getString(R.string.game_title) + " (Wii, NTSC-U, " + getString(R.string.disc_id) + ").\n\n" +
             "Last start: " + msg + "\n\n" +
             "Copy your disc image (.wbfs or .iso) into the folder\n\n" +
-            "    /sdcard/UmbrellaChronicles/\n\n" +
-            "(Internal shared storage > UmbrellaChronicles over USB), and allow the app to access all files when it asks.\n" +
+            "    /sdcard/" + getString(R.string.game_folder) + "/\n\n" +
+            "(Internal shared storage > " + getString(R.string.game_folder) + " over USB), and allow the app to access all files when it asks.\n" +
             (getResources().getBoolean(R.bool.common_key_embedded) ? "" :
              "Put the Wii common key (common-key.bin, 16 bytes) in the same folder.\n") + "\n" +
             "The app needs main.dol with SHA-256 " + getString(R.string.dol_sha256).trim() + "\n";

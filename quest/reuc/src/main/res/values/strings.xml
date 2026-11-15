@@ -1,3 +1,3 @@
 <resources>
-    <string name="app_name">Umbrella Chronicles VR</string>
+    <!-- app_name, disc_id, game_folder and game_title come from quest/reuc/build.gradle (resValue), one set per game -->
 </resources>

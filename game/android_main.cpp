@@ -16,6 +16,7 @@
 extern "C" void __llvm_profile_set_filename(const char*);   // compiler-rt's profile runtime, linked by -fprofile-instr-generate
 extern "C" int __llvm_profile_write_file(void);
 #endif
+#include "title.h"
 #include <SDL3/SDL.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
@@ -182,13 +183,13 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** 
     if (own.empty()) { std::fprintf(stderr, "[android] no app folder\n"); return 1; }
     unpack_data(own);
     std::vector<std::string> bases = {own};
-    if (!diagnostic) { bases.push_back("/sdcard/UmbrellaChronicles"); bases.push_back("/sdcard/Download"); }
+    if (!diagnostic) { bases.push_back(std::string("/sdcard/") + uc::title::kSharedFolder); bases.push_back("/sdcard/Download"); }
     std::string game;
     for (const auto& b : bases) if ((game = find_image(b)).size()) break;
     if (game.empty())
         for (const auto& b : bases) if (access((b + "/game/DATA/sys/main.dol").c_str(), R_OK) == 0) { game = b + "/game"; break; }
     if (game.empty()) {
-        std::fprintf(stderr, "[android] no game found: copy your disc image (RBUE08 .wbfs or .iso) to /sdcard/UmbrellaChronicles (and allow the app all-files access)\n");
+        std::fprintf(stderr, "[android] no game found: copy your disc image (%s .wbfs or .iso) to /sdcard/%s (and allow the app all-files access)\n", uc::title::kDiscId, uc::title::kSharedFolder);
         return 1;
     }
     std::fprintf(stderr, "[android] game %s, app folder %s\n", game.c_str(), own.c_str());
