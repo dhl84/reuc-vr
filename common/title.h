@@ -88,6 +88,10 @@ inline constexpr uint32_t kTextureVersionLimit = 2;
 // UC_DC_GOD=1 (game/uc_main.cpp) writes 50 to both players at every retrace.
 inline constexpr uint32_t kDcPlayerHandles = 0x80736378 + 0xAC, kDcObjectTable = 0x80732B88, kDcPlayerHealth = 0x974;
 inline constexpr uint32_t kDcFullHealthBits = 0x42480000;   // 50.0f
+// The partner (the "KRAUSER" bar in the first chapter) is not a player object. The object at 80735500 (its getter is 80049CC8) keeps
+// four floats of health at +0xF8 and their maxima at +0xE8 (the setter 800FC664 holds a value below its maximum, the getter 800B1D88
+// gives it to the HUD at 800B17C0). The test aid writes each maximum to its value.
+inline constexpr uint32_t kDcPartnerHealth = 0x80735500 + 0xF8, kDcPartnerHealthMax = 0x80735500 + 0xE8;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";

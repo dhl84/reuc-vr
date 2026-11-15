@@ -521,6 +521,10 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 if (ppc::rd32(c, at) != full) ppc::wr32(c, at, full);
                 if (!said) { said = true; std::fprintf(stderr, "[dc-god] UC_DC_GOD=1: the health of the players stays full (player object %08X)\n", object); }
             }
+            for (uint32_t slot = 0; slot < 4; ++slot) {   // the partner's health follows its maximum
+                const uint32_t most = ppc::rd32(c, uc::title::kDcPartnerHealthMax + slot * 4);
+                if (most >= 0x3F800000 && most <= 0x447A0000 && ppc::rd32(c, uc::title::kDcPartnerHealth + slot * 4) != most)   // a float from 1 to 1000 ppc::wr32(c, uc::title::kDcPartnerHealth + slot * 4, most);
+            }
         }
 #endif
     });

@@ -23,12 +23,15 @@ A STEP is one of:
   waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
-  bot:N[,EVERY]     like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A+B, WAVE, A;
+  bot:N[,EVERY[,TEXT]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A+B, WAVE, A;
                     these pass most quick-time prompts of The Darkside Chronicles ("Press the A Button!", "Wave the Wii Remote!"), reload,
-                    and take a choice of ways (the A presses are at the right and at the left of the screen)
+                    and take a choice of ways (the A presses are at the right and at the left of the screen); with TEXT the step ends
+                    after the round of 35 points in which TEXT appears in the game log (searched from the last waitlog, until or bot match)
   watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]   read the pointer at ADDR, then print the SIZE bytes at pointer + OFFSET each time they change, for
                     N retraces (4 bytes also as a float), and each new line of the game log that holds one of the TEXTs; for example the
                     health of a player of The Darkside Chronicles and the voice lines of a fight (docs/darkside-port.md)
+  live:NAME         take steps from the file <folder>/NAME as another program appends lines to it, until a line holds the step "end";
+                    for a screen that is not known yet: look at a frame, then send the next steps
   touch:NAME        create the empty file <folder>/NAME (a diagnostic such as UC_PACKET_DUMP=<folder>/packets.txt|go starts when its .go file appears)
   speed:N           set the speed of the game clock to N (1 to 32) from here on: reach a scene at speed 4, then measure at speed 1
 
@@ -36,6 +39,7 @@ The saves of the run go to <folder>/saves (the game never touches other saves). 
 The protocol is docs/testing/test-server.md. The script needs no keyboard or mouse input and does not activate the window.
 """
 import argparse
+import collections
 import json
 import os
 import struct
@@ -170,7 +174,10 @@ def main():
     game = Game(args)
     shots = 0
     try:
-        for step in args.steps:
+        queue = collections.deque(args.steps)
+        live_at = {}
+        while queue:
+            step = queue.popleft()
             kind, _, value = step.partition(":")
             if kind == "wait":
                 game.wait(int(value))
@@ -302,8 +309,11 @@ def main():
                 count, every = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 2)
                 points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
                 extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
-                done = 0
+                stop, found, done = parts[2] if len(parts) > 2 else None, False, 0
                 while game.proc.poll() is None and done < count:
+                    if stop and log_has(game, stop):
+                        found = True
+                        break
                     at = game.command("state").get("state", {}).get("n", 0) + 4
                     events = []   # (input frame, x, y, buttons)
                     batch = min(35, count - done)   # the server keeps at most 256 open commands
@@ -326,7 +336,7 @@ def main():
                                 game.next_id += 1
                             game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
                     done += batch
-                print("bot %s: %d points to retrace %d" % (value, done, game.retraces()), flush=True)
+                print("bot %s: %d points to retrace %d%s" % (value, done, game.retraces(), "" if not stop else ", text found" if found else ", text NOT FOUND"), flush=True)
             elif kind == "speed":
                 game.command("speed", factor=int(value))
                 print("speed %s at retrace %d" % (value, game.retraces()), flush=True)
@@ -340,6 +350,22 @@ def main():
                 addr, offset, size = value.split(",")
                 pointer = int(game.command("peek", addr=int(addr, 16), size=4)["hex"], 16)
                 print("peekptr %s -> %08X+%s: %s" % (addr, pointer, offset, game.command("peek", addr=pointer + int(offset, 0), size=int(size))["hex"]), flush=True)
+            elif kind == "live":   # steps from a file that another program appends to; the step ends with the line "end"
+                path = game.out / value
+                while game.proc.poll() is None:
+                    text = path.read_text() if path.exists() else ""
+                    new = text[live_at.get(value, 0):]
+                    cut = new.rfind(chr(10)) + 1   # whole lines only
+                    tokens = new[:cut].split()
+                    if tokens:
+                        live_at[value] = live_at.get(value, 0) + cut
+                        if "end" in tokens:
+                            tokens = tokens[:tokens.index("end")]
+                        else:
+                            tokens.append(step)
+                        queue.extendleft(reversed(tokens))
+                        break
+                    time.sleep(0.1)
             else:
                 raise SystemExit("unknown step %r" % step)
         game.command("quit")
