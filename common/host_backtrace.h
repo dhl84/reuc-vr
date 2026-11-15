@@ -1,6 +1,7 @@
 #pragma once
 // The calling thread's return addresses, innermost first, on POSIX hosts: backtrace() where libc has it, the unwinder on Android
-// (bionic has no backtrace()).
+// (bionic has no backtrace()). Windows callers use RtlCaptureStackBackTrace directly, so this header is empty there.
+#if !defined(_WIN32)
 #if defined(__ANDROID__)
 #include <cstdint>
 #include <unwind.h>
@@ -24,3 +25,4 @@ inline int host_backtrace(void** frames, int capacity) {
 #endif
 }
 }  // namespace uc
+#endif  // !_WIN32

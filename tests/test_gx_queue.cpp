@@ -4,6 +4,7 @@
 #include "gx_queue.h"
 #include "gx_watch_stamp.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
