@@ -1,0 +1,13 @@
+# Found by hand. Format: "@<address> <SdkName or HleName>  # evidence". These win over carried addresses.
+@803A9B60 SaveFpr24  # _savefpr block starts at 803A9B38 (stfd f14,-144(r11)); entry N is base + 4*(N-14)
+@803A9B64 SaveFpr25
+@803A9B68 SaveFpr26
+@803A9B6C SaveFpr27
+@803A9BAC RestFpr24  # _restfpr block starts at 803A9B84 (lfd f14,-144(r11))
+@803A9BB0 RestFpr25
+@803A9BB4 RestFpr26
+@803A9BB8 RestFpr27
+@80411E60 KPADRead  # "li r7,1; b 80411E68": the read entry the game calls from 8029C7FC with (chan, buffer, 16, &error): the newer KPADReadEx form, r6 = error pointer
+@80412770 KPADInit  # called once from 8029DC10 with (0, 0), just before the function below, as KPADInit is in RBUE08 (8003C5A4)
+@80412BB0 KPADEnableMotor  # same first 14 instructions as RBUE08 802F2C60; called right after KPADInit in both games
+@803C63EC ISFS_GetFileStats  # (fd, stats*): same alignment test and -101 result as RBUE08 802A8724; one caller at 803C93E8

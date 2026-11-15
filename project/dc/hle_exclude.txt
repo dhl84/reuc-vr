@@ -1,0 +1,36 @@
+# HLE names that stay off for this game: natives that hold addresses, layouts or logic of the reference game (RBUE08).
+# One regular expression per line, matched against the HLE name. Remove a line only after the native was checked against this game.
+^Leaf_
+^Game
+^Intro
+^Movie
+^Hud
+^Prop
+^Physics
+^Flight
+^Camera
+^Deferred
+^Rumble
+^Trail
+^JumpBlend
+^Crossfade
+^WorldRaycast
+^ModelHistory
+^Matrix
+^BoundsRecord
+^HitBuffer
+^VectorAddStep
+^UiPhysics
+^Timeline
+^WeaponTrail
+^EffectRetire
+^TargetRefresh
+^Sound
+^HomeMenu
+^SegmentTriangle
+^ClosestPt
+^SphereTriangle
+^SinCosFIdx
+^ActorStepTime
+^FixedPlaybackStep
+^MTXPerspective

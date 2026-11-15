@@ -1,0 +1,357 @@
+on   OSCreateThread               8037EE80 carried exact + sigmatch
+on   OSResumeThread               8037F4F0 carried exact + sigmatch
+on   OSSuspendThread              8037F788 carried exact + sigmatch
+on   OSSleepThread                8037F91C carried exact + sigmatch
+on   OSWakeupThread               8037FA08 carried exact + sigmatch
+on   OSYieldThread                8037EE44 carried exact + sigmatch
+on   OSExitThread                 8037F0EC carried exact + sigmatch
+on   OSJoinThread                 8037F3B0 carried exact
+on   OSSetThreadPriority          8037FAFC carried exact + sigmatch
+on   OSCancelThread               8037F1D0 carried call
+on   OSDisableScheduler           8037E8E4 carried exact
+on   OSEnableScheduler            8037E920 carried exact
+on   OSInitMutex                  8037CD4C carried exact + sigmatch
+on   OSLockMutex                  8037CD84 carried exact + sigmatch
+on   OSUnlockMutex                8037CE60 carried exact + sigmatch
+on   OSInitMessageQueue           8037C340 carried exact + sigmatch
+on   OSSendMessage                8037C3A0 carried exact + sigmatch
+on   OSReceiveMessage             8037C468 carried exact + sigmatch
+on   OSJamMessage                 8037C544 carried order + sigmatch
+on   OSDisableInterrupts          8037BBA4 carried exact + sigmatch
+on   OSEnableInterrupts           8037BBB8 carried exact + sigmatch
+on   OSRestoreInterrupts          8037BBCC carried exact + sigmatch
+on   OSGetTime                    8037FD18 carried exact + sigmatch
+on   __OSGetSystemTime            8037FD38 carried exact + sigmatch
+on   OSGetTick                    8037FD30 carried call
+on   OSSetAlarm                   803763A0 carried exact + sigmatch
+on   OSSetPeriodicAlarm           80376410 carried exact + sigmatch
+on   OSCancelAlarm                80376494 carried exact + sigmatch
+on   OSReport                     802DB4AC carried call
+on   OSPanic                      80484674 carried exact
+on   DVDInit                      8038525C carried call
+on   DVDConvertPathToEntrynum     80384408 carried exact + sigmatch
+on   DVDFastOpen                  80384710 carried exact + sigmatch
+on   DVDOpen                      80384778 carried exact + sigmatch
+on   DVDReadPrio                  80384CF0 carried exact + sigmatch
+on   DVDReadAsyncPrio             80384C08 carried exact + sigmatch
+on   DVDClose                     80384A24 carried call
+on   DVDCancel                    803897F0 carried call
+on   DVDCancelAsync               8038948C carried call
+on   __VIInit                     8038DEC0 carried exact + sigmatch
+on   VIConfigure                  8038EB98 carried call
+on   VIFlush                      8038F5D0 carried exact + sigmatch
+on   VISetNextFrameBuffer         8038F6E4 carried exact + sigmatch
+on   VISetBlack                   8038F750 carried exact + sigmatch
+on   VIGetTvFormat                8038F860 carried call + sigmatch
+on   VIWaitForRetrace             8038E618 carried exact + sigmatch
+on   LCLoadBlocks                 80377474 carried inside
+on   LCStoreBlocks                80377498 carried exact
+on   DCEnable                     803771CC carried exact + sigmatch
+on   DCInvalidateRange            803771E0 carried exact + sigmatch
+on   DCFlushRange                 8037720C carried exact + sigmatch
+on   DCStoreRange                 8037723C carried exact + sigmatch
+on   DCFlushRangeNoSync           8037726C carried exact + sigmatch
+on   DCStoreRangeNoSync           80377298 carried exact + sigmatch
+on   ICInvalidateRange            803772F0 carried exact + sigmatch
+on   ICFlashInvalidate            80377324 carried exact + sigmatch
+on   ICEnable                     80377334 carried exact + sigmatch
+on   LCEnable                     80377414 carried exact + sigmatch
+on   LCDisable                    8037744C carried exact + sigmatch
+on   EXIImm                       803BAD34 carried exact + sigmatch
+on   EXIDma                       803BB054 carried exact + sigmatch
+on   EXIImmEx                     803BAFB0 carried exact + sigmatch
+on   EXISync                      803BB14C carried exact + sigmatch
+on   EXISelect                    803BB79C carried exact + sigmatch
+on   EXIDeselect                  803BB8CC carried exact + sigmatch
+on   EXILock                      803BBF30 carried exact + sigmatch
+on   EXIUnlock                    803BC02C carried exact + sigmatch
+on   EXIGetID                     803BC12C carried exact + sigmatch
+on   EXIAttach                    803BB5CC carried exact + sigmatch
+on   EXIDetach                    803BB6E4 carried exact + sigmatch
+on   __EXIProbe                   803BB44C carried exact + sigmatch
+on   __OSInitAudioSystem          80376F38 carried exact + sigmatch
+on   DSPAddTask                   803A0854 carried exact
+on   DSPInit                      803A078C carried exact + sigmatch
+on   AIStartDMA                   803935D0 carried exact
+on   AXFrame                      8039524C carried exact
+on   __AI_SRC_INIT                803938B0 carried exact + sigmatch
+on   __OSInitMemoryProtection     8037CC80 carried call
+on   IOS_Open                     803C7164 carried exact + sigmatch
+on   IOS_OpenAsync                803C704C carried exact + sigmatch
+on   IOS_Close                    803C7344 carried exact + sigmatch
+on   IOS_CloseAsync               803C7284 carried exact + sigmatch
+on   IOS_Read                     803C74EC carried exact + sigmatch
+on   IOS_ReadAsync                803C73EC carried exact + sigmatch
+on   IOS_Write                    803C76F4 carried exact + sigmatch
+on   IOS_WriteAsync               803C75F4 carried exact + sigmatch
+off  IOS_Seek                     not found
+on   IOS_SeekAsync                803C77FC carried exact + sigmatch
+on   IOS_Ioctl                    803C7A14 carried exact + sigmatch
+on   IOS_IoctlAsync               803C78DC carried exact + sigmatch
+on   IOS_Ioctlv                   803C7D64 carried exact + sigmatch
+on   IOS_IoctlvAsync              803C7C80 carried exact + sigmatch
+on   NANDInit                     803CA34C carried call
+on   ISFS_OpenLib                 803C51E4 carried order
+on   ISFS_CreateDir               803C548C carried exact
+on   ISFS_CreateDirAsync          803C5580 carried exact
+on   ISFS_CreateFile              803C6084 carried exact
+on   ISFS_CreateFileAsync         803C6178 carried exact
+on   ISFS_Open                    803C626C carried exact
+on   ISFS_OpenAsync               803C6334 carried exact
+on   ISFS_GetFileStats            803C63EC manual
+off  ISFS_Seek                    not found
+on   ISFS_SeekAsync               803C64BC carried exact
+on   ISFS_Read                    803C6548 carried call
+on   ISFS_ReadAsync               803C6568 carried order
+on   ISFS_Write                   803C660C carried call
+on   ISFS_WriteAsync              803C662C carried order
+on   ISFS_Close                   803C66D0 carried call
+on   ISFS_CloseAsync              803C66D4 carried exact
+on   ISFS_ReadDir                 803C5674 carried exact
+on   ISFS_ReadDirAsync            803C57C8 carried exact
+on   ISFS_GetAttr                 803C5910 carried exact
+on   ISFS_GetAttrAsync            803C5A68 carried exact
+on   ISFS_Delete                  803C5B9C carried exact
+on   ISFS_DeleteAsync             803C5C74 carried exact
+on   ISFS_Rename                  803C5D44 carried exact
+on   ISFS_RenameAsync             803C5E48 carried exact
+on   ISFS_GetUsage                803C5F4C carried exact
+on   PPCSync                      803749AC carried call
+on   GXBegin                      803A4A10 carried exact + sigmatch
+on   GXSetArray                   803A3C04 carried exact + sigmatch
+on   GXSetDrawDone                803A42D4 carried order
+on   GXWaitDrawDone               803A4378 carried exact
+on   GXDrawDone                   803A43C4 carried order
+on   GXBeginDisplayList           803A8234 carried order
+on   GXEndDisplayList             803A82E8 carried order
+on   GXCallDisplayList            803A8398 carried exact + sigmatch
+on   GXSetProjection              803A8450 carried exact + sigmatch
+on   GXSetProjectionv             803A84B4 carried exact + sigmatch
+on   GXLoadPosMtxImm              803A8540 carried exact + sigmatch
+on   GXLoadPosMtxIndx             803A8590 carried exact
+on   GXSetCurrentMtx              803A8648 carried exact + sigmatch
+on   GXSetMatrixIndex             803A8910 carried exact
+on   ResResetMatrixIndices        804BDFB8 carried exact
+on   ResTexMatrixIndices          804BE014 carried exact
+on   GXSetCopyClear               803A5264 carried exact + sigmatch
+on   GXCopyDisp                   803A54D4 carried exact + sigmatch
+on   GXSetTexCopySrc              803A4DA0 carried exact
+on   GXSetTexCopyDst              803A4E04 carried exact
+on   GXCopyTex                    803A5610 carried exact
+on   GXLoadTexObjPreLoaded        803A6620 carried exact + sigmatch
+on   GXLoadTlut                   803A6800 carried exact + sigmatch
+on   ResTevApply                  804AE524 carried exact
+off  ResPixelApply                not found
+off  ResColorApply                not found
+on   ResMeshSetup                 804AD7A4 carried exact
+on   ResMeshDraw                  804AD87C carried exact
+on   ResChannelApply              804C0108 carried exact
+on   ResGenerationMode            804BDC00 carried exact
+on   GXLoadLightObjImm            803A5BE4 carried exact + sigmatch
+on   GXLoadNrmMtxImm              803A85BC carried exact + sigmatch
+on   GXLoadNrmMtxIndx3x3          803A8614 carried exact
+on   GXSetNumChans                803A5E10 carried exact
+on   GXSetChanCtrl                803A5E34 carried exact
+on   GXSetAlphaCompare            803A788C carried exact
+on   GXSetTevColor                803A7614 carried exact
+on   GXSetTevColorS10             803A7674 carried exact
+on   GXSetTevKColor               803A76D8 carried exact
+on   GXLoadTexMtxImm              803A8668 carried exact
+on   GXSetTevDirect               803A73B0 carried exact
+on   GXSetTevIndirect             803A7004 carried exact
+on   GXSetIndTexMtx               803A706C carried exact
+on   GXSetIndTexCoordScale        803A71C0 carried exact
+on   GXSetIndTexOrder             803A72C4 carried exact
+on   GXSetFog                     803A7AD0 carried call
+off  IntroLogoUpdate              not found
+off  MovieUpdate                  not found
+off  MTXPerspective               excluded; 80383B90 carried exact
+off  GameFrameWait                not found
+off  GameLoop                     not found
+off  ActorStepTime                not found
+off  FixedPlaybackStep            not found
+off  HudNameDelay                 not found
+off  PropStep                     not found
+off  PhysicsStep                  not found
+off  PhysicsHit                   not found
+off  PhysicsAutoDisable           not found
+off  PhysicsBodyDestroy           not found
+off  FlightStep                   not found
+off  FlightPathStep               not found
+off  FlightPhaseStep              not found
+off  CameraHistoryStep            not found
+off  DeferredActorStep            not found
+off  RumbleStep                   not found
+off  TrailHistoryStep             not found
+off  JumpBlendStep                excluded; 8032A648 carried exact
+off  CrossfadeStep                not found
+off  WorldRaycast                 not found
+on   KPADInit                     80412770 manual
+on   KPADRead                     80411E60 manual
+on   WPADProbe                    803FF2A4 carried exact
+on   GXSetBlendMode               803A7F80 carried exact
+on   GXSetColorUpdate             803A7FD0 carried exact
+on   GXSetAlphaUpdate             803A7FFC carried exact
+on   KPADEnableMotor              80412BB0 manual
+on   WPADControlMotor             803FF80C carried exact + sigmatch
+off  GameActionMask               not found
+off  GameWeaponUpdate             not found
+off  GameActionOwnerUpdate        not found
+off  GameMotionCount              not found
+off  ModelHistoryIdentity         excluded; 80382F00 carried exact
+off  MatrixTranspose4             not found
+off  MatrixTranspose4Resume       not found
+off  MatrixTranspose4Return       not found
+off  MatrixEulerFinish            not found
+on   PSMTXCopy                    80382F2C carried exact
+on   PSMTXConcat                  80382F60 carried exact
+on   PSMTXTransApply              80383598 carried exact
+on   PSMTXScaleApply              8038360C carried exact
+on   PSMTXMultVec                 80383AA0 carried exact
+on   PSVECAdd                     80383D14 carried exact
+off  PSVECSubtract                not found
+off  PSVECScale                   not found
+on   PSVECNormalize               80383D38 carried exact
+off  PSVECSquareMag               not found
+on   PSVECMag                     80383D7C carried exact
+on   PSQUATDotProduct             80383DC0 carried exact
+on   PSVECCrossProduct            80383DE0 carried exact
+off  BoundsRecordInit             not found
+off  HitBufferDestruct            not found
+off  HitBufferConstruct           not found
+off  Leaf_80137BC4                not found
+off  Leaf_80139368                not found
+off  Leaf_801394B8                not found
+off  Leaf_8013951C                not found
+off  Leaf_8013939C                not found
+off  Leaf_801393C0                not found
+off  Leaf_80139448                not found
+off  Leaf_803947A4                excluded; 804E1640 carried exact
+off  Leaf_80394B04                excluded; 804E1A00 carried exact
+off  Leaf_80138AF8                not found
+off  Leaf_80394CE4                not found
+off  Leaf_80032FD8                not found
+off  Leaf_80139610                not found
+off  Leaf_800521A0                not found
+off  Leaf_800AFCD8                not found
+off  SinCosFIdx                   excluded; 804E11BC carried call
+off  Leaf_8003EDD0                not found
+off  Leaf_80367314                excluded; 804AE9A8 carried call
+off  Leaf_80365C7C                excluded; 804AC4AC carried call
+off  Leaf_802655E8                not found
+off  Leaf_80394FAC                excluded; 804E1D9C carried exact
+off  Leaf_803B4F68                excluded; 80507D90 carried call
+off  Leaf_8037B388                excluded; 804C5FD8 carried call
+off  Leaf_8029C4AC                excluded; 803BA760 carried order
+off  Leaf_80367660                excluded; 804AED3C carried exact
+off  Leaf_8005669C                not found
+off  Leaf_80078A00                not found
+off  Leaf_800FFD14                not found
+off  Leaf_80138B1C                not found
+off  Leaf_80235294                excluded; 802DC484 carried call
+off  Leaf_802647AC                excluded; 8038302C carried exact
+off  Leaf_80273674                excluded; 80393AD0 carried exact
+off  Leaf_80365C28                excluded; 804AC458 carried call
+off  Leaf_80374210                excluded; 804BE110 carried exact
+off  Leaf_80394BC8                excluded; 804E1AC4 carried exact
+off  VectorAddStep                excluded; 8005ED10 carried exact
+off  UiPhysicsStep                not found
+off  TimelineStep                 not found
+off  WeaponTrailStep              not found
+off  EffectRetireStep             not found
+off  TargetRefreshStep            not found
+off  SoundFrameStep               not found
+off  SoundRetryStep               not found
+off  SoundWaitStep                not found
+off  HomeMenuStep                 not found
+off  Leaf_80394914                excluded; 804E17FC carried exact
+off  Leaf_803948C0                excluded; 804E17A8 carried exact
+off  Leaf_803942AC                excluded; 804E10FC carried call
+off  Leaf_803890C8                excluded; 804D3FF4 carried exact
+off  Leaf_803703F8                not found
+off  Leaf_8013969C                not found
+off  Leaf_80139648                not found
+off  Leaf_80032D70                not found
+off  Leaf_80032FF4                excluded; 8005CDC8 carried exact
+off  Leaf_8011F1E4                excluded; 80334D58 carried call
+off  Leaf_8036624C                not found
+off  Leaf_8036B2C8                not found
+off  Leaf_8003F468                not found
+off  Leaf_801996BC                not found
+off  Leaf_80394548                excluded; 804E1378 carried exact
+off  Leaf_800ABCE0                not found
+off  SegmentTriangleHit           not found
+off  ClosestPtTriangle            not found
+off  SphereTriangleHit            not found
+on   SaveFpr14                    803A9B38 carried inside
+on   SaveFpr15                    803A9B3C carried inside
+on   SaveFpr16                    803A9B40 carried inside
+on   SaveFpr17                    803A9B44 carried inside
+on   SaveFpr18                    803A9B48 carried inside
+on   SaveFpr19                    803A9B4C carried inside
+on   SaveFpr20                    803A9B50 carried inside
+on   SaveFpr21                    803A9B54 carried inside
+on   SaveFpr22                    803A9B58 carried inside
+on   SaveFpr23                    803A9B5C carried call
+on   SaveFpr24                    803A9B60 manual
+on   SaveFpr25                    803A9B64 manual
+on   SaveFpr26                    803A9B68 manual
+on   SaveFpr27                    803A9B6C manual
+on   SaveFpr28                    803A9B70 carried call
+on   SaveFpr29                    803A9B74 carried exact
+on   SaveFpr30                    803A9B78 carried inside
+on   SaveFpr31                    803A9B7C carried inside
+on   RestFpr14                    803A9B84 carried inside
+on   RestFpr15                    803A9B88 carried inside
+on   RestFpr16                    803A9B8C carried inside
+on   RestFpr17                    803A9B90 carried inside
+on   RestFpr18                    803A9B94 carried inside
+on   RestFpr19                    803A9B98 carried inside
+on   RestFpr20                    803A9B9C carried inside
+on   RestFpr21                    803A9BA0 carried inside
+on   RestFpr22                    803A9BA4 carried inside
+on   RestFpr23                    803A9BA8 carried call
+on   RestFpr24                    803A9BAC manual
+on   RestFpr25                    803A9BB0 manual
+on   RestFpr26                    803A9BB4 manual
+on   RestFpr27                    803A9BB8 manual
+on   RestFpr28                    803A9BBC carried call
+on   RestFpr29                    803A9BC0 carried exact
+on   RestFpr30                    803A9BC4 carried inside
+on   RestFpr31                    803A9BC8 carried inside
+on   SaveGpr14                    803A9BD0 carried call
+on   SaveGpr15                    803A9BD4 carried order
+on   SaveGpr16                    803A9BD8 carried call
+on   SaveGpr17                    803A9BDC carried call
+on   SaveGpr18                    803A9BE0 carried call
+on   SaveGpr19                    803A9BE4 carried call
+on   SaveGpr20                    803A9BE8 carried call
+on   SaveGpr21                    803A9BEC carried call
+on   SaveGpr22                    803A9BF0 carried call
+on   SaveGpr23                    803A9BF4 carried call
+on   SaveGpr24                    803A9BF8 carried call
+on   SaveGpr25                    803A9BFC carried call
+on   SaveGpr26                    803A9C00 carried call
+on   SaveGpr27                    803A9C04 carried call
+on   SaveGpr28                    803A9C08 carried call
+on   SaveGpr29                    803A9C0C carried exact
+on   SaveGpr30                    803A9C10 carried inside
+on   SaveGpr31                    803A9C14 carried inside
+on   RestGpr14                    803A9C1C carried call
+on   RestGpr15                    803A9C20 carried order
+on   RestGpr16                    803A9C24 carried call
+on   RestGpr17                    803A9C28 carried call
+on   RestGpr18                    803A9C2C carried call
+on   RestGpr19                    803A9C30 carried order
+on   RestGpr20                    803A9C34 carried call
+on   RestGpr21                    803A9C38 carried call
+on   RestGpr22                    803A9C3C carried call
+on   RestGpr23                    803A9C40 carried call
+on   RestGpr24                    803A9C44 carried call
+on   RestGpr25                    803A9C48 carried call
+on   RestGpr26                    803A9C4C carried call
+on   RestGpr27                    803A9C50 carried call
+on   RestGpr28                    803A9C54 carried call
+on   RestGpr29                    803A9C58 carried exact
+on   RestGpr30                    803A9C5C carried inside
+on   RestGpr31                    803A9C60 carried inside

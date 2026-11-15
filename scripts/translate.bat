@@ -2,10 +2,13 @@
 rem Generates project\hle.cfg and translates the game when the inputs changed. Returns 1 on failure.
 rem Expects ROOT, BUILD, GEN, GAME_DOL in the environment and the translator already built.
 setlocal EnableExtensions
-set "CFG=%ROOT%\project\uc.cfg"
-set "HLECFG=%ROOT%\project\hle.cfg"
+rem UC_PROJECT_DIR and UC_PROJECT_CFG select the project of another game (default: project\uc.cfg).
+if not defined UC_PROJECT_DIR set "UC_PROJECT_DIR=%ROOT%\project"
+if not defined UC_PROJECT_CFG set "UC_PROJECT_CFG=uc.cfg"
+set "CFG=%UC_PROJECT_DIR%\%UC_PROJECT_CFG%"
+set "HLECFG=%UC_PROJECT_DIR%\hle.cfg"
 set "TRANSLATOR=%BUILD%\tools\translator\translator.exe"
-python -I "%ROOT%\tools\hle_cfg.py" "%ROOT%\project"
+python -I "%ROOT%\tools\hle_cfg.py" "%UC_PROJECT_DIR%"
 if errorlevel 1 goto :hle_failed
 set "KEY="
 for /f %%h in ('python -I "%ROOT%\tools\translate_key.py"') do set "KEY=%%h"

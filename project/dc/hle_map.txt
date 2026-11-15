@@ -1,0 +1,397 @@
+# SDK function replaced by hle_<HleName>. Format: "<SdkName> [HleName]" (HleName defaults to SdkName) or "@<hex address> <HleName>".
+# Only implemented HLE functions belong here (a missing one is a link error).
+# Names come from identified_sdk.txt (Dolphin database, unverified: tech-debt TD-007) and symbols.txt (manual, with evidence).
+
+# --- OS threads, synchronisation, interrupts, time, alarms (runtime/hle/os_*.cpp)
+@8037EE80 OSCreateThread  # OSCreateThread, carried exact + sigmatch
+@8037F4F0 OSResumeThread  # OSResumeThread, carried exact + sigmatch
+@8037F788 OSSuspendThread  # OSSuspendThread, carried exact + sigmatch
+@8037F91C OSSleepThread  # OSSleepThread, carried exact + sigmatch
+@8037FA08 OSWakeupThread  # OSWakeupThread, carried exact + sigmatch
+@8037EE44 OSYieldThread  # OSYieldThread, carried exact + sigmatch
+@8037F0EC OSExitThread  # OSExitThread, carried exact + sigmatch
+@8037F3B0 OSJoinThread  # OSJoinThread, carried exact
+@8037FAFC OSSetThreadPriority  # OSSetThreadPriority, carried exact + sigmatch
+@8037F1D0 OSCancelThread  # OSCancelThread, carried call
+@8037E8E4 OSDisableScheduler  # OSDisableScheduler, carried exact
+@8037E920 OSEnableScheduler  # OSEnableScheduler, carried exact
+@8037CD4C OSInitMutex  # OSInitMutex, carried exact + sigmatch
+@8037CD84 OSLockMutex  # OSLockMutex, carried exact + sigmatch
+@8037CE60 OSUnlockMutex  # OSUnlockMutex, carried exact + sigmatch
+@8037C340 OSInitMessageQueue  # OSInitMessageQueue, carried exact + sigmatch
+@8037C3A0 OSSendMessage  # OSSendMessage, carried exact + sigmatch
+@8037C468 OSReceiveMessage  # OSReceiveMessage, carried exact + sigmatch
+@8037C544 OSJamMessage  # OSJamMessage, carried order + sigmatch
+@8037BBA4 OSDisableInterrupts  # OSDisableInterrupts, carried exact + sigmatch
+@8037BBB8 OSEnableInterrupts  # OSEnableInterrupts, carried exact + sigmatch
+@8037BBCC OSRestoreInterrupts  # OSRestoreInterrupts, carried exact + sigmatch
+@8037FD18 OSGetTime  # OSGetTime, carried exact + sigmatch
+@8037FD38 OSGetTime  # __OSGetSystemTime, carried exact + sigmatch
+@8037FD30 OSGetTick  # OSGetTick, carried call
+@803763A0 OSSetAlarm  # OSSetAlarm, carried exact + sigmatch
+@80376410 OSSetPeriodicAlarm  # OSSetPeriodicAlarm, carried exact + sigmatch
+@80376494 OSCancelAlarm  # OSCancelAlarm, carried exact + sigmatch
+@802DB4AC OSReport  # OSReport, carried call
+@80484674 OSPanic  # OSPanic, carried exact
+
+# --- DVD (runtime/hle/dvd.cpp)
+@8038525C DVDInit  # DVDInit, carried call
+@80384408 DVDConvertPathToEntrynum  # DVDConvertPathToEntrynum, carried exact + sigmatch
+@80384710 DVDFastOpen  # DVDFastOpen, carried exact + sigmatch
+@80384778 DVDOpen  # DVDOpen, carried exact + sigmatch
+@80384CF0 DVDReadPrio  # DVDReadPrio, carried exact + sigmatch
+@80384C08 DVDReadAsyncPrio  # DVDReadAsyncPrio, carried exact + sigmatch
+@80384A24 DVDClose  # DVDClose, carried call
+@803897F0 DVDCancel  # DVDCancel, carried call
+@8038948C DVDCancelAsync  # DVDCancelAsync, carried call
+
+# --- Video interface (runtime/hle/vi.cpp)
+@8038DEC0 VIInit  # __VIInit, carried exact + sigmatch
+@8038EB98 VIConfigure  # VIConfigure, carried call
+@8038F5D0 VIFlush  # VIFlush, carried exact + sigmatch
+@8038F6E4 VISetNextFrameBuffer  # VISetNextFrameBuffer, carried exact + sigmatch
+@8038F750 VISetBlack  # VISetBlack, carried exact + sigmatch
+@8038F860 VIGetTvFormat  # VIGetTvFormat, carried call + sigmatch
+@8038E618 VIWaitForRetrace  # VIWaitForRetrace, carried exact + sigmatch
+
+# --- CPU cache maintenance (runtime/hle/nop.cpp): a native build has no cache to flush/invalidate/enable, so these have no observable effect.
+# DCZeroRange and LC data/queue wrappers run translated; block transfers copy real memory natively.
+@80377474 LCLoadBlocks  # LCLoadBlocks, carried inside
+@80377498 LCStoreBlocks  # LCStoreBlocks, carried exact
+@803771CC Nop  # DCEnable, carried exact + sigmatch
+@803771E0 Nop  # DCInvalidateRange, carried exact + sigmatch
+@8037720C Nop  # DCFlushRange, carried exact + sigmatch
+@8037723C Nop  # DCStoreRange, carried exact + sigmatch
+@8037726C Nop  # DCFlushRangeNoSync, carried exact + sigmatch
+@80377298 Nop  # DCStoreRangeNoSync, carried exact + sigmatch
+@803772F0 Nop  # ICInvalidateRange, carried exact + sigmatch
+@80377324 Nop  # ICFlashInvalidate, carried exact + sigmatch
+@80377334 Nop  # ICEnable, carried exact + sigmatch
+@80377414 Nop  # LCEnable, carried exact + sigmatch
+@8037744C Nop  # LCDisable, carried exact + sigmatch
+
+# --- EXI bus, no devices attached (runtime/hle/exi.cpp, tech-debt TD-010)
+@803BAD34 EXIImm  # EXIImm, carried exact + sigmatch
+@803BB054 EXIDma  # EXIDma, carried exact + sigmatch
+@803BAFB0 EXIImmEx  # EXIImmEx, carried exact + sigmatch
+@803BB14C EXISync  # EXISync, carried exact + sigmatch
+@803BB79C EXISelect  # EXISelect, carried exact + sigmatch
+@803BB8CC EXIDeselect  # EXIDeselect, carried exact + sigmatch
+@803BBF30 EXILock  # EXILock, carried exact + sigmatch
+@803BC02C EXIUnlock  # EXIUnlock, carried exact + sigmatch
+@803BC12C EXIGetID  # EXIGetID, carried exact + sigmatch
+@803BB5CC EXIAttach  # EXIAttach, carried exact + sigmatch
+@803BB6E4 EXIDetach  # EXIDetach, carried exact + sigmatch
+@803BB44C EXIProbe  # __EXIProbe, carried exact + sigmatch
+
+# --- DSP boot (tech-debt TD-011): __OSInitAudioSystem resets the DSP and polls its mailbox for the boot handshake; AI clock setup inside is irrelevant natively.
+@80376F38 Nop  # __OSInitAudioSystem, carried exact + sigmatch
+@803A0854 DSPAddTask  # DSPAddTask, carried exact
+@803A078C Nop  # DSPInit, carried exact + sigmatch
+@803935D0 AIStartDMA  # AIStartDMA, carried exact
+@8039524C AXFrame  # AXFrame, carried exact
+@803938B0 Nop  # __AI_SRC_INIT, carried exact + sigmatch
+
+# --- MMU / memory protection setup (BAT registers, MI protection windows): the native build has one flat address space, so nothing to configure.
+@8037CC80 Nop  # __OSInitMemoryProtection, carried call
+
+# --- IOS call interface (runtime/hle/ios.cpp, tech-debt TD-012)
+@803C7164 IOS_Open  # IOS_Open, carried exact + sigmatch
+@803C704C IOS_OpenAsync  # IOS_OpenAsync, carried exact + sigmatch
+@803C7344 IOS_Close  # IOS_Close, carried exact + sigmatch
+@803C7284 IOS_CloseAsync  # IOS_CloseAsync, carried exact + sigmatch
+@803C74EC IOS_Read  # IOS_Read, carried exact + sigmatch
+@803C73EC IOS_ReadAsync  # IOS_ReadAsync, carried exact + sigmatch
+@803C76F4 IOS_Write  # IOS_Write, carried exact + sigmatch
+@803C75F4 IOS_WriteAsync  # IOS_WriteAsync, carried exact + sigmatch
+# OFF (not found): IOS_Seek
+@803C77FC IOS_SeekAsync  # IOS_SeekAsync, carried exact + sigmatch
+@803C7A14 IOS_Ioctl  # IOS_Ioctl, carried exact + sigmatch
+@803C78DC IOS_IoctlAsync  # IOS_IoctlAsync, carried exact + sigmatch
+@803C7D64 IOS_Ioctlv  # IOS_Ioctlv, carried exact + sigmatch
+@803C7C80 IOS_IoctlvAsync  # IOS_IoctlvAsync, carried exact + sigmatch
+
+# Native host save files; verified RBUE08 ISFS ABI (runtime/hle/save.cpp).
+@803CA34C NANDInit  # NANDInit, carried call
+@803C51E4 ISFS_OpenLib  # ISFS_OpenLib, carried order
+@803C548C ISFS_CreateDir  # ISFS_CreateDir, carried exact
+@803C5580 ISFS_CreateDirAsync  # ISFS_CreateDirAsync, carried exact
+@803C6084 ISFS_CreateFile  # ISFS_CreateFile, carried exact
+@803C6178 ISFS_CreateFileAsync  # ISFS_CreateFileAsync, carried exact
+@803C626C ISFS_Open  # ISFS_Open, carried exact
+@803C6334 ISFS_OpenAsync  # ISFS_OpenAsync, carried exact
+@803C63EC ISFS_GetFileStats  # ISFS_GetFileStats, manual
+# OFF (not found): @802A8758 ISFS_Seek
+@803C64BC ISFS_SeekAsync  # ISFS_SeekAsync, carried exact
+@803C6548 ISFS_Read  # ISFS_Read, carried call
+@803C6568 ISFS_ReadAsync  # ISFS_ReadAsync, carried order
+@803C660C ISFS_Write  # ISFS_Write, carried call
+@803C662C ISFS_WriteAsync  # ISFS_WriteAsync, carried order
+@803C66D0 ISFS_Close  # ISFS_Close, carried call
+@803C66D4 ISFS_CloseAsync  # ISFS_CloseAsync, carried exact
+@803C5674 ISFS_ReadDir  # ISFS_ReadDir, carried exact
+@803C57C8 ISFS_ReadDirAsync  # ISFS_ReadDirAsync, carried exact
+@803C5910 ISFS_GetAttr  # ISFS_GetAttr, carried exact
+@803C5A68 ISFS_GetAttrAsync  # ISFS_GetAttrAsync, carried exact
+@803C5B9C ISFS_Delete  # ISFS_Delete, carried exact
+@803C5C74 ISFS_DeleteAsync  # ISFS_DeleteAsync, carried exact
+@803C5D44 ISFS_Rename  # ISFS_Rename, carried exact
+@803C5E48 ISFS_RenameAsync  # ISFS_RenameAsync, carried exact
+@803C5F4C ISFS_GetUsage  # ISFS_GetUsage, carried exact
+
+# --- CPU synchronisation call (`sc; blr`): nothing to order on a native build.
+@803749AC Nop  # PPCSync, carried call
+
+# --- Verified GX boundaries (docs/spikes/G0-gx-audit.md): native vertices and real GPU completion.
+@803A4A10 GXBegin  # GXBegin, carried exact + sigmatch
+@803A3C04 GXSetArray  # GXSetArray, carried exact + sigmatch
+@803A42D4 GXSetDrawDone  # GXSetDrawDone, carried order
+@803A4378 GXWaitDrawDone  # GXWaitDrawDone, carried exact
+@803A43C4 GXDrawDone  # GXDrawDone, carried order
+@803A8234 GXBeginDisplayList  # GXBeginDisplayList, carried order
+@803A82E8 GXEndDisplayList  # GXEndDisplayList, carried order
+@803A8398 GXCallDisplayList  # GXCallDisplayList, carried exact + sigmatch
+@803A8450 GXSetProjection  # GXSetProjection, carried exact + sigmatch
+@803A84B4 GXSetProjectionv  # GXSetProjectionv, carried exact + sigmatch
+@803A8540 GXLoadPosMtxImm  # GXLoadPosMtxImm, carried exact + sigmatch
+@803A8590 GXLoadPosMtxIndx  # GXLoadPosMtxIndx, carried exact
+@803A8648 GXSetCurrentMtx  # GXSetCurrentMtx, carried exact + sigmatch
+@803A8910 GXSetMatrixIndex  # GXSetMatrixIndex, carried exact
+@804BDFB8 ResResetMatrixIndices  # ResResetMatrixIndices, carried exact
+@804BE014 ResTexMatrixIndices  # ResTexMatrixIndices, carried exact
+@803A5264 GXSetCopyClear  # GXSetCopyClear, carried exact + sigmatch
+@803A54D4 GXCopyDisp  # GXCopyDisp, carried exact + sigmatch
+@803A4DA0 GXSetTexCopySrc  # GXSetTexCopySrc, carried exact
+@803A4E04 GXSetTexCopyDst  # GXSetTexCopyDst, carried exact
+@803A5610 GXCopyTex  # GXCopyTex, carried exact
+@803A6620 GXLoadTexObjPreLoaded  # GXLoadTexObjPreLoaded, carried exact + sigmatch
+@803A6800 GXLoadTlut  # GXLoadTlut, carried exact + sigmatch
+@804AE524 ResTevApply  # ResTevApply, carried exact
+# OFF (not found): @80366FF4 ResPixelApply
+# OFF (not found): @80367024 ResColorApply
+@804AD7A4 ResMeshSetup  # ResMeshSetup, carried exact
+@804AD87C ResMeshDraw  # ResMeshDraw, carried exact
+@804C0108 ResChannelApply  # ResChannelApply, carried exact
+@804BDC00 ResGenerationMode  # ResGenerationMode, carried exact
+@803A5BE4 GXLoadLightObjImm  # GXLoadLightObjImm, carried exact + sigmatch
+@803A85BC GXLoadNrmMtxImm  # GXLoadNrmMtxImm, carried exact + sigmatch
+@803A8614 GXLoadNrmMtxIndx3x3  # GXLoadNrmMtxIndx3x3, carried exact
+@803A5E10 GXSetNumChans  # GXSetNumChans, carried exact
+@803A5E34 GXSetChanCtrl  # GXSetChanCtrl, carried exact
+@803A788C GXSetAlphaCompare  # GXSetAlphaCompare, carried exact
+@803A7614 GXSetTevColor  # GXSetTevColor, carried exact
+@803A7674 GXSetTevColorS10  # GXSetTevColorS10, carried exact
+@803A76D8 GXSetTevKColor  # GXSetTevKColor, carried exact
+@803A8668 GXLoadTexMtxImm  # GXLoadTexMtxImm, carried exact
+@803A73B0 GXSetTevDirect  # GXSetTevDirect, carried exact
+@803A7004 GXSetTevIndirect  # GXSetTevIndirect, carried exact
+@803A706C GXSetIndTexMtx  # GXSetIndTexMtx, carried exact
+@803A71C0 GXSetIndTexCoordScale  # GXSetIndTexCoordScale, carried exact
+@803A72C4 GXSetIndTexOrder  # GXSetIndTexOrder, carried exact
+@803A7AD0 GXSetFog  # GXSetFog, carried call
+
+# RBUE08 startup logo update; original body continues at80245860 (game/intro.cpp).
+# OFF (not found): @8024585C IntroLogoUpdate
+# OFF (not found): @801426D4 MovieUpdate
+# Native ultrawide: C_MTXPerspective with a wider aspect on a wider output; the original body continues at 80265468 (game/intro.cpp).
+# OFF (excluded, reference game logic): @80383B90 MTXPerspective  # MTXPerspective, carried exact
+# OFF (not found): @801581E0 GameFrameWait
+# OFF (not found): @8003F670 GameLoop
+# OFF (not found): @800C790C ActorStepTime
+# OFF (not found): @800329FC FixedPlaybackStep
+# OFF (not found): @8014D368 HudNameDelay
+# OFF (not found): @80210278 PropStep
+# OFF (not found): @801172A4 PhysicsStep
+# OFF (not found): @80117464 PhysicsHit
+# OFF (not found): @800F1D08 PhysicsAutoDisable
+# OFF (not found): @800EA9B0 PhysicsBodyDestroy
+# OFF (not found): @801C4438 FlightStep
+# OFF (not found): @801C44B8 FlightPathStep
+# OFF (not found): @801C56F0 FlightPhaseStep
+# OFF (not found): @801B0AAC CameraHistoryStep
+# OFF (not found): @801A5130 DeferredActorStep
+# OFF (not found): @80136EEC RumbleStep
+# OFF (not found): @80162A68 TrailHistoryStep
+# OFF (excluded, reference game logic): @8032A648 JumpBlendStep  # JumpBlendStep, carried exact
+# OFF (not found): @80165610 CrossfadeStep
+# OFF (not found): @80044D14 WorldRaycast
+
+# --- Wii Remote library (tech-debt TD-013): KPADInit starts the WPAD/Bluetooth stack (HCI over IOS) and waits for the controller radio.
+@80412770 Nop  # KPADInit, manual
+@80411E60 KPADRead  # KPADRead, manual
+@803FF2A4 WPADProbe  # WPADProbe, carried exact
+@803A7F80 GXSetBlendMode  # GXSetBlendMode, carried exact
+@803A7FD0 GXSetColorUpdate  # GXSetColorUpdate, carried exact
+@803A7FFC GXSetAlphaUpdate  # GXSetAlphaUpdate, carried exact
+@80412BB0 Nop  # KPADEnableMotor, manual
+# The game's rumble (WPADControlMotor, called by the rumble step and the home menu): the headset plays it on the gun hand (runtime/native_input.cpp).
+@803FF80C WPADControlMotor  # WPADControlMotor, carried exact + sigmatch
+
+# Native action binding getter; exact scoped Grenade recognition belongs to host actions.
+# OFF (not found): @8003FB98 GameActionMask
+# OFF (not found): @8006C268 GameWeaponUpdate
+# OFF (not found): @801AB350 GameActionOwnerUpdate
+# OFF (not found): @80171D38 GameMotionCount
+
+# --- Dolphin SDK matrix/vector library (mtx.a, runtime/hle/sdk_math.cpp): bit-exact native versions of the translated paired-single code.
+# Mapped by address because identified_sdk.txt lists other, unrelated functions under the same names.
+# OFF (excluded, reference game logic): @80382F00 ModelHistoryIdentity  # ModelHistoryIdentity, carried exact
+# In-place game 4x4 transpose, including both resume entries.
+# OFF (not found): @80137F78 MatrixTranspose4
+# OFF (not found): @80137F9C MatrixTranspose4Resume
+# OFF (not found): @801380B4 MatrixTranspose4Return
+# OFF (not found): @80394A10 MatrixEulerFinish
+@80382F2C PSMTXCopy  # PSMTXCopy, carried exact
+@80382F60 PSMTXConcat  # PSMTXConcat, carried exact
+@80383598 PSMTXTransApply  # PSMTXTransApply, carried exact
+@8038360C PSMTXScaleApply  # PSMTXScaleApply, carried exact
+@80383AA0 PSMTXMultVec  # PSMTXMultVec, carried exact
+@80383D14 PSVECAdd  # PSVECAdd, carried exact
+# OFF (not found): @80265710 PSVECSubtract
+# OFF (not found): @80265734 PSVECScale
+@80383D38 PSVECNormalize  # PSVECNormalize, carried exact
+# OFF (not found): @80265794 PSVECSquareMag
+@80383D7C PSVECMag  # PSVECMag, carried exact
+@80383DC0 PSQUATDotProduct  # PSQUATDotProduct, carried exact
+@80383DE0 PSVECCrossProduct  # PSVECCrossProduct, carried exact
+# OFF (not found): @801316C8 BoundsRecordInit
+# OFF (not found): @80046394 HitBufferDestruct
+# OFF (not found): @800462E8 HitBufferConstruct
+# OFF (not found): @80137BC4 Leaf_80137BC4
+# OFF (not found): @80139368 Leaf_80139368
+# OFF (not found): @801394B8 Leaf_801394B8
+# OFF (not found): @8013951C Leaf_8013951C
+# OFF (not found): @8013939C Leaf_8013939C
+# OFF (not found): @801393C0 Leaf_801393C0
+# OFF (not found): @80139448 Leaf_80139448
+# OFF (excluded, reference game logic): @804E1640 Leaf_803947A4  # Leaf_803947A4, carried exact
+# OFF (excluded, reference game logic): @804E1A00 Leaf_80394B04  # Leaf_80394B04, carried exact
+# OFF (not found): @80138AF8 Leaf_80138AF8
+# OFF (not found): @80394CE4 Leaf_80394CE4
+# OFF (not found): @80032FD8 Leaf_80032FD8
+# OFF (not found): @80139610 Leaf_80139610
+# OFF (not found): @800521A0 Leaf_800521A0
+# OFF (not found): @800AFCD8 Leaf_800AFCD8
+# OFF (excluded, reference game logic): @804E11BC SinCosFIdx  # SinCosFIdx, carried call
+# OFF (not found): @8003EDD0 Leaf_8003EDD0
+# OFF (excluded, reference game logic): @804AE9A8 Leaf_80367314  # Leaf_80367314, carried call
+# OFF (excluded, reference game logic): @804AC4AC Leaf_80365C7C  # Leaf_80365C7C, carried call
+# OFF (not found): @802655E8 Leaf_802655E8
+# OFF (excluded, reference game logic): @804E1D9C Leaf_80394FAC  # Leaf_80394FAC, carried exact
+# OFF (excluded, reference game logic): @80507D90 Leaf_803B4F68  # Leaf_803B4F68, carried call
+# OFF (excluded, reference game logic): @804C5FD8 Leaf_8037B388  # Leaf_8037B388, carried call
+# OFF (excluded, reference game logic): @803BA760 Leaf_8029C4AC  # Leaf_8029C4AC, carried order
+# OFF (excluded, reference game logic): @804AED3C Leaf_80367660  # Leaf_80367660, carried exact
+# OFF (not found): @8005669C Leaf_8005669C
+# OFF (not found): @80078A00 Leaf_80078A00
+# OFF (not found): @800FFD14 Leaf_800FFD14
+# OFF (not found): @80138B1C Leaf_80138B1C
+# OFF (excluded, reference game logic): @802DC484 Leaf_80235294  # Leaf_80235294, carried call
+# OFF (excluded, reference game logic): @8038302C Leaf_802647AC  # Leaf_802647AC, carried exact
+# OFF (excluded, reference game logic): @80393AD0 Leaf_80273674  # Leaf_80273674, carried exact
+# OFF (excluded, reference game logic): @804AC458 Leaf_80365C28  # Leaf_80365C28, carried call
+# OFF (excluded, reference game logic): @804BE110 Leaf_80374210  # Leaf_80374210, carried exact
+# OFF (excluded, reference game logic): @804E1AC4 Leaf_80394BC8  # Leaf_80394BC8, carried exact
+# OFF (excluded, reference game logic): @8005ED10 VectorAddStep  # VectorAddStep, carried exact
+# OFF (not found): @802447D8 UiPhysicsStep
+# OFF (not found): @80211734 TimelineStep
+# OFF (not found): @8006DB34 WeaponTrailStep
+# OFF (not found): @801B916C EffectRetireStep
+# OFF (not found): @8012AEE8 TargetRefreshStep
+# OFF (not found): @803AA7B0 SoundFrameStep
+# OFF (not found): @8004C91C SoundRetryStep
+# OFF (not found): @80049000 SoundWaitStep
+# OFF (not found): @803C1BF8 HomeMenuStep
+# OFF (excluded, reference game logic): @804E17FC Leaf_80394914  # Leaf_80394914, carried exact
+# OFF (excluded, reference game logic): @804E17A8 Leaf_803948C0  # Leaf_803948C0, carried exact
+# OFF (excluded, reference game logic): @804E10FC Leaf_803942AC  # Leaf_803942AC, carried call
+# OFF (excluded, reference game logic): @804D3FF4 Leaf_803890C8  # Leaf_803890C8, carried exact
+# OFF (not found): @803703F8 Leaf_803703F8
+# OFF (not found): @8013969C Leaf_8013969C
+# OFF (not found): @80139648 Leaf_80139648
+# OFF (not found): @80032D70 Leaf_80032D70
+# OFF (excluded, reference game logic): @8005CDC8 Leaf_80032FF4  # Leaf_80032FF4, carried exact
+# OFF (excluded, reference game logic): @80334D58 Leaf_8011F1E4  # Leaf_8011F1E4, carried call
+# OFF (not found): @8036624C Leaf_8036624C
+# OFF (not found): @8036B2C8 Leaf_8036B2C8
+# OFF (not found): @8003F468 Leaf_8003F468
+# OFF (not found): @801996BC Leaf_801996BC
+# OFF (excluded, reference game logic): @804E1378 Leaf_80394548  # Leaf_80394548, carried exact
+# OFF (not found): @800ABCE0 Leaf_800ABCE0
+# OFF (not found): @800460A0 SegmentTriangleHit
+# OFF (not found): @801371B4 ClosestPtTriangle
+# OFF (not found): @80197AC8 SphereTriangleHit
+
+# --- Register save/restore helpers of the compiler (runtime/hle/sdk_regs.cpp): _savefpr_N, _restfpr_N, _savegpr_N, _restgpr_N for N = 14..31; the entry for register N is the base + 4 * (N - 14)
+@803A9B38 SaveFpr14  # SaveFpr14, carried inside
+@803A9B3C SaveFpr15  # SaveFpr15, carried inside
+@803A9B40 SaveFpr16  # SaveFpr16, carried inside
+@803A9B44 SaveFpr17  # SaveFpr17, carried inside
+@803A9B48 SaveFpr18  # SaveFpr18, carried inside
+@803A9B4C SaveFpr19  # SaveFpr19, carried inside
+@803A9B50 SaveFpr20  # SaveFpr20, carried inside
+@803A9B54 SaveFpr21  # SaveFpr21, carried inside
+@803A9B58 SaveFpr22  # SaveFpr22, carried inside
+@803A9B5C SaveFpr23  # SaveFpr23, carried call
+@803A9B60 SaveFpr24  # SaveFpr24, manual
+@803A9B64 SaveFpr25  # SaveFpr25, manual
+@803A9B68 SaveFpr26  # SaveFpr26, manual
+@803A9B6C SaveFpr27  # SaveFpr27, manual
+@803A9B70 SaveFpr28  # SaveFpr28, carried call
+@803A9B74 SaveFpr29  # SaveFpr29, carried exact
+@803A9B78 SaveFpr30  # SaveFpr30, carried inside
+@803A9B7C SaveFpr31  # SaveFpr31, carried inside
+@803A9B84 RestFpr14  # RestFpr14, carried inside
+@803A9B88 RestFpr15  # RestFpr15, carried inside
+@803A9B8C RestFpr16  # RestFpr16, carried inside
+@803A9B90 RestFpr17  # RestFpr17, carried inside
+@803A9B94 RestFpr18  # RestFpr18, carried inside
+@803A9B98 RestFpr19  # RestFpr19, carried inside
+@803A9B9C RestFpr20  # RestFpr20, carried inside
+@803A9BA0 RestFpr21  # RestFpr21, carried inside
+@803A9BA4 RestFpr22  # RestFpr22, carried inside
+@803A9BA8 RestFpr23  # RestFpr23, carried call
+@803A9BAC RestFpr24  # RestFpr24, manual
+@803A9BB0 RestFpr25  # RestFpr25, manual
+@803A9BB4 RestFpr26  # RestFpr26, manual
+@803A9BB8 RestFpr27  # RestFpr27, manual
+@803A9BBC RestFpr28  # RestFpr28, carried call
+@803A9BC0 RestFpr29  # RestFpr29, carried exact
+@803A9BC4 RestFpr30  # RestFpr30, carried inside
+@803A9BC8 RestFpr31  # RestFpr31, carried inside
+@803A9BD0 SaveGpr14  # SaveGpr14, carried call
+@803A9BD4 SaveGpr15  # SaveGpr15, carried order
+@803A9BD8 SaveGpr16  # SaveGpr16, carried call
+@803A9BDC SaveGpr17  # SaveGpr17, carried call
+@803A9BE0 SaveGpr18  # SaveGpr18, carried call
+@803A9BE4 SaveGpr19  # SaveGpr19, carried call
+@803A9BE8 SaveGpr20  # SaveGpr20, carried call
+@803A9BEC SaveGpr21  # SaveGpr21, carried call
+@803A9BF0 SaveGpr22  # SaveGpr22, carried call
+@803A9BF4 SaveGpr23  # SaveGpr23, carried call
+@803A9BF8 SaveGpr24  # SaveGpr24, carried call
+@803A9BFC SaveGpr25  # SaveGpr25, carried call
+@803A9C00 SaveGpr26  # SaveGpr26, carried call
+@803A9C04 SaveGpr27  # SaveGpr27, carried call
+@803A9C08 SaveGpr28  # SaveGpr28, carried call
+@803A9C0C SaveGpr29  # SaveGpr29, carried exact
+@803A9C10 SaveGpr30  # SaveGpr30, carried inside
+@803A9C14 SaveGpr31  # SaveGpr31, carried inside
+@803A9C1C RestGpr14  # RestGpr14, carried call
+@803A9C20 RestGpr15  # RestGpr15, carried order
+@803A9C24 RestGpr16  # RestGpr16, carried call
+@803A9C28 RestGpr17  # RestGpr17, carried call
+@803A9C2C RestGpr18  # RestGpr18, carried call
+@803A9C30 RestGpr19  # RestGpr19, carried order
+@803A9C34 RestGpr20  # RestGpr20, carried call
+@803A9C38 RestGpr21  # RestGpr21, carried call
+@803A9C3C RestGpr22  # RestGpr22, carried call
+@803A9C40 RestGpr23  # RestGpr23, carried call
+@803A9C44 RestGpr24  # RestGpr24, carried call
+@803A9C48 RestGpr25  # RestGpr25, carried call
+@803A9C4C RestGpr26  # RestGpr26, carried call
+@803A9C50 RestGpr27  # RestGpr27, carried call
+@803A9C54 RestGpr28  # RestGpr28, carried call
+@803A9C58 RestGpr29  # RestGpr29, carried exact
+@803A9C5C RestGpr30  # RestGpr30, carried inside
+@803A9C60 RestGpr31  # RestGpr31, carried inside

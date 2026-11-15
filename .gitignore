@@ -45,3 +45,6 @@ scripts/uctest/mods/movie_replace/
 /dist-raw.zip
 /build-prof-*.log
 build-android.configure.log
+project/dc/hle.cfg
+generated-dc/
+build-dc/

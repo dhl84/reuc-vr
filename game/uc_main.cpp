@@ -4,6 +4,7 @@
 #include "xr_compositor.h"
 #endif
 #include "host_backtrace.h"
+#include "title.h"
 #include "path_print.h"
 #include "clock.h"
 #include "fastmem.h"
@@ -100,6 +101,9 @@
 #include <thread>
 #include <vector>
 #include <optional>
+#include "file_open.h"
+#include "host_process.h"
+#include "host_thread.h"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -110,9 +114,6 @@
 #include <timeapi.h>
 #else
 #include "exe_path.h"
-#include "file_open.h"
-#include "host_process.h"
-#include "host_thread.h"
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
 #endif
@@ -400,7 +401,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         std::string error;
         auto opened = uc::WiiDisc::open(game, *key, error);
         if (!opened) uc::fatal("cannot read the disc image %s: %s", game.string().c_str(), error.c_str());
-        if (opened->game_id() != "RBUE08") uc::fatal("the disc image %s is %s; only the North American release (RBUE08) is supported", game.string().c_str(), opened->game_id().c_str());
+        if (opened->game_id() != uc::title::kDiscId) uc::fatal("the disc image %s is %s; this build is made for the North American release of %s (%s)", game.string().c_str(), opened->game_id().c_str(), uc::title::kName, uc::title::kDiscId);
         disc_image = std::move(opened);
     }
     auto dol_bytes = disc_image ? disc_image->main_dol() : slurp(game / "DATA" / "sys" / "main.dol");
@@ -497,8 +498,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         if (sample_flag && sample_from && retraces == std::strtoull(sample_from, nullptr, 10)) { if (std::FILE* f = std::fopen(sample_flag, "w")) std::fclose(f); }   // starts the CPU sampler (cpu_sampler.cpp) at this retrace
     });
 
-    // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.
-    const uint32_t kMainThread = 0x805F88D8;
+    const uint32_t kMainThread = uc::title::kDefaultThread;   // the start code runs on the SDK's DefaultThread (common/title.h)
     uint32_t entry = dol.image.entry;
     uc::Thread* mt = sched.create(kMainThread, 16, [entry,&network](ppc::Ctx& c) {
         if(network)network->prepare();
