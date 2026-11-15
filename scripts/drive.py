@@ -17,6 +17,7 @@ A STEP is one of:
   waitlog:TEXT[,N]  wait until TEXT appears in the game log after the place of the last waitlog or until step (at most N retraces, default 20000)
   until:TEXT,BUTTONS[,EVERY[,N]]   press BUTTONS every EVERY retraces (default 60) until TEXT appears in the game log (at most N retraces, default 20000)
   dump:NAME         write MEM1 (24 MB) and MEM2 (64 MB) to <folder>/NAME.mem1 and <folder>/NAME.mem2
+  waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
 
 The saves of the run go to <folder>/saves (the game never touches other saves). The log of the game goes to <folder>/run.log.
 The protocol is docs/testing/test-server.md. The script needs no keyboard or mouse input and does not activate the window.
@@ -210,6 +211,14 @@ def main():
                         for at in range(0, size, 262144):
                             f.write(bytes.fromhex(game.command("peek", timeout=60.0, addr=base + at, size=262144)["hex"]))
                 print("dump %s at retrace %d" % (value, game.retraces()), flush=True)
+            elif kind == "waitpeek":
+                parts = value.split(",")
+                want, limit, start, found = parts[1].upper(), int(parts[2]) if len(parts) > 2 else 20000, game.retraces(), False
+                while game.proc.poll() is None and game.retraces() - start <= limit:
+                    if game.command("peek", addr=int(parts[0], 16), size=len(want) // 2)["hex"] == want:
+                        found = True
+                        break
+                print("waitpeek %s %s: %s at retrace %d" % (parts[0], want, "found" if found else "NOT FOUND", game.retraces()), flush=True)
             elif kind == "state":
                 st = game.command("state").get("state", {})
                 print("state: input frame %s retrace %s" % (st.get("n"), st.get("retraces")), flush=True)

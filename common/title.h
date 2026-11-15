@@ -11,6 +11,11 @@ inline constexpr const char* kDiscId = "SBDE08";
 inline constexpr const char* kName = "Resident Evil: The Darkside Chronicles";
 inline constexpr const char* kProjectDir = "project/dc";   // symbol lists of a build tree (game/uc_main.cpp)
 inline constexpr bool kActiveThreadQueue = true;           // the native thread calls keep __OSActiveThreadQueue (runtime/hle/os_thread.cpp)
+// OSJoinThread of the SDK does not wait for a detached thread (attribute bit 0): it returns FALSE at once. The game's loader threads
+// (created at 80065E60 with attribute 1) call it on themselves when their work is done (8006650C), so a native that waits never
+// returns there: the thread never ends, and the next OSCreateThread on the same OSThread links it into the active thread queue a
+// second time (a loop in the queue).
+inline constexpr bool kJoinSkipsDetached = true;
 // KPAD of the 2009 SDK: a KPADStatus is 176 bytes (mulli r6,r22,176 at 80412124; 132 in RBUE08), and the read entry that the game
 // calls (80411E60) takes a pointer to an error word in r6 (the KPADReadEx form).
 inline constexpr uint32_t kKpadStatusSize = 176;
@@ -39,6 +44,12 @@ inline constexpr uint32_t kAxServiceCallbacks = 0x80393AE4; // called from the s
 // address minus 0x01400000). The game gives all of MEM1 to one frame heap and fills it when it loads a chapter: with 0x81700000 the
 // heap was full while the first chapter loaded (an allocation of 4224 bytes at 8011DB24 failed with 428 bytes left).
 inline constexpr uint32_t kMem1ArenaHi = 0x817D8320;
+// End of the MEM2 arena; the IPC buffers (0x20000 bytes) follow it. The value depends on the IOS version that the game runs on
+// (tmd.bin, word at 0x188): IOS55 for SBDE08 leaves MEM2 up to 0x935E0000 to the game, IOS21 for RBUE08 up to 0x933E0000 (the table
+// ios_memory_values of Dolphin, Source/Core/Core/IOS/VersionInfo.cpp). The game needs the 2 MB: with 0x933E0000 its MEM2 frame heap
+// was 0.68 MB too small when the first chapter started. The allocation of a 1 MB heap at 80358284 then returned 0, the heap was
+// made at address 0, and its header went over low memory (the active thread queue at 800000DC): "Loading data" never ended.
+inline constexpr uint32_t kMem2ArenaHi = 0x935E0000;
 // The game copies a 512x512 part of the frame buffer of the console (640x528) to a GX_TF_Z16 texture for its shadows (8033B9B8).
 // The native renderers have a 640x480 colour buffer and no depth copies: a copy takes the lines that exist (stretched to its
 // texture), and the depth texture reads as the farthest depth in every texel (gx::TextureChannels::depth_far), so the game draws
@@ -50,6 +61,7 @@ inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";
 inline constexpr const char* kProjectDir = "project";
 inline constexpr bool kActiveThreadQueue = false;
+inline constexpr bool kJoinSkipsDetached = false;
 inline constexpr uint32_t kKpadStatusSize = 132;
 inline constexpr bool kNativeActionMap = true;
 inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
@@ -66,6 +78,7 @@ inline constexpr char kSaveHome[] = "/title/00010000/52425545/data";
 inline constexpr int32_t kSdaAxCallback = -25636, kSdaAxVoiceCount = -25524, kSdaAxVoiceBase = -25536;
 inline constexpr uint32_t kAxSyncPbs = 0x80275F34, kAxServiceCallbacks = 0x80273688;
 inline constexpr uint32_t kMem1ArenaHi = 0x81700000;
+inline constexpr uint32_t kMem2ArenaHi = 0x933E0000;
 inline constexpr uint32_t kEfbCopyLines = 480;
 inline constexpr bool kDepthCopyAsFar = false;
 #endif

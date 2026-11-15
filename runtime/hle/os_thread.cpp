@@ -106,6 +106,7 @@ void hle_OSExitThread(ppc::Ctx& c) { active_queue_remove(c, ppc::rd32(c, layout:
 void hle_OSJoinThread(ppc::Ctx& c) {                                          // (thread, void** value) -> 1
     Thread* t = os_sched().find(c.r[3]);
     if (!t) { c.r[3] = 0; return; }
+    if (uc::title::kJoinSkipsDetached && (ppc::rd16(c, c.r[3] + layout::kThreadAttr) & 1)) { c.r[3] = 0; return; }   // detached: FALSE at once, as the SDK (common/title.h)
     PendingHle pending(os_sched(),c,hle_OSJoinThread);
     uint32_t v = os_sched().join(t);
     if (c.r[4]) ppc::wr32(c, c.r[4], v);

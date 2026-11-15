@@ -423,6 +423,8 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     uc::LowMemInfo info;
     info.arena_lo = uc::arena_lo_after_bss(dol.image.bss_address, dol.image.bss_size);
     info.arena_hi = uc::title::kMem1ArenaHi;   // the interrupt stack (0x817EFF00, below) lies above it
+    info.mem2_arena_hi = info.ipc_buf_lo = uc::title::kMem2ArenaHi;   // what the game's IOS version leaves to the game (common/title.h)
+    info.ipc_buf_hi = uc::title::kMem2ArenaHi + 0x20000;
     uc::init_lowmem(boot, hdr, info);
 
     map_hardware();
