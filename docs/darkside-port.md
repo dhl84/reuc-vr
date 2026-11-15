@@ -276,7 +276,8 @@ Result: the output is the sound of the game at the right sample rate, in stereo,
 
 Still open:
 
-- In the boss fight 2.6 to 4.6 % of the samples are at full scale. The music is 17 dB below full scale there, and the other sounds are 10 dB below. The test input fires without a stop and the creature hits the player all the time, so many voices play together. No recording of a console was compared. The sum of the voices is clamped to 16 bits, as the hardware does.
+- In the fights a part of the samples is at full scale. The share is 0.2 to 0.8 % in the first fights and 2.6 to 4.6 % in the boss fight of the first chapter. It is 4.5 to 7.2 % for ten minutes of the fifth chapter of "Memories of a Lost City". In these parts the music is 17 to 19 dB below full scale, and the other sounds are 8 to 10 dB below. One shot of the handgun has a peak of 0.6 to 0.8 of full scale. The test input pulls the trigger many times in a second, so the shots add up. A player fires less. No recording of a console was compared.
+- Two parts of the hardware that change the level of the sum were checked in the code of the game. The compressor of the 2009 SDK is off. The game calls its switch with 0 at 802A38B0 (the setter is 803951FC). The flag at r13 - 8184 is 0 in a memory dump of a chapter. The master volume at r13 - 8194 is 0x8000, which is 1. The native mixer has no compressor and no master volume, and for this game it needs none. It clamps the sum of the voices to 16 bits, as the hardware does.
 - The quality of the sound was not judged: reverb, filters and the 4-tap rate change are not there.
 - The sound of the movies (`.sfd`) was not compared with a reference. Its level and spectrum are in the second row of the table.
 
@@ -339,7 +340,7 @@ Found on the way (each is a constant in `common/title.h` or a note in the code):
 Not done yet:
 
 - The game draws no shadows: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel (there is no depth copy yet), and a copy that names lines below 480 takes the 480 lines of the native colour buffer. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
-- No person listened to the sound. The numbers are in "Sound". In the boss fight of the first chapter 2.6 to 4.6 % of the samples are at full scale.
+- No person listened to the sound. The numbers are in "Sound". In long fights 2.6 to 7.2 % of the samples are at full scale.
 - The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
 - The particles that the game draws as `GX_POINTS` are missing. A point primitive needs the point size (`GXSetPointSize` is not a native) and a square for each point in the renderers.
 - After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
