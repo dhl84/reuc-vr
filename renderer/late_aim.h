@@ -61,6 +61,28 @@ inline std::optional<std::array<float,2>> draw_center_ndc(const DrawPacket& draw
     if (const auto box = draw_bounds_ndc(draw)) return std::array<float,2>{((*box)[0] + (*box)[2]) / 2, ((*box)[1] + (*box)[3]) / 2};
     return std::nullopt;
 }
+// The Darkside Chronicles (SBDE08). The laser dot has its own call sites (800BB264 its beam, 800BB4D8 the dot, a 100 x 100 texture, as
+// RBUE08's 8006D174). The rings around the dot are panes of the layout library, which draws every HUD pane through one call site
+// (804E0228): a ring is a pane with a square texture whose centre is the centre of the dot (88 and 80 texels for the handgun). Found with
+// the harness `draws` request at two aim points: the game draws the reticle at 1.25 x 1.67 times the pointer, as RBUE08 does.
+// The quads are marked `reticle`: the crosshair size of the menu applies, and the headset draws them where the controller points
+// (LG_STEREO_HUD_AIM) and not with the HUD that follows the head. Nothing is moved to a later pointer (late_aim stays off).
+template<class Draws> size_t mark_reticle_draws_dc(Draws& draws) {
+    std::optional<std::array<float,2>> dot;
+    size_t marked = 0;
+    for (auto& draw : draws) {
+        if (draw.callsite != 0x800BB264 && draw.callsite != 0x800BB4D8) continue;
+        draw.reticle = true; ++marked;
+        if (draw.callsite == 0x800BB4D8) if (const auto center = draw_center_ndc(draw)) dot = center;
+    }
+    if (!dot) return marked;
+    for (auto& draw : draws) {
+        if (draw.callsite != 0x804E0228 || !draw.texture || reticle_edge(*draw.texture) < 32) continue;
+        const auto center = draw_center_ndc(draw);
+        if (center && std::abs((*center)[0] - (*dot)[0]) < 0.03f && std::abs((*center)[1] - (*dot)[1]) < 0.03f) { draw.reticle = true; ++marked; }
+    }
+    return marked;
+}
 // The wake the game draws behind each reticle (a strip of its recent positions, in the player's tint): it follows the reticle when that is shifted.
 inline bool reticle_tail_callsite(uint32_t callsite) { return callsite == 0x8006CED4; }
 // NDC of an object-space point of this draw (the same chain as draw_center_ndc); nullopt behind the camera or with an unloaded row.

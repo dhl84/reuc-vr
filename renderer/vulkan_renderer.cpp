@@ -13,6 +13,7 @@
 #include "post_effects.h"
 #include "texture_coordinates.h"
 #include "vulkan_renderer.h"
+#include "../common/title.h"
 #include "render_scale.h"
 #include "rebuild_gate.h"
 #include "buffer_memory.h"
@@ -981,6 +982,17 @@ void VulkanRenderer::release_texture(Texture& texture) {
         try { recycled_textures_.push_back(std::move(texture)); texture={}; return; } catch(...) {}
     }
     destroy_texture(texture);
+}
+// The headset's layout of the 2D draws of the frame that opens now: HOTD4's screen (a menu) or the display's edges (gameplay).
+// RBUE08 tells its menus from its game state (set_menu_context). For a game without that (title::kNativeActionMap false, SBDE08) the
+// frames decide: a frame that drew the world is gameplay, and kFlatFrames frames in a row without the world are a menu, a movie or a
+// loading screen. world_drawn_ still holds the fact of the frame that ended.
+bool VulkanRenderer::menu_layout() {
+    if (uc::title::kNativeActionMap) return menu_context_.load(std::memory_order_relaxed);
+    constexpr uint32_t kFlatFrames = 20;
+    if (world_drawn_) { flat_frames_ = 0; world_recent_ = true; }
+    else if (flat_frames_ < kFlatFrames && ++flat_frames_ == kFlatFrames) world_recent_ = false;
+    return !world_recent_;
 }
 void VulkanRenderer::destroy_texture(Texture& texture) {
     for(int layer=0;layer<2;++layer) { intensity_copy_.free_set(texture.intensity_sets[layer]); if(texture.intensity_views[layer]) vkDestroyImageView(device,texture.intensity_views[layer],nullptr); }
@@ -3477,13 +3489,14 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     PresentImage* present_image=nullptr;
 #ifdef UC_OPENXR
     if (xr_) {   // the headset's frame opens with the game frame's first packet (HOTD4): every pass of it uses this frame's eye poses
-        if (display && !xr_->frame_open()) { xr_frame_ = xr_->begin_frame(); world_drawn_ = false; xr_->scene().set_hud_fit(!menu_context_.load(std::memory_order_relaxed)); }
+        if (display && !xr_->frame_open()) { xr_frame_ = xr_->begin_frame(); const bool menu = menu_layout(); world_drawn_ = false; xr_->scene().set_hud_fit(!menu); }
     } else
 #endif
     {
         if (preview_ && display && !preview_frame_open_) {   // as the headset's frame opens
+            const bool menu = menu_layout();
             preview_publish(); preview_frame_open_ = true; world_drawn_ = false;
-            preview_->set_hud_fit(!menu_context_.load(std::memory_order_relaxed));
+            preview_->set_hud_fit(!menu);
         }
     }
     if (!xr_ && packet.present && display && !hold) {

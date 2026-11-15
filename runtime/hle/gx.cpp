@@ -991,8 +991,12 @@ uint64_t submit_batch(const SealInputs& inputs,bool present,bool clear,uint32_t 
     frame.aim_consumed=inputs.aim_consumed;
     // Before the reticle marking: that one looks at decoded textures, which a decode still running leaves for a later frame (host timing).
     if(packet_hash) hash_packet(frame,back_serial+1);
+#if defined(UC_TITLE_DC)
+    gx::mark_reticle_draws_dc(frame.draws);   // SBDE08: its own call sites, no late aim and no reticle styles yet (renderer/late_aim.h)
+#else
     gx::mark_reticle_draws(frame.draws,inputs.consumed,inputs.channel,inputs.exact);
     gx::apply_reticle_style(frame.draws,inputs.style,inputs.channel,inputs.consumed[1].has_value());   // the menu's Reticle tab
+#endif
     for(auto& draw:frame.draws) {
         if(draw.late_aim) continue;
         if(profile_mesh && gx::reticle_callsite(draw.callsite) && draw.texture && !draw.texture->levels.empty()) {   // another weapon's reticle texture would show up here

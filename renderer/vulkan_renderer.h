@@ -271,6 +271,7 @@ private:
     void recycle_copy_texture(Texture& texture);
     void destroy_texture(Texture& texture);
     void release_texture(Texture& texture);
+    bool menu_layout();   // at the start of a headset or preview frame: are its 2D draws a menu's (HOTD4's screen) or gameplay's HUD
     void retire_textures(Slot& slot);
     void rebuild();
     void retire_images(bool keep_buffers=false);
@@ -313,6 +314,7 @@ private:
     bool preview_frame_open_ = false, preview_lens_seen_ = false;
     uint64_t preview_world_frames_ = 0;   // frames that drew the world (UC_VR_CLASSIFY_DUMP picks one)
     std::atomic<bool> menu_context_{true};
+    uint32_t flat_frames_ = 0; bool world_recent_ = false;   // menu_layout(): frames in a row without the world, and whether gameplay is on
     void preview_publish();
     bool xr_frame_ = false;   // this presented frame draws into the headset (begin_frame() said so)
     uint32_t layers_ = 1;     // 2 with the headset: the EFB, its copies and the presented picture hold one layer per eye (multiview)
