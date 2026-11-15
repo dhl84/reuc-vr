@@ -182,6 +182,9 @@ public:
     double pass_ms(GpuPass pass) const { return pass_timer_.last_ms(pass); }   // latest GPU time of one effect pass (0 until it ran)
     uint64_t gpu_busy_ns() const { return gpu_busy_ns_.load(); }   // summed GPU execution time of retired frame submissions
     uint64_t texture_creations() const { owner(); return texture_creations_; }
+    uint64_t texture_reuses() const { owner(); return texture_reuses_; }   // small textures that took a GPU image of the pool (recycled_textures_) instead of a new one
+    uint64_t readbacks() const { owner(); return readbacks_; }             // EFB copies delivered to the game's memory (collect)
+    uint64_t readback_ns() const { owner(); return readback_ns_; }         // host time of those deliveries
     uint64_t descriptor_pool_creations() const { owner(); return descriptor_pool_creations_; }
     bool ray_reconstruction_supported() const { return rr_available_; }   // the Ray Reconstruction plugin loaded and the GPU supports it
     bool ray_reconstruction_active() const { return rr_frame_; }          // the latest frame went through Ray Reconstruction (tests, diagnostics)
@@ -254,7 +257,7 @@ private:
     static VKAPI_ATTR VkBool32 VKAPI_CALL debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void* user);
     void owner() const;
     uint32_t memory_type(uint32_t mask, VkMemoryPropertyFlags properties) const;
-    Buffer make_buffer(VkDeviceSize size, VkBufferUsageFlags usage, bool prefer_device_local=false);
+    Buffer make_buffer(VkDeviceSize size, VkBufferUsageFlags usage, bool prefer_device_local=false, bool host_read=false);   // host_read: the CPU reads the buffer (cached memory first, buffer_memory.h)
     GpuMesh& gpu_mesh(const std::shared_ptr<const gx::MeshBuffers>& source);
     void sweep_meshes(bool all);
     void release_mesh(GpuMesh& mesh);
@@ -660,7 +663,8 @@ private:
     PassTimer pass_timer_;
     VkQueryPool timing_pool_ = VK_NULL_HANDLE;   // two timestamps per slot
     double timestamp_period_ = 0;
-    uint64_t texture_creations_=0;
+    uint64_t texture_creations_=0, texture_reuses_=0, readbacks_=0, readback_ns_=0;
+    std::vector<uint8_t> readback_scratch_;   // collect(): the pixels of an EFB copy that the game reads back
     uint64_t descriptor_pool_creations_=0;
 };
 }

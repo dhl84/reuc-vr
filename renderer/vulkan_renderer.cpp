@@ -744,7 +744,7 @@ uint32_t VulkanRenderer::memory_type(uint32_t mask, VkMemoryPropertyFlags proper
         if ((mask & (1u << i)) && (memory_.memoryTypes[i].propertyFlags & properties) == properties) return i;
     throw std::runtime_error("required Vulkan memory type unavailable");
 }
-VulkanRenderer::Buffer VulkanRenderer::make_buffer(VkDeviceSize size, VkBufferUsageFlags usage, bool prefer_device_local) {
+VulkanRenderer::Buffer VulkanRenderer::make_buffer(VkDeviceSize size, VkBufferUsageFlags usage, bool prefer_device_local, bool host_read) {
     Buffer buffer; buffer.size = size;
     VkBufferCreateInfo create{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; create.size = size; create.usage = usage;
     vk_check(vkCreateBuffer(device, &create, nullptr, &buffer.buffer), "vkCreateBuffer");
@@ -757,7 +757,7 @@ VulkanRenderer::Buffer VulkanRenderer::make_buffer(VkDeviceSize size, VkBufferUs
         vk_check(allocate_host_buffer(memory_, requirements.memoryTypeBits, prefer_device_local, [&](uint32_t type) {
             allocate.memoryTypeIndex=type;
             return vkAllocateMemory(device, &allocate, nullptr, &buffer.memory);
-        }), "buffer memory");
+        }, host_read), "buffer memory");
         vk_check(vkBindBufferMemory(device, buffer.buffer, buffer.memory, 0), "bind buffer memory");
         vk_check(vkMapMemory(device, buffer.memory, 0, size, 0, &buffer.mapped), "map buffer memory");
     } catch (...) { destroy_buffer(buffer); throw; }
@@ -1616,8 +1616,13 @@ void VulkanRenderer::collect() {
         vk_check(status, "frame fence status");
         completed_.push_back(slot.serial); slot.reported = true;
         if (slot.readback_target) {   // the copy at the game's size: each texel the mean of the pixels it covers at the render scale
+            const auto readback_began=std::chrono::steady_clock::now();
             const uint32_t width=slot.readback_width, height=slot.readback_height; const auto extent=slot.readback_extent;
-            const auto* pixels=static_cast<const uint8_t*>(slot.readback.mapped);
+            // One copy out of the mapped buffer, then the mean from ordinary memory: the loop below reads each byte on its own, and that took
+            // 2.9 ms for a copy of 128x64 pixels when the buffer was write-combined memory (RTX 5090; make_buffer now asks for cached memory).
+            readback_scratch_.resize(size_t(extent.width)*extent.height*4);
+            std::memcpy(readback_scratch_.data(),slot.readback.mapped,readback_scratch_.size());
+            const auto* pixels=readback_scratch_.data();
             std::vector<uint8_t> rgba(size_t(width)*height*4);
             for (uint32_t y=0; y<height; ++y) for (uint32_t x=0; x<width; ++x) {
                 const uint32_t x0=uint32_t(uint64_t(x)*extent.width/width), x1=std::max(x0+1,uint32_t(uint64_t(x+1)*extent.width/width));
@@ -1630,6 +1635,7 @@ void VulkanRenderer::collect() {
             slot.readback_target->rgba=std::move(rgba);
             slot.readback_target->ready.store(true,std::memory_order_release);
             slot.readback_target.reset();
+            readback_ns_+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-readback_began).count()); ++readbacks_;
         }
         uint64_t stamps[2];
         if (slot.timed && vkGetQueryPoolResults(device, timing_pool_, uint32_t((&slot - slots_.data()) * 2), 2, sizeof stamps, stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && stamps[1] >= stamps[0])
@@ -4937,7 +4943,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED);
         if(const auto& readback=packet.texture_copy->target->readback) {   // the game reads this copy from memory (SBDE08's exposure): level 0 of the first layer goes to a buffer, collect() delivers it
             const auto extent=copy_target->extent; const VkDeviceSize bytes=VkDeviceSize(extent.width)*extent.height*4;
-            if(slot.readback.size<bytes) { destroy_buffer(slot.readback); slot.readback=make_buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT); }
+            if(slot.readback.size<bytes) { destroy_buffer(slot.readback); slot.readback=make_buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT,false,true); }
             const auto fragment=VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, transfer=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
             barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,transfer,VK_ACCESS_2_TRANSFER_READ_BIT);
             VkBufferImageCopy region{}; region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}; region.imageExtent={extent.width,extent.height,1};

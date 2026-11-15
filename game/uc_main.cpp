@@ -1381,6 +1381,14 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 last_profile_time=now; last_profile_retrace=profile_retrace;
                 std::fprintf(stderr,"[gpu] passes: upscale %.2f ms, smaa %.2f ms, occlusion %.2f ms, shadow %.2f ms, motion blur %.2f ms (%llu runs), rt_as (last packet) %.2f ms, rt_shadows %.2f ms, bloom %.2f ms\n",renderer.pass_ms(uc::GpuPass::upscale),renderer.pass_ms(uc::GpuPass::smaa),renderer.pass_ms(uc::GpuPass::occlusion),renderer.pass_ms(uc::GpuPass::shadow),renderer.pass_ms(uc::GpuPass::motion_blur),(unsigned long long)renderer.pass_runs(uc::GpuPass::shadow),renderer.pass_ms(uc::GpuPass::rt_as),renderer.pass_ms(uc::GpuPass::rt_shadows),renderer.pass_ms(uc::GpuPass::bloom));
                 std::fprintf(stderr,"[perf] presents %llu render %.2f ms texture creates %llu CPU decodes %llu late-aim draws %llu cache evictions %llu cache MB %llu\n",(unsigned long long)(presents-last_profile_presents),render_ns/1e6,(unsigned long long)(textures-last_profile_textures),(unsigned long long)(decodes-last_profile_decodes),(unsigned long long)renderer.late_aim_draws(),(unsigned long long)(uc::gx_stats().texture_evictions-last_profile_evictions),(unsigned long long)(uc::gx_stats().texture_resident>>20));
+#if defined(UC_TITLE_DC)
+                {   // SBDE08 rewrites small light textures every frame and reads an EFB copy back (docs/darkside-port.md, "Frame pacing and load")
+                    static uint64_t last_reuses=0,last_readbacks=0,last_readback_ns=0;
+                    const uint64_t reuses=renderer.texture_reuses(),readbacks=renderer.readbacks(),readback_ns=renderer.readback_ns();
+                    std::fprintf(stderr,"[perf-dc] texture reuses %llu readbacks %llu readback %.3f ms\n",(unsigned long long)(reuses-last_reuses),(unsigned long long)(readbacks-last_readbacks),(readback_ns-last_readback_ns)/1e6);
+                    last_reuses=reuses; last_readbacks=readbacks; last_readback_ns=readback_ns;
+                }
+#endif
                 last_profile_presents=presents; last_profile_textures=textures; last_profile_decodes=decodes; last_profile_evictions=uc::gx_stats().texture_evictions; render_ns=0;
                 if(!present_intervals.empty()) {
                     std::sort(present_intervals.begin(),present_intervals.end());

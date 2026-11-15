@@ -86,6 +86,10 @@ public:
     MotionPixels capture_motion() {return vulkan_ ? vulkan_->capture_motion() : native_->capture_motion();}
     uint64_t presentation_count() const {return vulkan_ ? vulkan_->presentation_count() : stats().presentations;}
     uint64_t texture_creations() const {return vulkan_ ? vulkan_->texture_creations() : stats().textures;}
+    // Vulkan renderer only (0 elsewhere): pooled small textures, and the EFB copies read back for the game with their host time.
+    uint64_t texture_reuses() const {return vulkan_ ? vulkan_->texture_reuses() : 0;}
+    uint64_t readbacks() const {return vulkan_ ? vulkan_->readbacks() : 0;}
+    uint64_t readback_ns() const {return vulkan_ ? vulkan_->readback_ns() : 0;}
     uint64_t descriptor_pool_creations() const {return vulkan_ ? vulkan_->descriptor_pool_creations() : stats().descriptor_pools;}
     uint64_t late_aim_draws() const {return vulkan_ ? vulkan_->late_aim_draws() : stats().late_aim_draws;}
     uint64_t gpu_busy_ns() const {return vulkan_ ? vulkan_->gpu_busy_ns() : stats().gpu_busy_ns;}
