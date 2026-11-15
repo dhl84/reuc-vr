@@ -33,7 +33,9 @@ struct TextureLevel {
     uint32_t width, height;
     std::vector<uint8_t> rgba;
 };
-enum class TextureChannels:uint8_t { rgba,alpha_intensity,rgb565 };
+// luma_intensity: an EFB copy to GX_TF_I8 (the brightness of the colour in every channel). The Vulkan renderer reads the green
+// channel for it, which is an approximation of the Y of the hardware copy; the DirectX renderers do not support it yet.
+enum class TextureChannels:uint8_t { rgba,alpha_intensity,rgb565,luma_intensity };
 // A background decode in flight: `done` is set (release) after the worker wrote TexturePixels::levels or stored the error.
 struct TextureJob {
     std::mutex mutex; std::condition_variable ready; std::atomic<bool> done{false}; std::exception_ptr error;

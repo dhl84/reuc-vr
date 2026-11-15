@@ -22,6 +22,33 @@ uint32_t os_dummy_context() { return g_dummy_ctx; }
 using namespace uc;
 
 // OSCreateThread(thread, entry, param, stack_top, stack_size, priority, attr) -> 1
+namespace {
+// __OSActiveThreadQueue: head at 800000DC, tail at 800000E0, links at OSThread+0x2FC (next) and +0x300 (prev). The SDK's own
+// OSCreateThread appends a thread and OSExitThread / OSCancelThread unlink it. The sleep alarm handler of the 2009 SDK (SBDE08 8037FBF0)
+// resumes a thread only when it finds it in this queue, so a thread that called OSSleepTicks never woke without it. The 2006 SDK of
+// RBUE08 does not read the queue: its builds leave guest memory as it was (uc::title::kActiveThreadQueue), and recorded demos stay valid.
+constexpr uint32_t kActiveHead = 0x800000DC, kActiveTail = 0x800000E0, kLinkNext = 0x2FC, kLinkPrev = 0x300;
+void active_queue_add(ppc::Ctx& c, uint32_t th) {
+    if (!uc::title::kActiveThreadQueue) return;
+    const uint32_t tail = ppc::rd32(c, kActiveTail);
+    ppc::wr32(c, th + kLinkNext, 0);
+    ppc::wr32(c, th + kLinkPrev, tail);
+    ppc::wr32(c, tail ? tail + kLinkNext : kActiveHead, th);
+    ppc::wr32(c, kActiveTail, th);
+}
+void active_queue_remove(ppc::Ctx& c, uint32_t th) {
+    if (!uc::title::kActiveThreadQueue || !th) return;
+    bool linked = false;
+    for (uint32_t t = ppc::rd32(c, kActiveHead), n = 0; t && n < 256; t = ppc::rd32(c, t + kLinkNext), ++n) if (t == th) { linked = true; break; }
+    if (!linked) return;
+    const uint32_t next = ppc::rd32(c, th + kLinkNext), prev = ppc::rd32(c, th + kLinkPrev);
+    ppc::wr32(c, prev ? prev + kLinkNext : kActiveHead, next);
+    ppc::wr32(c, next ? next + kLinkPrev : kActiveTail, prev);
+    ppc::wr32(c, th + kLinkNext, 0);
+    ppc::wr32(c, th + kLinkPrev, 0);
+}
+}  // namespace
+
 void hle_OSCreateThread(ppc::Ctx& c) {
     uint32_t th = c.r[3], entry = c.r[4], param = c.r[5], top = c.r[6], size = c.r[7];
     int prio = int(c.r[8]);
@@ -35,6 +62,7 @@ void hle_OSCreateThread(ppc::Ctx& c) {
     ppc::wr32(c, th + layout::kThreadStackBase, top);
     ppc::wr32(c, th + layout::kThreadStackEnd, top - size);
     ppc::wr32(c, top - size, 0xDEADBABE);   // stack-overflow canary the SDK checks
+    active_queue_add(c, th);
     // The new thread inherits r2/r13 (small-data bases), GQRs and FPSCR from its creator, as OSContextInit does.
     os_sched().create(th, prio, [=](ppc::Ctx& tc) {
         tc.r[1] = (top & ~7u) - 8;
@@ -42,6 +70,7 @@ void hle_OSCreateThread(ppc::Ctx& c) {
         tc.r[3] = param;
         tc.lr = 0;
         call_indirect(tc, entry);   // returns with the entry function's r3 as the thread's exit value
+        active_queue_remove(tc, th);
     }, &c);
     c.r[3] = 1;
 }
@@ -73,7 +102,7 @@ void hle_OSSleepThread(ppc::Ctx& c) {   // r3 = OSThreadQueue*
 }
 void hle_OSWakeupThread(ppc::Ctx& c) { PendingHle pending(os_sched(),c); os_sched().wake_all(c.r[3]); }
 void hle_OSYieldThread(ppc::Ctx& c) { PendingHle pending(os_sched(),c); os_sched().yield(); }
-void hle_OSExitThread(ppc::Ctx& c) { os_sched().exit_current(c.r[3]); }
+void hle_OSExitThread(ppc::Ctx& c) { active_queue_remove(c, ppc::rd32(c, layout::kCurrentThreadPtr)); os_sched().exit_current(c.r[3]); }
 void hle_OSJoinThread(ppc::Ctx& c) {                                          // (thread, void** value) -> 1
     Thread* t = os_sched().find(c.r[3]);
     if (!t) { c.r[3] = 0; return; }
@@ -96,6 +125,7 @@ void hle_OSCancelThread(ppc::Ctx& c) {   // (thread); a cancelled thread is mori
     Thread* t = os_sched().find(c.r[3]);
     if (!t) return;
     ppc::wr16(c, c.r[3] + layout::kThreadState, 8);
+    active_queue_remove(c, c.r[3]);
     PendingHle pending(os_sched(),c);
     os_sched().cancel(t);
 }

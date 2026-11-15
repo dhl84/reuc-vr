@@ -1372,6 +1372,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 std::fprintf(stderr,"[descriptor-pools] created %llu\n",(unsigned long long)renderer.descriptor_pool_creations());
                 const auto pacing=uc::game_pacing_stats();
                 std::fprintf(stderr,"[window] input focus %u\n",window ? unsigned((SDL_GetWindowFlags(window.get())&SDL_WINDOW_INPUT_FOCUS)!=0) : 0u);
+                { static const bool dump_threads=std::getenv("UC_DUMP_THREADS")!=nullptr; if(dump_threads) std::fputs(sched.dump_contexts().c_str(),stderr); }   // bring-up; read without the baton, so a value may be mid-update
                 { const auto sw=sched.switch_stats(); static uint64_t last_switches=0,last_wake=0,last_run[32]={}; std::fprintf(stderr,"[sched] switches %llu avg wake %.1f us, run ms:",(unsigned long long)(sw.switches-last_switches),(sw.switches-last_switches) ? (sw.wake_ns-last_wake)/1e3/double(sw.switches-last_switches) : 0.0); last_switches=sw.switches; last_wake=sw.wake_ns; for(int id=1;id<32;++id) { const auto ns=sched.thread_run_ns(id); if(ns-last_run[id]) std::fprintf(stderr," #%d(%08X) %.0f",id,sched.thread_entry(id),(ns-last_run[id])/1e6); last_run[id]=ns; } std::fputc(10,stderr); }
                 { const auto depth=packets.depth(); std::fprintf(stderr,"[packets] queued %zu outstanding %zu presenting in flight %zu\n",depth.queued,depth.outstanding,depth.frames_in_flight); }   // outstanding must stay near the guest lead (tens), never creep to kMaxOutstandingPackets
                 std::fprintf(stderr,"[guest-blocked] renderer wait %.2f ms total (window %.2f, packets %llu),main loop waited %.2f ms this second, GPU busy %.2f ms total, frame latency avg %.2f max %.2f ms over %llu frames\n",gx::seal_wait_ns()/1e6,gx::seal_window_wait_ns()/1e6,(unsigned long long)gx::seal_count(),loop_wait_ns/1e6,renderer.gpu_busy_ns()/1e6,gx::frame_latency().total_ns/1e6/std::max<uint64_t>(gx::frame_latency().frames,1),gx::frame_latency().max_ns/1e6,(unsigned long long)gx::frame_latency().frames); loop_wait_ns=0;
@@ -1461,6 +1462,9 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         if (std::FILE* out = uc::uc_fopen(path, "w")) { uc::gx_gap_audit_report(out); std::fclose(out); std::fprintf(stderr, "gx gap report: " UC_PATH_FMT "\n", UC_PATH_ARG(path)); }
     }
     uc::trace_dump_all(stderr, 24);
+    if (std::getenv("UC_DUMP_THREADS")) {   // bring-up: the state, wait key and registers of every guest thread at the end of the run
+        try { std::fputs(uc::os_sched().dump_contexts().c_str(), stderr); } catch (...) { std::fputs("guest threads: unavailable\n", stderr); }
+    }
     print_stats();
     return result;
 }

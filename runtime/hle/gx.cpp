@@ -714,7 +714,7 @@ gx::TextureCache texture_cache;
 std::shared_ptr<const gx::TexturePixels> make_copy_texture(uint32_t address,uint32_t width,uint32_t height,uint32_t format) {
     memory.read(address,gx::encoded_texture_size({width,height,format==0x27 ? gx::TextureFormat::i8 : gx::TextureFormat(format),1}));
     auto target=std::make_shared<gx::TexturePixels>(); target->gpu_only=true; target->guest_address=address&0x3FFFFFFF;
-    target->channels=format==0x27 ? gx::TextureChannels::alpha_intensity : format==4 ? gx::TextureChannels::rgb565 : gx::TextureChannels::rgba;
+    target->channels=format==0x27 ? gx::TextureChannels::alpha_intensity : format==1 ? gx::TextureChannels::luma_intensity : format==4 ? gx::TextureChannels::rgb565 : gx::TextureChannels::rgba;
     for(;;) {
         target->levels.push_back({width,height,{}});
         if(width==1 && height==1) break;
@@ -726,8 +726,12 @@ std::shared_ptr<const gx::TexturePixels> snapshot_texture(const std::optional<Te
     if (!source) return {};
     if(auto found=versions.find(source->address&0x3FFFFFFF);found!=versions.end() && found->second) {
         const auto& level=found->second->levels[0];
-        const auto expected=found->second->channels==gx::TextureChannels::alpha_intensity ? gx::TextureFormat::i8 : found->second->channels==gx::TextureChannels::rgb565 ? gx::TextureFormat::rgb565 : gx::TextureFormat::rgba8;
-        if(source->desc.format!=expected || source->palette || source->desc.width>level.width || source->desc.height>level.height) throw std::invalid_argument("unsupported native EFB texture view");
+        const auto channels=found->second->channels;
+        const auto expected=(channels==gx::TextureChannels::alpha_intensity || channels==gx::TextureChannels::luma_intensity) ? gx::TextureFormat::i8 : channels==gx::TextureChannels::rgb565 ? gx::TextureFormat::rgb565 : gx::TextureFormat::rgba8;
+        if(source->desc.format!=expected || source->palette || source->desc.width>level.width || source->desc.height>level.height) {
+            std::fprintf(stderr,"[efb-view-invalid] address %08X view %ux%u format %u palette %u copy %ux%u channels %u\n",source->address,source->desc.width,source->desc.height,unsigned(source->desc.format),unsigned(bool(source->palette)),level.width,level.height,unsigned(channels));
+            throw std::invalid_argument("unsupported native EFB texture view");
+        }
         // shortcut: cropped GX views share the GPU copy; exact sampler/view coordinates remain TD-045.
         return found->second;
     }
@@ -980,11 +984,11 @@ void post_finish(uc::Sched* sched, uint64_t serial,uint64_t generation) {
         if (found == finishes.end()) return;
         uint32_t base = found->second; finishes.erase(found); ++completed;
         ppc::Ctx& irq = sched->irq_ctx();
-        memory.read(base - 25328, 1);
-        ppc::wr8(irq, base - 25328, 1);
-        uint32_t callback = read32(base - 25324);
+        memory.read(base + UC_SDA13(-25328), 1);
+        ppc::wr8(irq, base + UC_SDA13(-25328), 1);
+        uint32_t callback = read32(base + UC_SDA13(-25324));
         if (callback) uc::call_guest(irq, callback, {});
-        sched->wake_all(base - 25336);
+        sched->wake_all(base + UC_SDA13(-25336));
     },uc::Sched::EventKind::Gx,generation);
 }
 void request_finish(ppc::Ctx& ctx) {
@@ -1818,13 +1822,13 @@ void hle_GXSetTexCopySrc(ppc::Ctx& c) {
 void hle_GXSetTexCopyDst(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80285398),c); finish_primitive();
     const auto width=c.r[3],height=c.r[4],format=c.r[5],half=c.r[6],sdk=read32(c.r[2]+UC_SDA2(-8968));
-    if(!width || !height || width>1024 || height>1024 || (format!=4 && format!=6 && format!=0x27) || half>1) {
+    if(!width || !height || width>1024 || height>1024 || (format!=1 && format!=4 && format!=6 && format!=0x27) || half>1) {   // 1 = GX_TF_I8 (SBDE08 copies the brightness)
         std::fprintf(stderr,"[efb-destination-invalid] %ux%u format %08X half %u caller %08X\n",width,height,format,half,c.lr);
         throw std::invalid_argument("unsupported native EFB texture destination");
     }
     memory.read(sdk+0x248,9);
-    // Original SDK tile stride in32byte units: RGBA8=4x4/64; RGB565=4x4/32; A8=8x4/32.
-    const auto stride=format==0x27 ? (width+7)/8 : ((width+3)/4)*(format==6 ? 2 : 1);
+    // Original SDK tile stride in32byte units: RGBA8=4x4/64; RGB565=4x4/32; A8 and I8=8x4/32.
+    const auto stride=(format==0x27 || format==1) ? (width+7)/8 : ((width+3)/4)*(format==6 ? 2 : 1);
     const auto copy_type=format==0x27 ? 0x70u : format<<4;
     ppc::wr32(c,sdk+0x248,0x4D000000u|stride);
     ppc::wr32(c,sdk+0x24C,(read32(sdk+0x24C)&~0x18278u)|0x10000u|half<<9|copy_type);
@@ -2402,7 +2406,7 @@ void hle_ResChannelApply(ppc::Ctx& c) {
         }
     }
     if(data) {
-        const auto mode=UC_ADDR(0x806A0040)u,flags=read32(mode+8);
+        const auto mode=UC_ADDR(0x806A0040),flags=read32(mode+8);
         if((flags&4) && (flags&3)!=3) {
             const auto tex=ppc::rd8(c,mode),channels=ppc::rd8(c,mode+1),tev=ppc::rd8(c,mode+2),indirect=ppc::rd8(c,mode+3),cull=read32(mode+4);
             if(tex>8 || channels>2 || !tev || tev>16 || indirect>4 || cull>3) throw std::invalid_argument("invalid native material generation mode");

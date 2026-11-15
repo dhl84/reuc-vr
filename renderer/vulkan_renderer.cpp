@@ -773,7 +773,7 @@ static size_t validate_texture_chain(const gx::TexturePixels* pixels) {
     if(pixels) pixels->wait();   // the background decode of a freshly created texture
     const gx::TextureLevel white{1,1,{255,255,255,255}};
     const bool gpu_only=pixels && pixels->gpu_only;
-    if(pixels && (unsigned(pixels->channels)>unsigned(gx::TextureChannels::rgb565) ||
+    if(pixels && (unsigned(pixels->channels)>unsigned(gx::TextureChannels::luma_intensity) ||
         (pixels->channels!=gx::TextureChannels::rgba && !gpu_only)))throw std::invalid_argument("invalid owned texture channels");
     if(pixels && (pixels->levels.empty() || pixels->levels.size()>15)) throw std::invalid_argument("invalid owned mip chain count");
     const auto& level=pixels ? pixels->levels[0] : white;
@@ -844,6 +844,8 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
         view.format=format; view.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,texture.mip_levels,0,create.arrayLayers};
         if(texture.channels==gx::TextureChannels::alpha_intensity)
             view.components={VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A,VK_COMPONENT_SWIZZLE_A};
+        if(texture.channels==gx::TextureChannels::luma_intensity)   // approximation: green stands for the brightness
+            view.components={VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_G};
         vk_check(vkCreateImageView(device,&view,nullptr,&texture.view),"texture view");
     } catch (...) {
         if (texture.view) vkDestroyImageView(device,texture.view,nullptr);
