@@ -1943,7 +1943,7 @@ void hle_GXSetBlendMode(ppc::Ctx& c) {
     uc::gx_audit_enter(UC_ADDR(0x80288274),c); matrix_boundary(UC_ADDR(0x80288274));
     if (c.r[3]>3 || c.r[4]>7 || c.r[5]>7 || c.r[6]>15) throw gx::Error(gx::ErrorCode::layout,UC_ADDR(0x80288274),3,c.r[3]);
     const auto sdk=read32(c.r[2]+UC_SDA2(-8968)),mode=c.r[3];
-    const auto word=(read32(sdk+0x220)&~0xF7E3u)|(mode&1)|(mode==2 ? 2u : 0u)|(mode==3 ? 0x800u : 0u)|(c.r[4]<<8)|(c.r[5]<<5)|(c.r[6]<<12);
+    const auto word=(read32(sdk+0x220)&~uc::title::kBlendModeBits)|(mode&1)|(mode==2 ? 2u : 0u)|(mode==3 ? 0x800u : 0u)|(c.r[4]<<8)|(c.r[5]<<5)|(c.r[6]<<12);   // common/title.h
     publish_blend(c,sdk,word);
 }
 void hle_GXSetColorUpdate(ppc::Ctx& c) {
