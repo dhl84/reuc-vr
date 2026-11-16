@@ -783,12 +783,14 @@ std::shared_ptr<const gx::TexturePixels> snapshot_texture(const std::optional<Te
         const auto channels=found->second->channels;
         const auto expected=(channels==gx::TextureChannels::alpha_intensity || channels==gx::TextureChannels::luma_intensity || channels==gx::TextureChannels::red_intensity) ? gx::TextureFormat::i8 : channels==gx::TextureChannels::rgb565 ? gx::TextureFormat::rgb565 :
             channels==gx::TextureChannels::depth_far ? gx::TextureFormat::ia8 : gx::TextureFormat::rgba8;
+        // A texture that is larger than the copy, or has another format, is not a view of the copy: the game has given this memory
+        // to another texture since the copy (The Darkside Chronicles, room R224: a texture of 320x171 where a copy of 80x42 was).
+        // Its texels are in the guest's memory, as for every other texture.
         if(source->desc.format!=expected || source->palette || source->desc.width>level.width || source->desc.height>level.height) {
-            std::fprintf(stderr,"[efb-view-invalid] address %08X view %ux%u format %u palette %u copy %ux%u channels %u\n",source->address,source->desc.width,source->desc.height,unsigned(source->desc.format),unsigned(bool(source->palette)),level.width,level.height,unsigned(channels));
-            throw std::invalid_argument("unsupported native EFB texture view");
+            static unsigned said=0;
+            if(said<8) { ++said; std::fprintf(stderr,"[efb-view-stale] address %08X texture %ux%u format %u palette %u, older copy %ux%u channels %u: the texels come from memory\n",source->address,source->desc.width,source->desc.height,unsigned(source->desc.format),unsigned(bool(source->palette)),level.width,level.height,unsigned(channels)); }
         }
-        // shortcut: cropped GX views share the GPU copy; exact sampler/view coordinates remain TD-045.
-        return found->second;
+        else return found->second;   // shortcut: cropped GX views share the GPU copy; exact sampler/view coordinates remain TD-045.
     }
     const auto bytes=memory.read(source->address,gx::encoded_texture_size(source->desc));
     gx::PaletteView palette;
