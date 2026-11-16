@@ -507,7 +507,15 @@ How the causes were found:
 
 The app now starts with the render scale 2.0. At that scale the test ran at the full 72 fps in 64 % of the seconds, and the GPU took 10.6 ms a frame at the median and 16.9 ms at the 95th percentile.
 
-Not done on the headset: play by a person with the controllers, the sound, space warp, and the rest of the GPU time in the heaviest scenes. The section "The post-processing chain" has three changes of 16 November 2026 for that GPU time. Their effect on the headset is not measured yet.
+The long run of that day. The app played the first eight chapters to their result screens on the headset, and the ninth to its boss, in about four and a half hours of play with `UC_DC_GOD=1` and `bot:60000,6`. The bot does not win against that boss.
+
+- One crash, after two hours, when the sixth chapter loaded: the Adreno shader compiler again, for a key that had no folded module. The compile guard needs one crash for each such key. On Android the renderer now does not compile a specialized pipeline without a folded module (`folded_only_` in `renderer/vulkan_renderer.cpp`). Its draws keep the ubershader. `UC_UNFOLDED_PIPELINES=1` gives the old way. The next three and a half chapters ran without a crash.
+- The keys that the run recorded are in `project/dc/pipeline_keys.quest` (625 keys).
+- Frame rate with the render scale 2.0: 69.9 fps in the first chapter (60 fps or more in 91 % of the seconds), 64.3 fps over the first three chapters, about 45 fps in the fifth chapter (`s10c4`, the glow chain), 62 fps over chapters six to eight.
+- The heaviest scene found is the boss of the ninth chapter: 30 to 35 fps. Two scene packets take about 11.5 ms of GPU time each. A scene packet there has 338,000 indices in 479 draws.
+- The proxy of the post-processing chain (see "The post-processing chain") was measured there with the live switch `UC_CHAIN_AB`: 34.8 fps without it, 30.3 and 31.1 fps with it. It is off (`kCornerChainProxy`). The copies that no draw samples are still not made. The glow switch changed nothing in that scene.
+
+Not done on the headset: play by a person with the controllers, the sound, space warp, and the GPU time of the heaviest scenes.
 
 ## State
 
