@@ -500,6 +500,7 @@ private:
     VkImageView scene_color_view_=VK_NULL_HANDLE, scene_depth_view_=VK_NULL_HANDLE, scene_motion_view_=VK_NULL_HANDLE, scene_gbuffer_view_=VK_NULL_HANDLE;
     VkExtent2D scene_extent_{};
     bool scene_initialized_=false, motion_initialized_=false, gbuffer_initialized_=false;
+    bool captured_scene_=false;   // the last packet drew into the scene targets: capture(serial,true) reads them
     bool gbuffer_cleared_=false;   // the G-buffer was cleared (and bound) by a scene pass of this frame
     bool force_gbuffer_=false, force_scene_targets_=false, force_lights_=false;
     OcclusionPass occlusion_;

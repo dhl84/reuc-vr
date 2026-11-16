@@ -247,6 +247,21 @@ public:
                 const auto view=draw.vertex_view();
                 if(!view.empty()) std::fprintf(file_," v0 pos (%.2f %.2f %.2f) col (%u %u %u %u) uv (%.3f %.3f)",view[0].position[0],view[0].position[1],view[0].position[2],unsigned(view[0].color[0][0]),unsigned(view[0].color[0][1]),unsigned(view[0].color[0][2]),unsigned(view[0].color[0][3]),view[0].texcoord[0][0],view[0].texcoord[0][1]);
                 std::fprintf(file_,"\n");
+                // The texgen of each texture coordinate that a stage uses: the XF control word, the post-transform word and the two matrices.
+                uint32_t coords=0;
+                for(uint32_t stage=0;stage<draw.material.stages && stage<16;++stage) if(draw.material.stage[stage].order&0x40) coords|=1u<<((draw.material.stage[stage].order>>3)&7);
+                for(uint32_t coord=0;coord<8;++coord) if(coords&(1u<<coord)) {
+                    std::fprintf(file_,"    texgen %u control %08X post %08X rows",coord,u.tex_gens[coord],u.tex_posts[coord]);
+                    for(uint32_t row=0;row<3;++row) { const auto& r=u.tex_rows[coord*3+row]; std::fprintf(file_," (%.5g %.5g %.5g %.5g)",r[0],r[1],r[2],r[3]); }
+                    std::fprintf(file_," post rows");
+                    for(uint32_t row=0;row<3;++row) { const auto& r=u.post_rows[coord*3+row]; std::fprintf(file_," (%.5g %.5g %.5g %.5g)",r[0],r[1],r[2],r[3]); }
+                    std::fprintf(file_,"\n");
+                }
+                if(view.size()>1 && view.size()<=32) {   // a small draw (the quads of a post effect): every vertex
+                    std::fprintf(file_,"    vertices");
+                    for(const auto& v:view) std::fprintf(file_," (%.2f %.2f %.2f | %u %u %u %u | %.4f %.4f)",v.position[0],v.position[1],v.position[2],unsigned(v.color[0][0]),unsigned(v.color[0][1]),unsigned(v.color[0][2]),unsigned(v.color[0][3]),v.texcoord[0][0],v.texcoord[0][1]);
+                    std::fprintf(file_,"\n");
+                }
                 for(uint32_t channel=0;channel<4;++channel) {   // the lights of each lit channel (colour 0, colour 1, alpha 0, alpha 1)
                     const uint32_t control=u.channels[channel];
                     if(!(control&2)) continue;

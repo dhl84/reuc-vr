@@ -1719,7 +1719,9 @@ RenderPixels VulkanRenderer::capture(uint64_t serial, bool efb) {
         if (slot.submitted && slot.serial == serial && (efb || slot.copied)) {
             vk_check(vkGetFenceStatus(device, slot.fence), "capture requires completed frame");
             collect();
-            const auto eye_size=efb ? efb_extent_ : extent_;
+            // A pass capture of a packet that drew into the scene targets (the scene phase of a frame) shows those, not the EFB.
+            const bool scene_pass=efb && captured_scene_ && scene_color_ && scene_initialized_;
+            const auto eye_size=scene_pass ? scene_extent_ : efb ? efb_extent_ : extent_;
             const uint32_t eyes=layers_;   // stereo: both eyes side by side, the left eye's layer first
             const VkExtent2D size{eye_size.width*eyes,eye_size.height};
             const VkDeviceSize bytes=VkDeviceSize(size.width)*size.height*4;
@@ -1732,8 +1734,8 @@ RenderPixels VulkanRenderer::capture(uint64_t serial, bool efb) {
                 auto& copy=copies[eye]; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, eye, 1}; copy.imageExtent = {eye_size.width, eye_size.height, 1};
                 copy.bufferOffset=VkDeviceSize(eye_size.width)*eye*4; copy.bufferRowLength=size.width;
             }
-            if (efb) record_efb_clear(slot.command,"capture");   // UC_FOLD_CLEAR: the EFB as the packet left it, its clear included
-            vkCmdCopyImageToBuffer(slot.command, efb ? efb_ : slot.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.pixels.buffer, eyes, copies);
+            if (efb && !scene_pass) record_efb_clear(slot.command,"capture");   // UC_FOLD_CLEAR: the EFB as the packet left it, its clear included
+            vkCmdCopyImageToBuffer(slot.command, scene_pass ? scene_color_ : efb ? efb_ : slot.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.pixels.buffer, eyes, copies);
             VkBufferMemoryBarrier2 host_barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2}; host_barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT; host_barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
             host_barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT; host_barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT; host_barrier.srcQueueFamilyIndex = host_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             host_barrier.buffer = slot.pixels.buffer; host_barrier.size = VK_WHOLE_SIZE;
@@ -5063,6 +5065,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             const auto fragment=VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, transfer=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
             barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,transfer,VK_ACCESS_2_TRANSFER_READ_BIT);
             VkBufferImageCopy region{}; region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}; region.imageExtent={extent.width,extent.height,1};
+    captured_scene_=scene_only;
             vkCmdCopyImageToBuffer(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,slot.readback.buffer,1,&region);
             barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,transfer,VK_ACCESS_2_TRANSFER_READ_BIT,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             slot.readback_target=readback; slot.readback_extent=extent;
