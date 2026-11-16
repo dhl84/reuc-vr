@@ -1391,8 +1391,11 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             }
             if (watch_error) std::rethrow_exception(watch_error);
             service_frame();
-            // A game frame is ~23 packets: do not pay a wait per packet. A pending renderer restart stops at the end of a frame.
-            for (int drained = 0; drained < 64 && !close && !(restart_pending && at_frame_boundary) && render_pending(); ++drained) {}
+            // A game frame is ~23 packets: do not pay a wait per packet. The drain stops at the end of a frame (a packet that presented), so
+            // that the input above is read once for each frame. Before, it stopped only after 64 packets: a frame of The Darkside Chronicles
+            // is about 6 packets, and with a busy render thread (the headset in a fight) one pass of this loop drew about 10 frames. The
+            // VR controllers were then read 5 to 8 times a second. A pending renderer restart also stops at the end of a frame.
+            for (int drained = 0; drained < 64 && !close && !at_frame_boundary && render_pending(); ++drained) {}
             if (settings_menu) settings_menu->commit();   // the menu's picks, applied outside rendering
             if (restart_pending && at_frame_boundary && !debug_capture_serial && !debug_capture_requested && !audit_capture_serial && !scene_capture_serial && !scene_dump_serial) {
                 restart_pending=false;
