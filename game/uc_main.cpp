@@ -529,6 +529,51 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                     ppc::wr32(c, uc::title::kDcPartnerHealth + slot * 4, most);
             }
         }
+        // UC_DC_FREEZE_FILE=<file> (test aid): while the switch file is on (uc::switch_file_on), the eight time scales of the game's clock
+        // (common/title.h kDcClock) are 0. The game then steps no time: the camera and the models stand still, and the game still draws
+        // each frame. Two settings of the renderer can be compared on the same picture. The files are looked at each 30 retraces.
+        {
+            static const char* freeze_file = std::getenv("UC_DC_FREEZE_FILE");
+            static bool frozen = false;
+            static uint32_t scales[8];
+            if (freeze_file && *freeze_file) {
+                ppc::Ctx& c = sched.irq_ctx();
+                static bool wanted = false;
+                if (retraces % 30 == 0) wanted = uc::switch_file_on(freeze_file);
+                if (wanted && !frozen) { for (uint32_t i = 0; i < 8; ++i) scales[i] = ppc::rd32(c, uc::title::kDcClock + 0x0C + i * 4); frozen = true; std::fprintf(stderr, "[dc-freeze] the game time stands still (retrace %llu)\n", (unsigned long long)retraces); }
+                if (frozen && wanted) for (uint32_t i = 0; i < 8; ++i) ppc::wr32(c, uc::title::kDcClock + 0x0C + i * 4, 0);
+                if (frozen && !wanted) { for (uint32_t i = 0; i < 8; ++i) ppc::wr32(c, uc::title::kDcClock + 0x0C + i * 4, scales[i]); frozen = false; std::fprintf(stderr, "[dc-freeze] the game time runs again (retrace %llu)\n", (unsigned long long)retraces); }
+            }
+        }
+        // The glow of the game follows the bloom switch of the port: graphics.bloom, or Glow on the headset. UC_DC_GLOW=0 or 1 decides
+        // instead (tests). Off: the switch byte of each glow effect (common/title.h kDcGlowEffects) is held at 0, as the game has it in
+        // a scene without glow. The draw function of the effect base class then returns at once. On again: an effect that this code
+        // turned off gets its 1 back.
+        {
+            static const char* forced = std::getenv("UC_DC_GLOW");
+            static const char* off_file = std::getenv("UC_DC_GLOW_FILE");   // tests: the glow is off while this switch file is on (uc::switch_file_on, looked at each 30 retraces)
+            static bool file_off = false;
+            if (off_file && *off_file && retraces % 30 == 0) file_off = uc::switch_file_on(off_file);
+            const bool wanted = !file_off && (forced && *forced ? *forced != '0' : uc::game_glow_wanted.load(std::memory_order_relaxed));
+            static bool held[2]{};
+            static uint64_t turned_off = 0;   // more than one for each effect: the game wrote its 1 again
+            ppc::Ctx& c = sched.irq_ctx();
+            for (uint32_t i = 0; i < 2; ++i) {
+                const uint32_t effect = uc::title::kDcGlowEffects[i];
+                if (ppc::rd32(c, effect + 4) != uc::title::kDcGlowVtable) { held[i] = false; continue; }   // the manager is not built yet
+                const bool on = ppc::rd8(c, effect + 2) != 0;
+                if (!wanted && on) {
+                    ppc::wr8(c, effect + 2, 0);
+                    if (!held[i]) std::fprintf(stderr, "[dc-glow] the glow of the game is off (effect %08X, retrace %llu)\n", effect, (unsigned long long)retraces);
+                    held[i] = true; ++turned_off;
+                } else if (wanted && held[i]) {
+                    if (!on) ppc::wr8(c, effect + 2, 1);
+                    held[i] = false;
+                    std::fprintf(stderr, "[dc-glow] the glow of the game is on again (effect %08X, retrace %llu). The port wrote the 0 %llu times.\n", effect, (unsigned long long)retraces, (unsigned long long)turned_off);
+                    turned_off = 0;
+                }
+            }
+        }
 #endif
     });
 

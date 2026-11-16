@@ -1921,6 +1921,7 @@ void VulkanRenderer::set_bloom(const BloomSettings& settings) {
     owner();
     const bool path_before=scene_path_wanted();
     bloom_=settings;
+    game_glow_wanted.store(settings.enabled,std::memory_order_relaxed);
     apply_scene_path(false,path_before);   // the glow runs on the scene targets, which a pass-through upscaler keeps only while an effect needs them
 }
 BloomLayer VulkanRenderer::bloom_layer(VkOffset2D origin, VkExtent2D size) const {
