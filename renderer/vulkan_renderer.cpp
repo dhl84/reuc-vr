@@ -1502,8 +1502,13 @@ VkShaderModule VulkanRenderer::folded_module(const std::array<uint32_t,68>& valu
     VkShaderModule module=VK_NULL_HANDLE;
     // UC_RELAXED_TEV=1: the modules with their colour arithmetic RelaxedPrecision (tools/spirv_relaxed_precision.py, folded_rp)
     static const char* const folded_dir=std::getenv("UC_RELAXED_TEV") ? "folded_rp" : "folded";
-    std::ifstream in(shaders_/folded_dir/file,std::ios::binary);
-    std::vector<char> code((std::istreambuf_iterator<char>(in)),{});
+    // UC_DEVICE_FOLD_TEST=N (test aid): one module in N of the build is not used, so the device makes it (fold_module).
+    static const uint64_t test_skip=std::getenv("UC_DEVICE_FOLD_TEST") ? std::strtoull(std::getenv("UC_DEVICE_FOLD_TEST"),nullptr,10) : 0;
+    std::vector<char> code;
+    if (!(test_skip && device_fold_ && hash%test_skip==0)) {
+        std::ifstream in(shaders_/folded_dir/file,std::ios::binary);
+        code.assign((std::istreambuf_iterator<char>(in)),{});
+    }
     if (code.empty() && device_fold_) {   // a module that an earlier run made on the device (fold_module)
         std::ifstream kept(device_folded_dir_/file,std::ios::binary);
         code.assign((std::istreambuf_iterator<char>(kept)),{});
