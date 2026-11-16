@@ -512,10 +512,26 @@ The long run of that day. The app played the first eight chapters to their resul
 - One crash, after two hours, at the load of the sixth chapter: the Adreno shader compiler again, for a key that had no folded module. The compile guard needs one crash for each such key. On Android the renderer now does not compile a specialized pipeline without a folded module (`folded_only_` in `renderer/vulkan_renderer.cpp`). Its draws keep the ubershader. `UC_UNFOLDED_PIPELINES=1` gives the old way. The next three and a half chapters ran without a crash.
 - The keys that the run recorded are in `project/dc/pipeline_keys.quest` (625 keys).
 - Frame rate with the render scale 2.0: 69.9 fps in the first chapter, with 60 fps or more in 91 % of the seconds. It was 64.3 fps over the first three chapters and 62 fps over chapters six to eight. The fifth chapter ran at about 45 fps (`s10c4`, the glow chain).
-- The heaviest scene found is the boss of the ninth chapter: 30 to 35 fps. Two scene packets take about 11.5 ms of GPU time each. A scene packet there has 338,000 indices in 479 draws.
+- The slowest scene of the run was the boss of the ninth chapter: 30 to 35 fps. The scene packet took 12 ms of GPU time and the last packet of the frame 11.4 ms. The cause was not the geometry (see "Keys without a folded module" below).
 - The proxy of the post-processing chain (see "The post-processing chain") was measured there with the live switch `UC_CHAIN_AB`: 34.8 fps without it, 30.3 and 31.1 fps with it. It is off (`kCornerChainProxy`). The copies that no draw samples are still not made. The glow switch changed nothing in that scene.
 
-Not done on the headset: play by a person with the controllers, the sound, space warp, and the GPU time of the heaviest scenes.
+Keys without a folded module. The boss scene was slow because six of its pipeline keys had no folded TEV module in the build. On Android such a key keeps the ubershader (`folded_only_`). The ubershader is slow for a draw that covers the screen. Here the draws were panes of the HUD and parts of the room.
+
+- How it was found. The last packet of the frame holds the colour filter and the HUD. It took 11.4 ms in this scene and 2.0 ms in the first fight, with fewer pixels. At render scale 1.4 it took 5.8 ms, so the cost was in the pixels. The count `keys without a folded module` in the log was 24.
+- The build with the six keys in `project/dc/pipeline_keys.quest` (631 keys, app 0.0.17) runs the scene at 57 to 61 fps. The scene packet takes 6.6 ms and the last packet 2.5 ms.
+- `UC_GPU_PACKETS=1` now prints the line `[uber-fallback]` each 2 s. It lists the draws that took the ubershader for lack of their own pipeline, by call site. If a scene is slow on the headset, read this line and the count of keys without a module first.
+
+The headset now makes the missing module itself (`renderer/tev_fold.cpp`, app 0.0.18). Before, a new key waited for a later build that listed it.
+
+- A compile thread runs the passes of `tools/fold_tev_shaders.py` with the optimizer of SPIRV-Tools. The library is the release of the build's `spirv-opt` (`vulkan-sdk-1.4.363.0`). CMake fetches its source (`UC_DEVICE_FOLD`, on for Android).
+- The render thread never folds. Its draw takes the ubershader until the module and the pipeline are ready.
+- One fold runs at a time. A fold takes about 0.5 s on a Quest 3 and about 0.1 s on the PC.
+- The module stays in `data/folded-<hash>` of the app folder for the next starts. The hash is that of the four TEV modules of the build, so a new build starts a new folder.
+- Checked on the PC: `UC_FOLDED_ONLY=1` makes the stereo preview compile as the headset does. The preview then made every module at run time (1,203 modules) and drew the boss scene as before. 39 of these modules were compared with the output of the tool for the same keys. Each pair was equal, byte for byte.
+- Checked on the headset: `UC_DEVICE_FOLD_TEST=16` in `env.txt` leaves the build's modules of one material in 16 unused. The app made 155 modules at its start (79 s instead of 4 s, once). It then ran the boss scene at 57 to 61 fps without a crash, and the frame was right.
+- `UC_NO_DEVICE_FOLD=1` turns the fold off.
+
+Not done on the headset: play by a person with the controllers, the sound, and space warp. The fifth chapter (`s10c4`) was measured before the fold and needs a new measurement.
 
 ## State
 
