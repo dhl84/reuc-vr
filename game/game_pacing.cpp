@@ -1,3 +1,4 @@
+#include "title.h"
 #include "game_pacing.h"
 #include "hooks.h"
 #include "cpu_sampler.h"
@@ -40,6 +41,11 @@ void timed_wait() {
     const uint64_t now=uc::now_ticks(),spin=uc::ms_to_ticks(2);
     deadline_ticks=std::max(deadline_ticks+period,now);   // a late frame starts the next one at once instead of waiting for the next slot
     if(deadline_ticks>now+spin) uc::os_sched().sleep_ticks(deadline_ticks-spin-now);
+    // A late frame does not wait here, so the game's main thread never blocks. The guest threads of lower priority then get no CPU time: on a
+    // Quest 3 at 72 Hz the first fight of The Darkside Chronicles ran at 50 fps, and the game then showed "Loading data" for ever, because
+    // its loading thread ran 20 to 34 ms a second. On the console the wait for the next retrace gives those threads their time. A game
+    // with such threads (common/title.h kTimedYieldMs) sleeps for a short time in a late frame too.
+    else if(uc::title::kTimedYieldMs) uc::os_sched().sleep_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
     while(uc::now_ticks()<deadline_ticks) {}
 }
 float timed_step() {
