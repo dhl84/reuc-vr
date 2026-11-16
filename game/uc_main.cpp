@@ -555,10 +555,10 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             static bool file_off = false;
             if (off_file && *off_file && retraces % 30 == 0) file_off = uc::switch_file_on(off_file);
             const bool wanted = !file_off && (forced && *forced ? *forced != '0' : uc::game_glow_wanted.load(std::memory_order_relaxed));
-            static bool held[2]{};
+            static bool held[3]{};
             static uint64_t turned_off = 0;   // more than one for each effect: the game wrote its 1 again
             ppc::Ctx& c = sched.irq_ctx();
-            for (uint32_t i = 0; i < 2; ++i) {
+            for (uint32_t i = 0; i < 3; ++i) {   // the set that the game draws, and its two other sets
                 const uint32_t effect = uc::title::kDcGlowEffects[i];
                 if (ppc::rd32(c, effect + 4) != uc::title::kDcGlowVtable) { held[i] = false; continue; }   // the manager is not built yet
                 const bool on = ppc::rd8(c, effect + 2) != 0;

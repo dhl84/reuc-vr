@@ -132,12 +132,13 @@ inline constexpr uint32_t kDcPartnerHealth = 0x80735500 + 0xF8, kDcPartnerHealth
 // The post-processing effects of the game are objects of one base class (docs/darkside-port.md, "The post-processing chain"). The byte
 // at +2 of an effect is its switch: the draw function of the base class (802D8D44) returns at once when it is 0, and the virtual
 // functions 802D8E60 and 802D8E78 write 1 and 0. The word at +4 is the vtable. The manager of the effects is the static object at
-// 8075B010 (its getter is 80323304). It holds two sets of effects, at +2824 and at +4336. The glow effect (vtable 806EE568, draw
-// function 802A5E30) is at +220 of a set. With the bloom switch of the port off (graphics.bloom, the headset's Glow),
-// game/uc_main.cpp holds the switch of the two glow effects at 0. The game then makes about ten packets less in a frame of a scene
-// with glow. The empty draw function 8029FFE0 in the vtable is no way to do this: the base class then still prepares the draw, and
-// the effects after the glow draw at twice their size.
-inline constexpr uint32_t kDcGlowEffects[2] = {0x8075B010 + 2824 + 220, 0x8075B010 + 4336 + 220}, kDcGlowVtable = 0x806EE568;
+// 8075B010 (its getter is 80323304). It holds three sets of effects (80322B44 builds them): the set that it draws at +64, and two
+// more at +2824 and at +4336. The glow effect (vtable 806EE568, draw function 802A5E30) is at +220 of a set. With the bloom switch of
+// the port off (graphics.bloom, the headset's Glow), game/uc_main.cpp holds the switch of the three glow effects at 0. The game then
+// makes about ten packets less in a frame of a scene with glow. The two later sets alone are not sufficient: the game then still
+// draws the glow. The empty draw function 8029FFE0 in the vtable is no way to do this: the base class then still prepares the draw,
+// and the effects after the glow draw at twice their size.
+inline constexpr uint32_t kDcGlowEffects[3] = {0x8075B010 + 64 + 220, 0x8075B010 + 2824 + 220, 0x8075B010 + 4336 + 220}, kDcGlowVtable = 0x806EE568;
 // The clock of the game is the object at 80736D10 (docs/darkside-port.md, "Frame pacing and load"). Its eight time scales are the
 // floats at +0x0C to +0x28. The test aid UC_DC_FREEZE_FILE (game/uc_main.cpp) holds them at 0.
 inline constexpr uint32_t kDcClock = 0x80736D10;
