@@ -1,4 +1,5 @@
 #include "dispatch.h"
+#include <cstdio>
 #include <algorithm>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -66,8 +67,32 @@ std::vector<uint32_t> function_addresses() {
     return result;
 }
 bool has_function(uint32_t a) { return !(a & 3) && a - g_begin < g_bytes && g_dense[(a - g_begin) >> 2] != nullptr; }
+// A function of one instruction that the analyzer did not find as an entry: `blr` returns at once, and `b target` is the function
+// at target. The Darkside Chronicles builds the addresses of such functions through its stack frame (8022C9E0 to 8022C9F0, from
+// 8022AEE4 on), where the analyzer does not follow them. The first use of each address goes to the log with the line for the
+// project configuration.
+static bool call_small_function(ppc::Ctx& c, uint32_t a) {
+    uint32_t target = a;
+    for (int hop = 0; hop < 4 && !(target & 3) && target - g_begin < g_bytes; ++hop) {
+        const uint32_t word = ppc::rd32(c, target);
+        const bool returns = word == 0x4E800020u;
+        if (!returns && ((word >> 26) != 18 || (word & 3))) return false;
+        if (!returns) target += uint32_t(int32_t((word & 0x03FFFFFCu) << 6) >> 6);
+        if (!returns && !has_function(target)) continue;
+        static std::vector<uint32_t> said;
+        if (std::find(said.begin(), said.end(), a) == said.end() && said.size() < 64) {
+            said.push_back(a);
+            if (returns) std::fprintf(stderr, "[dispatch] %08X is not a known function entry: it returns at once (add `entry %08X` to the project configuration)\n", a, a);
+            else std::fprintf(stderr, "[dispatch] %08X is not a known function entry: it branches to the function %08X (add `entry %08X` to the project configuration)\n", a, target, a);
+        }
+        if (!returns) g_dense[(target - g_begin) >> 2](c);
+        return true;
+    }
+    return false;
+}
 void call_indirect(ppc::Ctx& c, uint32_t a) {
     if (has_function(a)) { g_dense[(a - g_begin) >> 2](c); return; }
+    if (call_small_function(c, a)) return;
     ppc::trap(a, "indirect call or jump to an address that is not a known function entry (add `entry <hex>` to project/uc.cfg)");
 }
 void hle_sc(ppc::Ctx&, uint32_t pc) { ppc::trap(pc, "sc (system call) is not implemented"); }
