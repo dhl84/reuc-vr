@@ -46,7 +46,10 @@ inline constexpr bool kDropDeadCopies = true;
 // such a packet in a small stand-in for that corner (the bloom proxy of RBUE08), and not in the large frame buffer of both eyes. The
 // stand-in has the pixel density of the frame buffer, so the picture is the same. false: the rule of RBUE08 (2 points a guest pixel,
 // from a frame buffer scale of 2.5, the bloom chain of that game). UC_NO_BLOOM_PROXY=1 turns the proxy off in both games.
-inline constexpr bool kCornerChainProxy = true;
+// Measured on a Quest 3 on 16 November 2026 in the boss fight of the eighth chapter of the second scenario, with a live switch
+// (UC_CHAIN_AB): 34.8 fps and 27.1 ms of GPU time a frame without the proxy, 30.3 and 31.1 fps and 30.6 and 29.8 ms with it. A pass on
+// a second target costs the tile-based GPU more than a pass on a small area of the frame buffer. So the proxy is off.
+inline constexpr bool kCornerChainProxy = false;
 inline constexpr uint32_t kTestPadButtons = 0x1FFFF;   // the test server may send every Wii Remote and Nunchuk button, and the wave (bring-up)
 inline constexpr bool kKpadReadError = true;
 inline constexpr uint8_t kKpadPointerValid = 2;            // dpd_valid_fg: both sensor bar points seen (test value, see docs/darkside-port.md)
