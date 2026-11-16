@@ -529,6 +529,57 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                     ppc::wr32(c, uc::title::kDcPartnerHealth + slot * 4, most);
             }
         }
+        // UC_DC_WEAK=1 (test aid, off by default): the health of every enemy is at most kDcWeakHealthBits (common/title.h), so the next
+        // hit takes it to 0. An enemy is an object of the object table whose class comes from the enemy base class and is not a partner
+        // class. The game still runs the phases of a boss: it sets the health again at each phase, and the next retrace takes it down.
+        static const bool weak = [] { const char* v = std::getenv("UC_DC_WEAK"); return v && v[0] == '1'; }();
+        if (weak) {
+            ppc::Ctx& c = sched.irq_ctx();
+            static bool said = false;
+            const auto mapped = [](uint32_t a) { return (a & 3) == 0 && ((a >= 0x80004000 && a < 0x81800000) || (a >= 0x90000000 && a < 0x93400000)); };
+            for (uint32_t index = 0; index < 300; ++index) {
+                const uint32_t entry = uc::title::kDcObjectTable + index * 8, object = ppc::rd32(c, entry + 4);
+                if (!ppc::rd32(c, entry) || !mapped(object)) continue;
+                const uint32_t vtable = ppc::rd32(c, object + 0x1C);
+                if (!mapped(vtable) || (vtable >= uc::title::kDcPartnerVtables[0] && vtable <= uc::title::kDcPartnerVtables[1])) continue;
+                if (ppc::rd32(c, vtable + uc::title::kDcEnemyVirtual) != uc::title::kDcEnemyFunction) continue;
+                const uint32_t most_at = ppc::rd32(c, object + uc::title::kDcEnemyHealthMax), at = ppc::rd32(c, object + uc::title::kDcEnemyHealth);
+                if (!mapped(most_at) || !mapped(at)) continue;
+                const uint32_t most = ppc::rd32(c, most_at), health = ppc::rd32(c, at);
+                if (most < 0x3F800000 || most > 0x49742400) continue;   // the largest health is a float from 1 to 1000000
+                if (health > uc::title::kDcWeakHealthBits && health <= most) {   // positive floats compare as their bits
+                    ppc::wr32(c, at, uc::title::kDcWeakHealthBits);
+                    if (!said) { said = true; std::fprintf(stderr, "[dc-weak] UC_DC_WEAK=1: the health of the enemies stays small (enemy object %08X)\n", object); }
+                }
+            }
+        }
+        // UC_DC_ROCKET=1 (test aid, off by default): while a chapter runs, the first player has the rocket launcher with rockets in the
+        // weapon slot kDcRocketSlot (Left on the +Control Pad). The weapon that was in that slot has no slot then. The last boss of
+        // "Memories of a Lost City" dies only from a rocket (docs/darkside-port.md, "The rest of the game").
+        static const bool rocket = [] { const char* v = std::getenv("UC_DC_ROCKET"); return v && v[0] == '1'; }();
+        if (rocket) {
+            ppc::Ctx& c = sched.irq_ctx();
+            const uint32_t handle = uc::title::kDcPlayerHandles, id = ppc::rd32(c, handle), index = ppc::rd32(c, handle + 4);
+            if (id && index < 300 && ppc::rd32(c, uc::title::kDcObjectTable + index * 8) == id) {   // the first player exists: a chapter runs
+                const uint32_t inventory = uc::title::kDcInventory, kind = uc::title::kDcItemRocketLauncher;
+                const uint32_t count_at = inventory + uc::title::kDcInventoryCount + kind * 4, slot_at = inventory + uc::title::kDcInventorySlot;
+                const uint32_t count = ppc::rd32(c, count_at);
+                if (count < uc::title::kDcRocketCount) {
+                    if (!count) {   // a new weapon, as 800CDB84 makes it
+                        static bool said = false;
+                        for (uint32_t player = 0; player < 2; ++player) { ppc::wr32(c, inventory + kind * 8 + player * 4, 0); ppc::wr32(c, inventory + uc::title::kDcInventoryLoaded + kind * 8 + player * 4, 0xFFFFFFFF); }
+                        if (!said) { said = true; std::fprintf(stderr, "[dc-rocket] UC_DC_ROCKET=1: the first player has the rocket launcher in weapon slot %u\n", uc::title::kDcRocketSlot); }
+                    }
+                    ppc::wr32(c, count_at, uc::title::kDcRocketCount);
+                }
+                if (ppc::rd8(c, slot_at + kind * 2) != uc::title::kDcRocketSlot) {
+                    for (uint32_t other = 0; other < uc::title::kDcItemKinds; ++other)
+                        if (ppc::rd8(c, slot_at + other * 2) == uc::title::kDcRocketSlot) ppc::wr8(c, slot_at + other * 2, 0xFF);
+                    ppc::wr8(c, slot_at + kind * 2, uint8_t(uc::title::kDcRocketSlot));
+                    ppc::wr8(c, inventory + uc::title::kDcInventoryHerb + uc::title::kDcRocketSlot, 0);   // no herb in that slot
+                }
+            }
+        }
         // UC_DC_FREEZE_FILE=<file> (test aid): while the switch file is on (uc::switch_file_on), the eight time scales of the game's clock
         // (common/title.h kDcClock) are 0. The game then steps no time: the camera and the models stand still, and the game still draws
         // each frame. Two settings of the renderer can be compared on the same picture. The files are looked at each 30 retraces.

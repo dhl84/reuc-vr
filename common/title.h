@@ -132,6 +132,27 @@ inline constexpr uint32_t kDcFullHealthBits = 0x42480000;   // 50.0f
 // four floats of health at +0xF8 and their maxima at +0xE8 (the setter 800FC664 holds a value below its maximum, the getter 800B1D88
 // gives it to the HUD at 800B17C0). The test aid writes each maximum to its value.
 inline constexpr uint32_t kDcPartnerHealth = 0x80735500 + 0xF8, kDcPartnerHealthMax = 0x80735500 + 0xE8;
+// An enemy is an object of the object table whose class comes from the enemy base class. The word at +0x1C of an object is its
+// vtable. The 95 classes of that base all have its function 8005D408 at +0x10 of the vtable. Two of them are the partner of the
+// player (vtables 806D85F0 and 806D8A00, code from 800F4A94 on, with the partner manager 80049CC8), and 806D87E0 lies between them.
+// The first word of an object is not its kind: an enemy had 6, 7 and 8 there in different rooms. The word at +0x44C of an enemy
+// points to its state block, whose first float is the health. The word at +0x444 points to its parameter block, whose first float
+// is the largest health. The damage function of the base class (8005D47C) takes the damage away at 8005D740, and the virtual
+// function +0x100 (8005DB60) says if the health is above 0. The boss bar of the HUD gets the two floats (800EA1BC, for example from
+// 801D339C). The test aid UC_DC_WEAK=1 (game/uc_main.cpp) holds the health of each enemy at 1 or below.
+inline constexpr uint32_t kDcEnemyVirtual = 0x10, kDcEnemyFunction = 0x8005D408, kDcEnemyHealthMax = 0x444, kDcEnemyHealth = 0x44C;
+inline constexpr uint32_t kDcPartnerVtables[2] = {0x806D85F0, 0x806D8A00};
+inline constexpr uint32_t kDcWeakHealthBits = 0x3F800000;   // 1.0f
+// The inventory is at +0xDC of the item manager, the static object at 80733694 (its getter is 80046F74, 800BFDB8 adds the 0xDC). An
+// item kind is an index into the item table at 806D7038 (16 bytes each, 800BFDF0): 6 is the handgun and 11 the rocket launcher. The
+// word at +0x120 + 4 x kind is the count. For a weapon it is the rounds plus 1, and 0 says that the players do not have the weapon
+// (800CDDE0, 800CDF14). The byte at +0x168 + 2 x kind + player is the weapon slot of that kind, or -1 (800CE1BC): slot 0 is Up on
+// the +Control Pad, 1 Right, 2 Down and 3 Left. The word at +0x90 + 8 x kind + 4 x player is -1 for a weapon that was never in the
+// hand (800CDB84). The byte at +0x18C + 4 x player + slot is 1 for a slot that holds the herb (800CE33C). A weapon that a player
+// picks up gets the first free slot (800CDF98). With four full slots it gets none. The test aid UC_DC_ROCKET=1 (game/uc_main.cpp)
+// gives the first player the rocket launcher in slot kDcRocketSlot.
+inline constexpr uint32_t kDcInventory = 0x80733694 + 0xDC, kDcInventoryCount = 0x120, kDcInventorySlot = 0x168, kDcInventoryLoaded = 0x90, kDcInventoryHerb = 0x18C;
+inline constexpr uint32_t kDcItemKinds = 18, kDcItemRocketLauncher = 11, kDcRocketSlot = 3, kDcRocketCount = 4;
 // The post-processing effects of the game are objects of one base class (docs/darkside-port.md, "The post-processing chain"). The byte
 // at +2 of an effect is its switch: the draw function of the base class (802D8D44) returns at once when it is 0, and the virtual
 // functions 802D8E60 and 802D8E78 write 1 and 0. The word at +4 is the vtable. The manager of the effects is the static object at
