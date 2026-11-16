@@ -282,6 +282,118 @@ The port makes the square where the draw packets are built (`expand_points` in `
 
 Checked on 16 November 2026: the sixth chapter of "Memories of a Lost City" ran for 22000 retraces from its start without an error. The run went through the place of the first point draw. The log line of the first point draw gives size 6 (one pixel), texture offset 5 and texture coordinate 0. Not checked: a frame with the squares. The eight frames after the first point draw had no draw from that call site, so the particles live for a short time.
 
+## The post-processing chain
+
+How the game finishes its picture, and what the port does with it (16 November 2026). The facts come from packet dumps with `UC_PACKET_DUMP_TEV=1`, from pass captures, and from the code of the game. A packet is the draws between two EFB copies. Two chapters were dumped in the stereo preview. One is the first chapter of Operation Javier. The other is the fourth chapter of "Memories of a Lost City" (script `s10c4`).
+
+### The effect objects
+
+- Each effect is an object of one base class. The byte at `+2` is its switch. The word at `+4` is its vtable. When the switch is 0, the draw function of the base class (802D8D44) returns. If not, it calls the draw function of the effect (vtable `+0x18`). The virtual functions 802D8E60 and 802D8E78 write 1 and 0 to the switch.
+- The manager of the effects is the static object at 8075B010. Its getter is 80323304. It holds two sets of effects, at `+2824` and at `+4336`. The function 803254A8 builds a set of nine effects. The glow is at `+220` of the set. Its vtable is 806EE568 and its draw function is 802A5E30. This was read from memory in a run.
+- The other draw functions are named by the order of their code, not by a look at memory: the soft focus 802A6E78, the colour filter 802DCD08, the exposure 8036AFC4 with its measure 8036ABD0, and a colour gradient 8036B6C4. What the effects with the draw functions 802A0040, 802D1064 and 80310AE4 draw was not looked at.
+- Four helpers draw the quads. 802A0978 draws a quad with a texture (call site 802A0B04). 802A0C40 does the same with a moved texture (802A0DBC). 802A0EF8 draws a quad of one colour (802A100C). 802A1E40 draws a quad with a texture and puts a part of the picture back (802A1F8C).
+- Every effect works in the top left corner of the frame buffer, on top of the finished scene. It draws a small picture there, copies the corner to a texture, and draws the next step with that texture. Before an effect uses the corner, it copies the corner of the scene to a texture. After its last step it draws that texture back.
+- The game copies most of its temporary pictures to one address (904163E0). A draw takes the newest copy of an address at the time of the draw.
+
+### The packets of a frame
+
+The viewport of each quad is 640x342 pixels at the top left. The sizes are those of the game. "Corner" is the top left part of the frame buffer of that size.
+
+| Packet | Draws | Copy | What it is |
+|---|---|---|---|
+| Shadow 1 | the casters | 512x480 to a 512x512 `GX_TF_Z16` texture | See "Shadows". No draw of the two chapters samples this copy. |
+| Shadow 2 | none | 512x480 to 256x256 | |
+| Shadow 3 | seven quads | 512x480 to 512x512, with a clear | The shadow map. |
+| Scene 1 | the solid part of the scene (150 to 600 draws) | 640x342 to 320x171 | The copy is for effects that bend the picture. Nothing samples it in the dumped frames. |
+| Scene 2 | the see-through part (15 to 70 draws) | 640x342 to 320x171, the same address | In the first chapter ten effect sprites of the next packet sample it (call site 8049CF24). In `s10c4` nothing samples it in most frames. |
+| Effects | particles (call sites 8049CD48, 8049DEC0, 8049E780) and sprites that bend the picture (8049CF24, 804A0A20) | 640x342 to 320x171, the same address | Only in some frames, a fight for example. Nothing samples the copy. In the other frames these draws are in the next packet. |
+| Gradient | one quad over the picture with four vertex colours and alpha 20, added (8036BDF0) | corner 160x85 to 160x85 | First chapter only. The copy is the corner of the picture, kept for "Exposure 3". |
+| Glow 1 | none | corner 320x171 to 320x171 | Glow only (`s10c4`): the corner of the scene, kept for "Glow 11". |
+| Glow 2 | none | 640x342 to 320x171 | The scene at half size. |
+| Glow 3 | a black quad, then the half-size scene through a TEV compare with the level 220 of 255: only bright pixels pass | corner 320x171 to 320x171 | The bright pass. |
+| Glow 4 | the bright pass at quarter size | corner 160x85 to 80x42 | |
+| Glow 5 to 7 | one quad each: the last copy, moved by 0.016 of its width or height, added with alpha 0.5 | corner 160x85 to 80x42 | Each quad spreads the glow to one side. |
+| Glow 8 | the fourth such quad (up), then the result of the last frame added with alpha 0.15 | corner 160x85 to 160x85 | The afterglow. The next frame samples this copy. |
+| Glow 9 | none | corner 160x85 to 80x42 | |
+| Glow 10 | that copy over 320x171 | corner 320x171 to 160x85 | Smooths the glow. |
+| Glow 11 | the corner of "Glow 1" back, then the glow added to the whole picture (one plus one) | corner 160x85 to 160x85 | The copy is the corner of the picture, kept for "Exposure 3". |
+| Exposure 1 | none | the middle 320x171 (from 160,85) to 320x171 | |
+| Exposure 2 | that copy into 32x16 pixels | corner 32x16 to a 32x16 `GX_TF_I8` texture | The game reads this texture from memory (see "State"). |
+| Exposure 3 | the corner back | 640x342 to 640x342 | The whole picture. |
+| Exposure 4 | the whole picture again with the gain: times a constant (gain below 1) or added to itself with a constant alpha (gain above 1) | corner 160x85 to 160x85 | The copy is the corner for the soft focus. |
+| Soft focus 1 | none | 640x342 to 320x171 | |
+| Soft focus 2 | that copy at quarter size | corner 160x85 to 80x42 | |
+| Soft focus 3 | eight quads of that copy, moved by 0.002 to 0.016, each mixed in with alpha 0.5 | corner 160x85 to 80x42 | The blur. |
+| Soft focus 4 | the corner back, then the blur mixed over the whole picture with alpha 0.3 | 640x342 to 640x342 | |
+| Last | the colour filter: the whole picture through five or six TEV stages (call site 802A0B04). Then the HUD and the reticle. | none | The present follows. |
+
+- The first chapter has no glow. Its frame has 17 packets and 14 copies, or 18 and 15 in a fight. A frame of `s10c4` has 27 or 28 packets and 24 or 25 copies.
+- The glow shows on bright things: a lit EXIT sign, lit walls. In many scenes of `s10c4` it adds nothing (see "Checked").
+
+### What a packet costs on the headset
+
+The log of a run on the headset on 16 November 2026 has the GPU time of each kind of packet. The run was the first chapter with render scale 2.25. The frame buffer had 1514x2160 pixels for each eye.
+
+- A packet with one quad in the 160x85 corner and a copy to 80x42 took 0.11 ms. With eight quads it took 0.18 ms.
+- The copy of the picture at half size, with no draw, took 0.19 to 0.21 ms. The copy of the middle of the picture for the exposure took 0.36 ms.
+- "Exposure 3" took 0.33 to 0.35 ms. "Exposure 4" took 0.43 to 0.45 ms. "Soft focus 4" took 0.66 to 0.75 ms. Each of them draws or copies the whole picture.
+- The second scene packet took 1.2 to 1.4 ms for about 50 draws. Most of that is the cost of one more pass on the whole frame buffer.
+- The chain of the first chapter took about 2.8 ms a frame. The glow of `s10c4` is ten more packets. Its cost was not measured as a part. `s10c4` ran at about 45 frames a second, the first chapter at about 70.
+
+### What the port does
+
+- **Copies that no draw can sample.** Sometimes the game copies to the same address two times. If no draw between the two copies sampled the first one, the first copy is dead. The builder of the packets finds such copies (`runtime/hle/gx.cpp`, `seal_or_hold`). The constant is `kDropDeadCopies` in `common/title.h`. `UC_KEEP_DEAD_COPIES=1` makes every copy.
+- A dead copy gets the mark `dead` (`gx::TextureCopy`), and the renderer copies no pixels for it. The packet keeps its draws and stays a packet with a copy. A packet without draws loses its dead copy and goes to the renderer empty, because the game thread counted it.
+- `UC_JOIN_DEAD_COPIES=1` also moves draws. When the next packet copies the same part of the frame buffer, the draws of the packet with the dead copy go to that packet. The two scene packets then become one pass. This is off: see "Checked".
+- **The depth copy of the shadows.** The texture of a `GX_TF_Z16` copy gives the farthest depth for each texel (see "Shadows"). The renderer copies no pixels for it.
+- **The chain in a proxy.** A packet of the chain has a copy inside the top left 320x180 pixels. All its draws are flat and inside that corner. The renderer draws such a packet in the bloom proxy and makes the copy from there. The proxy is a pair of images for the corner only: 740x720 pixels for each eye in the preview. It has the pixel density of the frame buffer, so each step of the chain has the picture that it had before. The large frame buffer of the two eyes is not the target of these passes. The constant is `kCornerChainProxy`. `UC_NO_BLOOM_PROXY=1` turns the proxy off.
+- When a packet reads what the chain did not draw, the renderer first copies the corner of the frame buffer into the proxy. An opaque first quad of a packet makes its part of the corner. All the chains of the two chapters start with such a quad, so the corner is never copied in.
+- The game puts the corner of the picture back with an opaque quad of its own (call site 802A1F8C or 802A0B04). Sometimes the first draw of the next packet is such a quad over all that the chain drew. Then the proxy is not copied back.
+- `UC_CHAIN_SCALE=1` to `4` gives the proxy that number of points for each guest pixel, and the copies of the chain that size. This is for tests. With 1 or 2 the steps of the chain are softer, and small bright things lose their glow.
+- **The glow switch.** With the bloom switch of the port off, the game draws no glow. The switch is `graphics.bloom` in `config.json`. On the headset it is `glow` in `vr.cfg`, or Glow in the settings panel. The port then holds the switch byte of the two glow effects at 0 (`kDcGlowEffects`). `UC_DC_GLOW=0` or `1` decides instead of the switch. The glow is on by default.
+- The empty draw function 8029FFE0 in the vtable of the glow effect is no way to turn the glow off. The base class then still prepares the draw, and the effects after the glow draw at twice their size.
+
+### Test aids
+
+- `UC_CHAIN_AB=<file>`: while the file exists, the port makes every copy and draws the chain in the frame buffer, as before. `<file>.off` ends that. Five more rounds use `<file>.2` with `<file>.2.off`, and so on. The step `touch` of `scripts/drive.py` makes the files. On the headset, `adb shell touch` does it.
+- `UC_DC_GLOW_FILE=<file>`: the glow is off while the file exists, with the same rounds.
+- `UC_DC_FREEZE_FILE=<file>`: while the file exists, the eight time scales of the game's clock are 0. The camera and the models stand still, and the game still draws each frame. Two frames of the same scene, 30 retraces apart, are then equal pixel for pixel in most scenes. So one run can compare two settings on the same picture.
+- `UC_GPU_PACKETS=1` prints three more lines. `[gpu-ops]` gives the passes and the copies of a frame. `[chain-proxy]` gives the packets in the proxy. `[dead-copies]` gives the copies that were not made.
+- `UC_CAPTURE_PASS_MAX=40` lets the pass capture save 40 passes of a frame. The packet dump prints the viewport and the scissor of each draw, and the guest address of each copy.
+
+### Checked
+
+On 16 November 2026, on the PC, in the stereo preview (a frame buffer of 1479x1920 pixels for each eye).
+
+The method. `UC_DC_FREEZE_FILE` stops the game time in a scene. `UC_CHAIN_AB` then shows the same scene the old way and the new way in one run. The frames are compared pixel for pixel. When two frames of the same setting are equal, the scene is static.
+
+- `s10c4`, three static scenes, the default settings against the old way. The largest difference of a pixel was 5 of 255 levels. 0.003 % of the pixels at most differed by more than 2 levels.
+- First chapter, two static scenes (the walk and a fight). The largest difference was 3 levels. 0.003 % of the pixels at most differed by more than 2 levels. In a third scene some pixels still moved. There the old way differed from the new way less than two frames of the new way differed from each other.
+- Runs that also joined packets (as `UC_JOIN_DEAD_COPIES=1` does now) had the same result in five of six scenes. In one fight scene of the first chapter the marks on a wall were brighter: 0.38 % of the pixels differed by more than 16 levels. The cause is not found. So the port does not join packets by default.
+- A run that only dropped dead copies (`UC_NO_BLOOM_PROXY=1`) showed no difference above the noise of its two scenes.
+- The proxy with fewer points changes the picture. With `UC_CHAIN_SCALE=1` the mean difference to the old way was 1.7 to 2.0 levels in two scenes. A lit EXIT sign lost its glow: its pixels differed by up to 138 levels. With `UC_CHAIN_SCALE=2` the mean difference was 0.6 to 1.3 levels and the largest 33 to 190. The bright pass of the glow then reads the half-size scene with too few samples.
+- The glow switch, six scenes of `s10c4`. In three scenes the frame with the glow off was equal to the frame with the glow on. In the three others 0.06 to 1.2 % of the pixels differed by more than 2 levels: a soft brightening of lit walls, 29 levels at most over an area, and more on a few pixels. The game wrote its 1 to the switch byte again once in two of the six scenes, so a frame with glow can still come.
+- The log line `[chain-proxy]` of each run: the corner was copied in 0 times and copied out 0 times. The game's own quad put it back three times a frame in `s10c4` and two times in the first chapter.
+
+The work of the GPU for a frame, from the line `[gpu-ops]` and from packet dumps:
+
+| | Passes on the frame buffer | Passes on the proxy | Copies |
+|---|---|---|---|
+| `s10c4`, before | 19 or 20 | 0 | 24 or 25 |
+| `s10c4`, now | 9 or 10 | 10 | 21 |
+| `s10c4`, glow off (from the packet list, not counted in a run) | 8 or 9 | 3 | 11 or 12 |
+| `s10c4`, with `UC_JOIN_DEAD_COPIES=1` | 8 | 10 | 21 |
+| First chapter, before | 12 or 13 | 0 | 14 or 15 |
+| First chapter, now | 9 or 10 | 3 | 12 |
+
+Not checked, and open:
+
+- The GPU time on the headset. The proxy keeps the same number of passes and copies. It only moves ten or three passes from the large frame buffer to a small target. Only the headset can tell what that saves.
+- One run of `s10c4` stopped: the renderer took no packet any more, 45 s after the last switch of a test file. The cause is not found. The log line `[render-refused]` was added after it and names the reason the next time.
+- The corner copies of the game stay. Each effect copies the corner of the picture before it works and draws it back after. With the proxy the corner of the frame buffer does not change, so these copies and quads do nothing. A rule that drops them needs to know that no later draw samples the copy.
+- A packet with a small copy keeps the camera of the game for its perspective draws. It does not get the camera of each eye (`small_copy` in `stereo_facts`, from the code). In most frames the effect sprites of the game are in such a packet. The packet "Effects" of the first chapter ends with the 160x85 copy of the exposure. In a frame with a third scene copy the sprites are in their own packet and get the cameras of the eyes. This was so before this work. It is why the port does not move draws from one kind of packet to another.
+- The shadow map packets are drawn at the size of the game. Their quads still get the coarse shading rate that fits the scale of the frame buffer (from the code, not checked with a frame).
+
 ## Sound
 
 No person listened to the game yet. On 15 November 2026 the sound was checked with numbers.
@@ -392,7 +504,7 @@ How the causes were found:
 
 The app now starts with the render scale 2.0. At that scale the test ran at the full 72 fps in 64 % of the seconds, and the GPU took 10.6 ms a frame at the median and 16.9 ms at the 95th percentile.
 
-Not done on the headset: play by a person with the controllers, the sound, space warp, and the rest of the GPU time in the heaviest scenes.
+Not done on the headset: play by a person with the controllers, the sound, space warp, and the rest of the GPU time in the heaviest scenes. The section "The post-processing chain" has three changes of 16 November 2026 for that GPU time. Their effect on the headset is not measured yet.
 
 ## State
 
