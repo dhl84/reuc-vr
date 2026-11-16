@@ -269,7 +269,7 @@ private:
     void release_mesh(GpuMesh& mesh);
     void destroy_buffer(Buffer& buffer);
     Texture make_texture(const gx::TexturePixels* pixels, VkExtent2D physical_extent = {});
-    Texture make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, bool native=false);   // native: one pixel for each texel (a copy of a native-scale packet)
+    Texture make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, uint32_t points=0);   // points: this number of pixels for each texel (a copy of a native-scale packet, or of the chain in the proxy); 0: the scale of the EFB
     void record_texture_copy(VkCommandBuffer command, VkImage source, VkExtent2D extent, const std::array<uint32_t,4>& region, Texture& target, VkImageLayout before, uint32_t lines=0);
     void record_copy_mips(VkCommandBuffer command, Texture& target);   // levels 1.. of an EFB copy from level 0 (SHADER_READ before and after)
     void recycle_copy_texture(Texture& texture);
@@ -459,10 +459,12 @@ private:
     static constexpr uint32_t kBloomCorner[2]={320,180};
     struct BloomProxy {
         VkImage color=VK_NULL_HANDLE, depth=VK_NULL_HANDLE; VkDeviceMemory color_memory=VK_NULL_HANDLE, depth_memory=VK_NULL_HANDLE;
-        VkImageView color_view=VK_NULL_HANDLE, depth_view=VK_NULL_HANDLE; VkExtent2D extent{};
+        VkImageView color_view=VK_NULL_HANDLE, depth_view=VK_NULL_HANDLE; VkExtent2D extent{};   // extent: the size of the guest's 640x480 pixels in the proxy
+        VkExtent2D image_extent{};              // the size of the images: extent, or only the corner (SBDE08, ensure_bloom_proxy)
         bool initialized=false, valid=false;   // valid: the corner's content is in the proxy, not in the EFB
         std::array<float,4> covered{};          // what the chain's draws covered since it started (guest pixels): put back into the EFB
-        uint64_t packets=0, put_backs=0;
+        std::array<float,4> defined{};          // SBDE08 (kCornerChainProxy): the part that holds a picture, the corner of the EFB or what an opaque quad of the chain drew
+        uint64_t packets=0, put_backs=0, entries=0, restored=0;   // entries: the corner copied in; restored: the game's own quad put the corner back, no copy out
     };
     BloomProxy bloom_proxy_;
     // The particle layer (UC_PARTICLE_LAYER=1): a packet's run of translucent world sprites at half the EFB's size a side.

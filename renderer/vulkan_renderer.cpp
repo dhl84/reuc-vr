@@ -101,6 +101,79 @@ bool native_copy(const gx::TextureCopy& copy) {
     return uc::title::kNativeCopyWidth && copy.source[0]==0 && copy.source[1]==0 && copy.source[2]==uc::title::kNativeCopyWidth && copy.source[3]==uc::title::kNativeCopyHeight;
 }
 VkExtent2D native_extent(VkExtent2D target) { return {std::min(640u,target.width),std::min(480u,target.height)}; }
+// The points for each guest pixel of the proxy that holds the post-processing chain of SBDE08 (common/title.h kCornerChainProxy).
+// 0: as many as the frame buffer has, so the chain gets the picture that it had in the frame buffer. UC_CHAIN_SCALE=1 to 4 sets a
+// number (tests): fewer pixels to draw, and softer steps of the chain. 1 is the size of the game: small bright things then glow less.
+uint32_t chain_points() {
+    static const uint32_t points=[] {
+        const char* text=std::getenv("UC_CHAIN_SCALE");
+        const long chosen=text && uc::title::kCornerChainProxy ? std::atol(text) : 0;
+        return chosen>=1 && chosen<=4 ? uint32_t(chosen) : 0u;
+    }();
+    return points;
+}
+// UC_GPU_PACKETS: what the render thread asked of the GPU, for each presented frame: passes on the frame buffer, passes on other targets
+// (the proxy, the layers), and blits (EFB copies, the corner of the proxy). The line [gpu-ops] comes each 120 presented frames.
+struct GpuOps { uint64_t frames=0, efb_passes=0, other_passes=0, copies=0, corner_blits=0; double copy_pixels=0; };
+GpuOps gpu_ops;
+const bool gpu_ops_on=std::getenv("UC_GPU_PACKETS")!=nullptr;
+// The guest rectangle that a flat draw can reach (x0, y0, x1, y1 in guest pixels, with the origin of efb_viewport): the box of its
+// vertices in its viewport. Nothing for a draw of the world, of the reticle, or with a depth test or a depth write.
+std::optional<std::array<float,4>> flat_draw_rect(const gx::DrawPacket& draw) {
+    if (draw.transforms->projection[3][3]==0 || draw.reticle || draw.late_aim || draw.wake || draw.layer) return std::nullopt;
+    const uint32_t depth=draw.uniforms->pixel[1]&31;
+    if ((depth&16) || ((depth&1) && ((depth>>1)&7)!=7)) return std::nullopt;
+    const auto box=gx::draw_bounds_ndc(draw);
+    if (!box) return std::nullopt;
+    const auto v=draw.state->viewport.value_or(std::array<float,6>{0,0,640,480,0,1});
+    return std::array<float,4>{v[0]-1.f/12+(std::max((*box)[0],-1.f)*.5f+.5f)*v[2],v[1]-1.f/12+(std::max((*box)[1],-1.f)*.5f+.5f)*v[3],
+                               v[0]-1.f/12+(std::min((*box)[2],1.f)*.5f+.5f)*v[2],v[1]-1.f/12+(std::min((*box)[3],1.f)*.5f+.5f)*v[3]};
+}
+bool holds_rect(const std::array<float,4>& outer,const std::array<float,4>& inner) {   // with a fifth of a guest pixel of slack
+    return inner[0]>=outer[0]-.2f && inner[1]>=outer[1]-.2f && inner[2]<=outer[2]+.2f && inner[3]<=outer[3]+.2f;
+}
+// A flat draw that replaces every pixel of its rectangle (flat_draw_rect), whatever was there: one quad with its sides along the axes,
+// no alpha test, the colour written, and no blend, or a blend that takes nothing of the picture. A blend of source alpha and one minus
+// source alpha counts when the alpha is 1 for certain: one TEV stage that gives the alpha of the vertices (a, b and c zero, d the
+// rasterized alpha, no bias, no scale), colour channel 0 from the vertices without lighting, and 255 in each vertex. The game restores
+// the corner of the picture with such quads (SBDE08, call site 802A1F8C).
+bool opaque_quad(const gx::DrawPacket& draw) {
+    const auto& blend=draw.blend;
+    const uint32_t compare=draw.uniforms->pixel[0];
+    if (!blend.color_write || ((compare>>16)&7)!=7 || ((compare>>19)&7)!=7 || draw.primitive!=0x80) return false;
+    const auto vertices=draw.vertex_view();
+    if (vertices.size()!=4 || draw.state->descriptors[0]!=gx::Mode::none) return false;
+    {   // each vertex at a corner of the box, and each corner taken
+        float x[4],y[4]; const auto& t=*draw.transforms; const uint32_t row=t.current;
+        if (row>61) return false;
+        for (int i=0;i<4;++i) {
+            const auto& p=vertices[i].position; float view[3],clip[4];
+            for (int k=0;k<3;++k) { const auto& m=t.position_rows[row+k]; view[k]=m[0]*p[0]+m[1]*p[1]+m[2]*p[2]+m[3]; }
+            for (int k=0;k<4;++k) { const auto& m=t.projection[k]; clip[k]=m[0]*view[0]+m[1]*view[1]+m[2]*view[2]+m[3]; }
+            if (!(clip[3]>0)) return false;
+            x[i]=clip[0]/clip[3]; y[i]=clip[1]/clip[3];
+        }
+        const float x0=std::min({x[0],x[1],x[2],x[3]}),x1=std::max({x[0],x[1],x[2],x[3]}),y0=std::min({y[0],y[1],y[2],y[3]}),y1=std::max({y[0],y[1],y[2],y[3]});
+        uint32_t corners=0;
+        for (int i=0;i<4;++i) {
+            const bool left=std::abs(x[i]-x0)<1e-4f,right=std::abs(x[i]-x1)<1e-4f,top=std::abs(y[i]-y0)<1e-4f,bottom=std::abs(y[i]-y1)<1e-4f;
+            if (!(left || right) || !(top || bottom)) return false;
+            corners|=1u<<((right ? 1 : 0)|(bottom ? 2 : 0));
+        }
+        if (corners!=15 || !(x1>x0) || !(y1>y0)) return false;
+    }
+    if (const auto& s=draw.state->scissor) {   // the scissor must not cut the quad
+        const auto rect=flat_draw_rect(draw);
+        if (!rect || !holds_rect({float((*s)[0]),float((*s)[1]),float((*s)[0]+(*s)[2]),float((*s)[1]+(*s)[3])},*rect)) return false;
+    }
+    if (blend.mode==0 || (blend.mode==1 && blend.source==1 && blend.destination==0)) return true;
+    if (!(blend.mode==1 && blend.source==4 && blend.destination==5) || draw.material.stages!=1) return false;
+    const auto& stage=draw.material.stage[0];
+    if (((stage.alpha>>4)&0xFFF)!=0xFFD || ((stage.alpha>>16)&7) || ((stage.alpha>>20)&3) || ((stage.alpha>>22)&3) || ((stage.order>>7)&7)!=0 ||
+        draw.material.swaps[stage.alpha&3]!=0xE4 || (draw.uniforms->channels[2]&3)!=1 || !draw.uniforms->pixel[3] || draw.uniforms->ind_cmd[0]) return false;
+    for (const auto& vertex:vertices) if (vertex.color[0][3]!=255) return false;
+    return true;
+}
 void vk_check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) throw std::runtime_error(std::string(operation) + " failed: VkResult " + std::to_string(result));
 }
@@ -895,11 +968,11 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
     ++texture_creations_;
     return texture;
 }
-VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, bool native) {
+VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, uint32_t points) {
     if(!source || !source->gpu_only) throw std::invalid_argument("invalid owned GPU copy texture");
     validate_texture_chain(source.get());
     const auto& level=source->levels[0];
-    const VkExtent2D physical=native ? VkExtent2D{std::max(1u,uint32_t(level.width)),std::max(1u,uint32_t(level.height))}
+    const VkExtent2D physical=points ? VkExtent2D{std::max(1u,uint32_t(level.width)*points),std::max(1u,uint32_t(level.height)*points)}
         : VkExtent2D{std::max(1u,uint32_t((uint64_t(level.width)*efb_extent_.width+320)/640)),std::max(1u,uint32_t((uint64_t(level.height)*efb_extent_.height+240)/480))};
     const auto mip_levels=std::min(uint32_t(source->levels.size()),uint32_t(std::bit_width(std::max(physical.width,physical.height))));
     auto found=std::find_if(recycled_copies_.begin(),recycled_copies_.end(),[&](const auto& texture) {
@@ -918,6 +991,12 @@ VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<
 void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source, VkExtent2D extent, const std::array<uint32_t,4>& region, Texture& target, VkImageLayout before, uint32_t lines) {
     const auto [x,y,width,height]=region;
     const bool initialized=before!=VK_IMAGE_LAYOUT_UNDEFINED;
+    if(target.channels==gx::TextureChannels::depth_far) {   // every texel reads as the farthest depth (the view of make_texture gives 1 for each channel): no pixel is copied
+        barrier(command,target.image,before,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,initialized ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_2_NONE,
+            initialized ? VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT : 0,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,target.mip_levels);
+        target.mips_pending=false;
+        return;
+    }
     barrier(command,target.image,before,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,initialized ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_2_NONE,
         initialized ? VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT : 0,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,target.mip_levels);
     VkImageBlit copy{}; copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,layers_};
@@ -927,6 +1006,7 @@ void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source
     // The game named more lines than the buffer has (gx::TextureCopy::lines): the lines that exist keep their place in the texture, and
     // the rows below them repeat the last line.
     const int32_t filled=lines>height ? std::clamp(int32_t(uint64_t(target.extent.height)*height/lines),1,int32_t(target.extent.height)) : int32_t(target.extent.height);
+    if(gpu_ops_on) { ++gpu_ops.copies; gpu_ops.copy_pixels+=double(target.extent.width)*target.extent.height*layers_; }
     if(filled<int32_t(target.extent.height)) {
         VkImageBlit parts[2]{copy,copy};
         parts[0].dstOffsets[1].y=filled;
@@ -2515,12 +2595,19 @@ void VulkanRenderer::flush_layer(VkCommandBuffer command, HudLayer& layer) {
 // The bloom proxy (the headset; UC_NO_BLOOM_PROXY=1: off): a stand-in for the EFB at 2 points a guest pixel (1280x960, a layer per eye) holding the
 // top-left corner (kBloomCorner) while the game's bloom chain draws there.
 void VulkanRenderer::ensure_bloom_proxy() {
-    const VkExtent2D extent{640*2,480*2};
     if (bloom_proxy_.color) return;
-    make_attachment(bloom_proxy_.color,bloom_proxy_.color_memory,bloom_proxy_.color_view,extent,false,VK_FORMAT_UNDEFINED,layers_);
-    make_attachment(bloom_proxy_.depth,bloom_proxy_.depth_memory,bloom_proxy_.depth_view,extent,true,VK_FORMAT_UNDEFINED,layers_);
-    bloom_proxy_.extent=extent; bloom_proxy_.initialized=false; bloom_proxy_.valid=false;
-    std::fprintf(stderr,"[vr] bloom proxy %ux%u a layer\n",extent.width,extent.height);
+    // extent: the size that the guest's 640x480 pixels have in the proxy. image: the size of its images. RBUE08: 2 points a guest pixel,
+    // and images for the whole frame buffer. SBDE08 (common/title.h kCornerChainProxy): the density of the EFB or chain_points(), and
+    // images that hold only the corner. The EFB is remade when its size changes, and the proxy with it (destroy_bloom_proxy).
+    VkExtent2D extent{640*2,480*2}, image=extent;
+    if (uc::title::kCornerChainProxy) {
+        if (const uint32_t points=chain_points()) extent={640*points,480*points}; else extent=efb_extent_;
+        image={(kBloomCorner[0]*extent.width+639)/640,(kBloomCorner[1]*extent.height+479)/480};
+    }
+    make_attachment(bloom_proxy_.color,bloom_proxy_.color_memory,bloom_proxy_.color_view,image,false,VK_FORMAT_UNDEFINED,layers_);
+    make_attachment(bloom_proxy_.depth,bloom_proxy_.depth_memory,bloom_proxy_.depth_view,image,true,VK_FORMAT_UNDEFINED,layers_);
+    bloom_proxy_.extent=extent; bloom_proxy_.image_extent=image; bloom_proxy_.initialized=false; bloom_proxy_.valid=false;
+    std::fprintf(stderr,"[vr] bloom proxy %ux%u a layer (%ux%u for the 640x480 pixels of the game)\n",image.width,image.height,extent.width,extent.height);
 }
 void VulkanRenderer::destroy_bloom_proxy() {
     for (VkImageView view:{bloom_proxy_.color_view,bloom_proxy_.depth_view}) if (view) vkDestroyImageView(device,view,nullptr);
@@ -2549,13 +2636,14 @@ void VulkanRenderer::bloom_proxy_corner(VkCommandBuffer command, bool to_efb) {
     blit.dstOffsets[1]={std::max(blit.dstOffsets[0].x+1,edge(area[2],target_extent.width,0)),std::max(blit.dstOffsets[0].y+1,edge(area[3],target_extent.height,1)),1};
     if (to_efb && !(bloom_proxy_.covered[2]>bloom_proxy_.covered[0] && bloom_proxy_.covered[3]>bloom_proxy_.covered[1])) blit.dstOffsets[1]=blit.dstOffsets[0];   // nothing drawn: nothing to put back
     if (blit.dstOffsets[1].x>blit.dstOffsets[0].x) vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
+    if (gpu_ops_on && blit.dstOffsets[1].x>blit.dstOffsets[0].x) ++gpu_ops.corner_blits;
     barrier(command,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,all,any);
     if (!to_efb) bloom_proxy_.initialized=true;
 }
 void VulkanRenderer::put_back_bloom_proxy(VkCommandBuffer command) {
     bloom_proxy_corner(command,true);
     bloom_proxy_.valid=false; ++bloom_proxy_.put_backs;
-    static const bool stats=std::getenv("UC_GPU_PACKETS")!=nullptr;
+    static const bool stats=std::getenv("UC_GPU_PACKETS")!=nullptr && !uc::title::kCornerChainProxy;
     static auto since=std::chrono::steady_clock::now();
     if (stats && std::chrono::steady_clock::now()-since>std::chrono::seconds(2)) {
         std::fprintf(stderr,"[bloom-proxy] 2 s: %llu packets drawn in the proxy, the corner put back %llu times\n",(unsigned long long)bloom_proxy_.packets,(unsigned long long)bloom_proxy_.put_backs);
@@ -2963,7 +3051,13 @@ bool VulkanRenderer::copy_ready(const std::shared_ptr<const gx::TexturePixels>& 
 bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t submission_serial) {
     owner();
     if (!device) throw std::logic_error("renderer not initialized");
-    if (!requested_.width || !requested_.height) return false;
+    // UC_GPU_PACKETS: why a packet is not taken, each 2000 times in a row (a packet that is never taken stops the game).
+    static uint64_t refusals=0;
+    const auto refused=[&](const char* why) {
+        if (gpu_ops_on && ++refusals%2000==0) std::fprintf(stderr,"[render-refused] %llu times in a row: %s (packet %llu, draws %zu, present %d)\n",(unsigned long long)refusals,why,(unsigned long long)packet.serial,packet.draws.size(),int(packet.present));
+        return false;
+    };
+    if (!requested_.width || !requested_.height) return refused("the window has no size");
     const auto serial=submission_serial ? submission_serial : packet.serial;
     if (!serial || serial <= last_serial_) throw std::invalid_argument("frame serial must increase");
     if(packet.clear_depth>0xFFFFFF) throw std::invalid_argument("invalid native EFB clear depth");
@@ -3012,23 +3106,24 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     }
     const bool has_output = swapchain_ != VK_NULL_HANDLE || (xr_ && efb_);   // the headset has no window swapchain: its output is the XR swapchain
     if (const auto now = std::chrono::steady_clock::now(); uc::rebuild_due(resized_, has_output, now, last_rebuild_)) {
-        last_rebuild_ = now; rebuild();        if (resized_) return false;
+        last_rebuild_ = now; rebuild();        if (resized_) return refused("the swapchain is not rebuilt yet");
     }
-    if (!swapchain_ && !(xr_ && efb_)) return false;   // while a resize storm postpones the rebuild the old swapchain keeps presenting
+    if (!swapchain_ && !(xr_ && efb_)) return refused("no swapchain");   // while a resize storm postpones the rebuild the old swapchain keeps presenting
     if (fovea_supported_) {   // the headset's foveation map: the region the eyes see is the last presented one
         if (packet.present) fovea_shown_={float(display_source[0]),float(display_source[1]),float(display_source[2]),float(display_source[3])};
         update_fovea();
     }
     const bool overlay_frame=packet.overlay_only;
     const bool layer_on=reticle_layer_active();   // the reticle quads leave the game's frame and are drawn over a held copy of it (reticle_layer_ready)
-    if (overlay_frame && !reticle_layer_ready()) return false;
+    if (overlay_frame && !reticle_layer_ready()) return refused("the reticle layer is not ready");
     if (layer_on && !overlay_frame) ensure_held_frame();
     const bool hold=layer_on && !overlay_frame && packet.present && display && !packet.black_output && held_.image;   // this frame is kept, not presented: the overlay frame after it is
     reap_retired(false);
     Slot& slot = slots_[next_slot_];
     VkResult fence_status = vkGetFenceStatus(device, slot.fence);
-    if (fence_status == VK_NOT_READY) return false;
+    if (fence_status == VK_NOT_READY) return refused("the GPU works on the frame slot");
     vk_check(fence_status, "frame slot fence");
+    refusals=0;
     const size_t reticle_before=frame_reticle_.size();
     if (layer_on && !overlay_frame) for (const auto& draw:packet.draws) if (draw.layer) frame_reticle_.push_back(draw);   // after every early return: a packet that is retried must not be counted twice
     collect();   // after the check: a fence that finishes between an earlier collect() and the check would be reused unreported and its packet would never complete
@@ -3044,6 +3139,37 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         else ++it;
     }
     std::erase_if(latest_copies_,[](const auto& entry){return entry.second.expired();});
+    // SBDE08 (common/title.h kCornerChainProxy): is this a packet of the game's post-processing chain that works in the top left corner of
+    // the frame buffer? Such a packet is drawn in the proxy (see "the bloom proxy" below). The answer is needed here, because the copy
+    // texture of such a packet gets the size that the game gave it. A packet of the chain has a copy inside the corner and only flat
+    // draws inside the corner. What the packet reads of the corner (the source of its copy, and the pixels under its draws) must be a
+    // picture in the proxy: the part that an opaque first quad of this or an earlier packet of the chain drew (defined), or the corner of
+    // the frame buffer after it was copied in (entry). again: the proxy holds a part of the corner, and the packet reads outside it. The
+    // proxy then goes back into the frame buffer first.
+    struct CornerChain { bool chain=false, entry=false, again=false; std::array<float,4> box{1e9f,1e9f,-1e9f,-1e9f}, defined{}; };
+    const CornerChain corner=[&] {
+        CornerChain result;
+        static const bool on=std::getenv("UC_NO_BLOOM_PROXY")==nullptr;
+        if (!uc::title::kCornerChainProxy || !on || chain_as_before() || layers_<2 || !packet.texture_copy || packet.clear_after_copy || packet.present || overlay_frame || upscaler_ || !efb_initialized_ ||
+            (chain_points() && std::min(efb_extent_.width/640.f,efb_extent_.height/480.f)<=float(chain_points()))) return result;
+        const auto& source=packet.texture_copy->source;
+        if (source[0]+source[2]>kBloomCorner[0] || source[1]+source[3]>kBloomCorner[1] || packet.texture_copy->lines) return result;
+        std::array<float,4> reads{float(source[0]),float(source[1]),float(source[0]+source[2]),float(source[1]+source[3])};
+        std::optional<std::array<float,4>> first;
+        for (size_t d=0;d<packet.draws.size();++d) {
+            const auto rect=flat_draw_rect(packet.draws[d]);
+            if (!rect || (*rect)[0]<-.6f || (*rect)[1]<-.6f || (*rect)[2]>kBloomCorner[0]+.6f || (*rect)[3]>kBloomCorner[1]+.6f) return result;
+            if (d==0 && opaque_quad(packet.draws[d])) first=rect;
+            for (int i=0;i<2;++i) { result.box[i]=std::min(result.box[i],(*rect)[i]); result.box[i+2]=std::max(result.box[i+2],(*rect)[i+2]); reads[i]=std::min(reads[i],(*rect)[i]); reads[i+2]=std::max(reads[i+2],(*rect)[i+2]); }
+        }
+        const std::array<float,4> whole{0,0,float(kBloomCorner[0]),float(kBloomCorner[1])};
+        if (bloom_proxy_.valid && holds_rect(bloom_proxy_.defined,reads)) result.defined=bloom_proxy_.defined;
+        else if (first && holds_rect(*first,reads)) result.defined=*first;
+        else if (packet.draws.empty()) return result;   // a copy of what the proxy does not hold: from the frame buffer
+        else { result.defined=whole; result.entry=true; result.again=bloom_proxy_.valid; }
+        result.chain=true;
+        return result;
+    }();
     Texture* copy_target=nullptr;
     if(packet.texture_copy) {
         const auto& request=*packet.texture_copy;
@@ -3051,7 +3177,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         if(!width || !height || x>=640 || width>640-x || y>=480 || height>480-y || !request.target || !request.target->gpu_only) throw std::invalid_argument("invalid native EFB texture copy");
         auto found=copy_textures_.find(request.target.get());
         if(found==copy_textures_.end()) {
-            auto texture=make_copy_texture(request.target,native_copy(request));
+            auto texture=make_copy_texture(request.target,native_copy(request) ? 1u : corner.chain ? chain_points() : 0u);   // a copy of the chain in the corner comes from the proxy, at its density
             try { found=copy_textures_.emplace(request.target.get(),texture).first; } catch(...) { destroy_texture(texture); throw; }
         }
         if(found->second.initialized) throw std::invalid_argument("native EFB copy version cannot be overwritten");
@@ -3569,6 +3695,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             rt_material_cleared_=upscale_before.rt_material_cleared; rt_record_slot_=upscale_before.rt_record_slot; rt_record_count_=upscale_before.rt_record_count;
             tracker_.rollback(upscale_before.tracker);
             frame_reticle_.resize(reticle_before);
+            { static uint64_t waits=0; if (gpu_ops_on && ++waits%2000==0) std::fprintf(stderr,"[render-refused] %llu times: no swapchain image (packet %llu)\n",(unsigned long long)waits,(unsigned long long)packet.serial); }
             return false;
         }
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR) resized_ = true;   // stale swapchain while the window is resized: the frame is rendered but not shown, the guest must not wait for the rebuild
@@ -3710,7 +3837,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (!box) continue;
             const auto v = draw.state->viewport.value_or(std::array<float,6>{0, 0, 640, 480, 0, 1});
             const double w = std::clamp((*box)[2], -1.f, 1.f) - std::clamp((*box)[0], -1.f, 1.f), h = std::clamp((*box)[3], -1.f, 1.f) - std::clamp((*box)[1], -1.f, 1.f);
-            area += std::max(0.0, w) * std::max(0.0, h) / 4 * double(v[2]) * double(v[3]) * (double(efb_extent_.width) / 640) * (double(efb_extent_.height) / 480) * layers_;
+            area += std::max(0.0, w) * std::max(0.0, h) / 4 * double(v[2]) * double(v[3]) * (corner.chain && chain_points() ? double(chain_points()) * chain_points() : (double(efb_extent_.width) / 640) * (double(efb_extent_.height) / 480)) * layers_;   // a packet of the chain in the corner is drawn in the proxy
         }
         megapixels[kind] += area / 1e6;
         // UC_GPU_DRAWS_DUMP=N: the Nth big (scene) packet's largest draws by that estimate, with what decides their cost on a tiler
@@ -3833,7 +3960,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         }
     }
     std::vector<WarpDraw> warp_draws;   // the space warp's motion pass of this packet (record_warp_pass after its EFB passes)
-    struct PassTarget { VkImage color, depth; VkImageView color_view, depth_view, motion_view, gbuffer_view; VkExtent2D extent; bool* initialized; bool clear_depth=false; };   // clear_depth: a scratch depth buffer, cleared by every pass
+    struct PassTarget { VkImage color, depth; VkImageView color_view, depth_view, motion_view, gbuffer_view; VkExtent2D extent; bool* initialized; bool clear_depth=false; VkExtent2D guest{}; };   // clear_depth: a scratch depth buffer, cleared by every pass
     const PassTarget efb_target{efb_,depth_,efb_view_,depth_view_,VK_NULL_HANDLE,VK_NULL_HANDLE,efb_extent_,&efb_initialized_};
     const PassTarget scene_target{scene_color_,scene_depth_,scene_color_view_,scene_depth_view_,scene_motion_view_,scene_gbuffer_view_,scene_extent_,&scene_initialized_};
     const auto depth_stages=VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
@@ -4107,7 +4234,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // contents. A first use (cleared) and the held overlay frame (other viewport mapping) keep the whole target.
     // The size that the guest's 640x480 coordinates map to: the target, or 640x480 pixels for a native-scale packet (native_copy).
     const bool native_packet = native_packet_copy && target.color==efb_ && !scene && !overlay_frame;
-    const VkExtent2D gx_extent = native_packet ? native_extent(target.extent) : target.extent;
+    // guest: a target that holds a part of the frame buffer only (the proxy of SBDE08) names the size of the whole 640x480.
+    const VkExtent2D gx_extent = native_packet ? native_extent(target.extent) : target.guest.width ? target.guest : target.extent;
+    const VkExtent2D clip_extent{std::min(gx_extent.width,target.extent.width),std::min(gx_extent.height,target.extent.height)};   // no scissor leaves the target
     static const bool full_render_area = std::getenv("UC_FULL_RENDER_AREA") != nullptr;   // diagnostics: the whole target, as before
     VkRect2D render_area{{0, 0}, target.extent};
     if (initialized && !overlay_frame && !full_render_area) {
@@ -4144,8 +4273,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             int64_t bx = int64_t(std::ceil(std::max(a.x, a.x + a.width))) + 1, by = int64_t(std::ceil(std::max(a.y, a.y + a.height))) + 1;
             if (draw.state->scissor && !draw.late_aim) {   // late aim may reset the scissor; retain its whole viewport
                 const auto& s = *draw.state->scissor;
-                ax = std::max(ax, int64_t(s[0]) * target.extent.width / 640); ay = std::max(ay, int64_t(s[1]) * target.extent.height / 480);
-                bx = std::min(bx, (int64_t(s[0]) + s[2]) * target.extent.width / 640); by = std::min(by, (int64_t(s[1]) + s[3]) * target.extent.height / 480);
+                // SBDE08: the scale is that of the guest's coordinates (gx_extent), as the scissor of the draw below has it.
+                const VkExtent2D scale = uc::title::kCornerChainProxy ? gx_extent : target.extent;
+                ax = std::max(ax, int64_t(s[0]) * scale.width / 640); ay = std::max(ay, int64_t(s[1]) * scale.height / 480);
+                bx = std::min(bx, (int64_t(s[0]) + s[2]) * scale.width / 640); by = std::min(by, (int64_t(s[1]) + s[3]) * scale.height / 480);
             }
             add(ax, ay, bx, by);
         }
@@ -4219,6 +4350,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             const double pixels = double(render_area.extent.width) * render_area.extent.height * layers_, whole = double(target.extent.width) * target.extent.height * layers_;
             const int color_moves = (color.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD) + 1, depth_moves = (depth.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD) + (depth.storeOp == VK_ATTACHMENT_STORE_OP_STORE);
             moved += pixels * (color_moves + depth_moves); full += whole * (color_moves + 2); ++passes;
+            ++(target.color == efb_ || scene ? gpu_ops.efb_passes : gpu_ops.other_passes);
             if (std::chrono::steady_clock::now() - since > std::chrono::seconds(2)) {
                 std::fprintf(stderr, "[gpu-area] %llu passes: %.1f M attachment pixels moved (whole targets, colour+depth loaded and stored: %.1f M), %.0f%%\n",
                              (unsigned long long)passes, moved / 1e6, full / 1e6, 100 * moved / std::max(1.0, full));
@@ -4278,7 +4410,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         vkCmdClearAttachments(slot.command,2,clears,1,&rectangle);
         scene_clear_.pending=false;
     }
-    VkViewport viewport{0, 0, float(target.extent.width), float(target.extent.height), 0, 1}; VkRect2D scissor{{0, 0}, gx_extent};
+    VkViewport viewport{0, 0, float(target.extent.width), float(target.extent.height), 0, 1}; VkRect2D scissor{{0, 0}, clip_extent};
     vkCmdSetViewport(slot.command, 0, 1, &viewport); vkCmdSetScissor(slot.command, 0, 1, &scissor);
     if (!gpu_draws.empty()) {
         const Buffer* bound_vertices=nullptr; const Buffer* bound_indices=nullptr; VkDeviceSize bound_vertex_offset=0, bound_index_offset=0;
@@ -4333,8 +4465,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const bool post_coarse=post_shading_coarse();
         const auto draw_rate=[&](const gx::DrawPacket& draw,int stereo_kind,bool depth_write) {
             const bool flat=!scene && (stereo_kind<0 || stereo_kind==LG_STEREO_PASS || stereo_kind==LG_STEREO_FILL);
-            const VkExtent2D rate=bloom_shading_rate(draw,target.extent,flat,!scene && (stereo_kind<0 || stereo_kind==LG_STEREO_WORLD),depth_write);
-            return post_coarse && flat ? coarser(rate,post_shading_rate(draw,target.extent)) : rate;
+            const VkExtent2D density=target.guest.width ? target.guest : target.extent;   // the proxy of the corner (SBDE08): the size of the whole 640x480 at its density
+            const VkExtent2D rate=bloom_shading_rate(draw,density,flat,!scene && (stereo_kind<0 || stereo_kind==LG_STEREO_WORLD),depth_write);
+            return post_coarse && flat ? coarser(rate,post_shading_rate(draw,density)) : rate;
         };
         // uber: a small-draw ubershader run (uber_merge.h), draws: how many draws it holds; merge: the ubershader pipeline every draw of the run
         // may take (null: not all may); pixels: the guest pixels its draws' screen boxes cover (the ubershader's fragments, an upper bound).
@@ -4416,10 +4549,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             auto draw_scissor=scissor;
             if(draw.state->scissor && !overlay_frame) {
                 const auto& s=*draw.state->scissor;
-                const auto x=std::clamp<int64_t>(int64_t(s[0])*gx_extent.width/640,0,gx_extent.width);
-                const auto y=std::clamp<int64_t>(int64_t(s[1])*gx_extent.height/480,0,gx_extent.height);
-                const auto right=std::clamp<int64_t>((int64_t(s[0])+s[2])*gx_extent.width/640,x,gx_extent.width);
-                const auto bottom=std::clamp<int64_t>((int64_t(s[1])+s[3])*gx_extent.height/480,y,gx_extent.height);
+                const auto x=std::clamp<int64_t>(int64_t(s[0])*gx_extent.width/640,0,clip_extent.width);
+                const auto y=std::clamp<int64_t>(int64_t(s[1])*gx_extent.height/480,0,clip_extent.height);
+                const auto right=std::clamp<int64_t>((int64_t(s[0])+s[2])*gx_extent.width/640,x,clip_extent.width);
+                const auto bottom=std::clamp<int64_t>((int64_t(s[1])+s[3])*gx_extent.height/480,y,clip_extent.height);
                 draw_scissor={{int32_t(x),int32_t(y)},{uint32_t(right-x),uint32_t(bottom-y)}};
             }
             if (draw.layer && crosshair_hidden()) continue;   // the headset's "Game crosshair: Hidden": no reticle quad or wake (the laser aims)
@@ -4946,6 +5079,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     std::array<float,4> chain_box{1e9f,1e9f,-1e9f,-1e9f};
     {
         static const bool on=std::getenv("UC_NO_BLOOM_PROXY")==nullptr;
+        if (uc::title::kCornerChainProxy) {   // SBDE08: decided above (corner)
+            bloom_chain=corner.chain && copy_target && !scene_phase_ && !scene_draws;
+            chain_box=corner.box;
+        } else
         if (on && layers_>1 && copy_target && !packet.clear_after_copy && !packet.present && !overlay_frame && !scene_phase_ && !scene_draws && efb_initialized_ &&
             std::min(efb_extent_.width/640.f,efb_extent_.height/480.f)>=2.5f) {
             const auto& src=packet.texture_copy->source;
@@ -4969,9 +5106,29 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         // UC_FOLD_CLEAR: a waiting clear goes first where something else than this packet's EFB passes reads or writes the EFB before them
         if (efb_clear_.pending && (bloom_chain || bloom_proxy_.valid || hud_.used || glow_.used || upscale_here || writes_scene || dlss_generation_enabled() || fsr_generation_enabled() || overlay_frame))
             record_efb_clear(slot.command,bloom_chain ? "bloom chain" : bloom_proxy_.valid ? "bloom proxy" : hud_.used || glow_.used ? "layers" : "scene/upscale/overlay");
-        if (!bloom_chain && bloom_proxy_.valid && (!packet.draws.empty() || copy_target || packet.present)) put_back_bloom_proxy(slot.command);
+        if (!bloom_chain && bloom_proxy_.valid && (!packet.draws.empty() || copy_target || packet.present)) {
+            // SBDE08: the game puts the corner of the picture back with an opaque quad of its own (opaque_quad). When the first draw of this
+            // packet is such a quad over all that the chain drew, the proxy has nothing that the frame buffer needs.
+            const bool restored=[&] {
+                if (!uc::title::kCornerChainProxy || scene_phase_ || scene_draws || overlay_frame) return false;
+                size_t d=0;
+                while (d<packet.draws.size() && !gpu_draws[d].index_count) ++d;
+                if (d==packet.draws.size() || (!hud_draw.empty() && hud_draw[d]) || (!particle_draw.empty() && particle_draw[d]) ||
+                    std::find(skipped_callsites.begin(),skipped_callsites.end(),packet.draws[d].callsite)!=skipped_callsites.end()) return false;
+                const auto rect=flat_draw_rect(packet.draws[d]);
+                const auto& c=bloom_proxy_.covered;
+                return rect && opaque_quad(packet.draws[d]) && holds_rect(*rect,{std::max(0.f,c[0]),std::max(0.f,c[1]),std::min(float(kBloomCorner[0]),c[2]),std::min(float(kBloomCorner[1]),c[3])});
+            }();
+            if (restored) { bloom_proxy_.valid=false; ++bloom_proxy_.restored; }
+            else put_back_bloom_proxy(slot.command);
+        }
         if (bloom_chain) {
             ensure_bloom_proxy();
+            if (uc::title::kCornerChainProxy) {   // SBDE08: the corner is copied in only when the packet reads what the chain did not draw (corner)
+                if (corner.again) put_back_bloom_proxy(slot.command);
+                if (corner.entry) { bloom_proxy_corner(slot.command,false); ++bloom_proxy_.entries; }
+                bloom_proxy_.defined=corner.defined;
+            } else
             if (!bloom_proxy_.valid) bloom_proxy_corner(slot.command,false);   // the corner as the EFB has it: blended draws build on it
         }
     }
@@ -5013,12 +5170,21 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if (hudless_wanted && efb_initialized_ && hud_packet) take_hudless();
     if (bloom_chain) {
         if (!packet.draws.empty()) {
-            const PassTarget proxy_target{bloom_proxy_.color,bloom_proxy_.depth,bloom_proxy_.color_view,bloom_proxy_.depth_view,VK_NULL_HANDLE,VK_NULL_HANDLE,bloom_proxy_.extent,&bloom_proxy_.initialized,true};
+            const PassTarget proxy_target{bloom_proxy_.color,bloom_proxy_.depth,bloom_proxy_.color_view,bloom_proxy_.depth_view,VK_NULL_HANDLE,VK_NULL_HANDLE,bloom_proxy_.image_extent,&bloom_proxy_.initialized,true,bloom_proxy_.extent};
             record_pass(proxy_target,0,packet.draws.size(),false);
         }
         if (!bloom_proxy_.valid) bloom_proxy_.covered={1e9f,1e9f,-1e9f,-1e9f};
         for (int i=0;i<2;++i) { bloom_proxy_.covered[i]=std::min(bloom_proxy_.covered[i],chain_box[i]); bloom_proxy_.covered[i+2]=std::max(bloom_proxy_.covered[i+2],chain_box[i+2]); }
         bloom_proxy_.valid=true; ++bloom_proxy_.packets;
+        if (uc::title::kCornerChainProxy) {   // SBDE08: put_back_bloom_proxy, which prints the numbers of RBUE08, seldom runs
+            static const bool stats=std::getenv("UC_GPU_PACKETS")!=nullptr;
+            static auto since=std::chrono::steady_clock::now();
+            if (stats && std::chrono::steady_clock::now()-since>std::chrono::seconds(2)) {
+                std::fprintf(stderr,"[chain-proxy] 2 s: %llu packets drawn in the proxy (%ux%u a layer), the corner copied in %llu times, copied out %llu times, restored by the game %llu times\n",(unsigned long long)bloom_proxy_.packets,
+                             bloom_proxy_.image_extent.width,bloom_proxy_.image_extent.height,(unsigned long long)bloom_proxy_.entries,(unsigned long long)bloom_proxy_.put_backs,(unsigned long long)bloom_proxy_.restored);
+                bloom_proxy_.packets=bloom_proxy_.put_backs=bloom_proxy_.entries=bloom_proxy_.restored=0; since=std::chrono::steady_clock::now();
+            }
+        }
     }
     else if (particle_last>particle_first) {   // the particle layer: the draws before, the run in the layer and composited, the draws after
         record_pass(efb_target,scene_draws,particle_last,false);   // the draws before the run and the run's full-size sprites (additions commute)
@@ -5066,6 +5232,12 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     }
     else if (!scene_only && !overlay_frame && (!efb_initialized_ || scene_draws<packet.draws.size())) { record_pass(efb_target,scene_draws,packet.draws.size(),false); record_layer(glow_,2); record_layer(hud_,1); }
     if (hudless_wanted && !hudless_taken_ && packet.present) take_hudless();
+    if (gpu_ops_on && packet.present && !overlay_frame && ++gpu_ops.frames==120) {
+        const double f=double(gpu_ops.frames);
+        std::fprintf(stderr,"[gpu-ops] 120 frames, for each frame: %.2f passes on the frame buffer, %.2f passes on other targets, %.2f copies of %.3f M pixels, %.2f blits of the proxy corner\n",
+                     gpu_ops.efb_passes/f,gpu_ops.other_passes/f,gpu_ops.copies/f,gpu_ops.copy_pixels/f/1e6,gpu_ops.corner_blits/f);
+        gpu_ops=GpuOps{};
+    }
 #ifdef UC_OPENXR
     if (xr_ && packet.present && display)   // the displayed EFB rectangle, as the screen pass reads it (see xr_direct below)
         warp_display_={float(uint64_t(display_source[0])*efb_extent_.width/640),float(uint64_t(display_source[1])*efb_extent_.height/480),
