@@ -21,17 +21,23 @@ A STEP is one of:
                     the retrace count and, for each draw, its call site, vertex count, texture and screen box (-1 to 1); the boxes of
                     the same draws over the retraces show how the camera and the models move
   peek:ADDR,SIZE    print SIZE bytes of guest memory at hexadecimal ADDR
-  peekptr:ADDR,OFFSET,SIZE   read the pointer at ADDR, then print SIZE bytes at pointer + OFFSET
+  peekptr:ADDR,OFFSET[,OFFSET...],SIZE   read the pointer at ADDR, then print SIZE bytes at pointer + OFFSET; with more offsets,
+                    each offset but the last one reads the next pointer
+  probe:NAME=ADDR,OFFSET[,OFFSET...],SIZE   name a value behind a pointer as in peekptr; the bot step prints each change of a named
+                    value after each of its rounds (4 bytes also as a float), for example the health and the state of a boss
   waitlog:TEXT[,N]  wait until TEXT appears in the game log after the place of the last waitlog or until step (at most N retraces, default 20000)
   until:TEXT,BUTTONS[,EVERY[,N]]   press BUTTONS every EVERY retraces (default 60) until TEXT appears in the game log (at most N retraces, default 20000)
   dump:NAME         write MEM1 (24 MB) and MEM2 (64 MB) to <folder>/NAME.mem1 and <folder>/NAME.mem2
   waitpeek:ADDR,HEX[,N]   wait until the bytes of guest memory at hexadecimal ADDR are HEX (at most N retraces, default 20000)
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
-  bot:N[,EVERY[,TEXT]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A, A+B, WAVE, A;
+  bot:N[,EVERY[,TEXT[,WEAPONS]]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A, A+B, WAVE, A;
                     these pass most quick-time prompts of The Darkside Chronicles ("Press the A Button!", "Wave the Wii Remote!"), reload,
                     and take a choice of ways and the prompt Move (the A presses are at the right, in the middle and at the left of the screen); with TEXT the step ends
-                    after the round of 35 points in which TEXT appears in the game log (searched from the last waitlog, until or bot match)
+                    after the round of 35 points in which TEXT appears in the game log (searched from the last waitlog, until or bot match);
+                    WEAPONS is a list of buttons with / between them, one for each row in turn, for example UP/LEFT/-/-/-/-/-: the bot
+                    presses the button after the row, which changes the weapon (the +Control Pad chooses one of four weapon slots);
+                    a - is a row without such a press
   watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]   read the pointer at ADDR, then print the SIZE bytes at pointer + OFFSET each time they change, for
                     N retraces (4 bytes also as a float), and each new line of the game log that holds one of the TEXTs; for example the
                     health of a player of The Darkside Chronicles and the voice lines of a fight (docs/darkside-port.md)
@@ -169,6 +175,30 @@ def wait_log(game, text, limit, press=None, every=60):
     raise RuntimeError("the game ended (exit code %s)" % game.proc.returncode)
 
 
+def read_chain(game, chain):
+    """ADDR,OFFSET[,OFFSET...],SIZE: the pointer at ADDR, then the pointer at each offset but the last one, then SIZE bytes as hex text."""
+    addr, *offsets, size = chain.split(",")
+    pointer = int(game.command("peek", addr=int(addr, 16), size=4)["hex"], 16)
+    for n, offset in enumerate(offsets):
+        if not 0x80000000 <= pointer < 0x94000000:
+            return "no object"
+        at = pointer + int(offset, 0)
+        if n == len(offsets) - 1:
+            return game.command("peek", addr=at, size=int(size))["hex"]
+        pointer = int(game.command("peek", addr=at, size=4)["hex"], 16)
+    return "%08X" % pointer
+
+
+def show_probes(game, probes):
+    """Prints each named value (step probe) that changed since the last call."""
+    for name, probe in probes.items():
+        data = read_chain(game, probe[0])
+        if data != probe[1]:
+            probe[1] = data
+            text = data + (" (float %g)" % struct.unpack(">f", bytes.fromhex(data))[0] if len(data) == 8 and data != "no object" else "")
+            print("probe %s: %s at retrace %d" % (name, text, game.retraces()), flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--exe", required=True)
@@ -185,6 +215,7 @@ def main():
     try:
         queue = collections.deque(args.steps)
         live_at = {}
+        probes = {}
         while queue:
             step = queue.popleft()
             kind, _, value = step.partition(":")
@@ -331,7 +362,8 @@ def main():
                 count, every = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 2)
                 points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
                 extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A", 3, (0.01, 0.01)), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
-                stop, found, done = parts[2] if len(parts) > 2 else None, False, 0
+                stop, found, done = parts[2] if len(parts) > 2 and parts[2] else None, False, 0
+                weapons = parts[3].split("/") if len(parts) > 3 and parts[3] else []
                 while game.proc.poll() is None and done < count:
                     if stop and log_has(game, stop):
                         found = True
@@ -348,6 +380,9 @@ def main():
                             x, y = place or game.aim
                             events += [(at, x, y, button_mask(names)), (at + hold, x, y, 0)]
                             at += hold + 2
+                        if weapons and (done + i) % 7 == 6 and weapons[((done + i) // 7) % len(weapons)] != "-":   # a weapon slot
+                            events += [(at, game.aim[0], game.aim[1], button_mask(weapons[((done + i) // 7) % len(weapons)])), (at + 3, game.aim[0], game.aim[1], 0)]
+                            at += 5
                     for n, (frame, x, y, buttons) in enumerate(events):
                         fields = dict(cmd="input", at_frame=frame, kpad={"x": x, "y": y, "buttons": buttons})
                         if n == len(events) - 1:
@@ -358,6 +393,8 @@ def main():
                                 game.next_id += 1
                             game.pipe.send_line(json.dumps(dict(id=ident, **fields)))
                     done += batch
+                    if probes:
+                        show_probes(game, probes)
                 print("bot %s: %d points to retrace %d%s" % (value, done, game.retraces(), "" if not stop else ", text found" if found else ", text NOT FOUND"), flush=True)
             elif kind == "speed":
                 game.command("speed", factor=int(value))
@@ -368,10 +405,11 @@ def main():
             elif kind == "state":
                 st = game.command("state").get("state", {})
                 print("state: input frame %s retrace %s" % (st.get("n"), st.get("retraces")), flush=True)
-            elif kind == "peekptr":   # peekptr:ADDR,OFFSET,SIZE reads the pointer at ADDR and prints SIZE bytes at pointer + OFFSET
-                addr, offset, size = value.split(",")
-                pointer = int(game.command("peek", addr=int(addr, 16), size=4)["hex"], 16)
-                print("peekptr %s -> %08X+%s: %s" % (addr, pointer, offset, game.command("peek", addr=pointer + int(offset, 0), size=int(size))["hex"]), flush=True)
+            elif kind == "peekptr":   # peekptr:ADDR,OFFSET[,OFFSET...],SIZE follows the pointers and prints SIZE bytes behind the last one
+                print("peekptr %s: %s" % (value, read_chain(game, value)), flush=True)
+            elif kind == "probe":
+                name, _, chain = value.partition("=")
+                probes[name] = [chain, None]
             elif kind == "live":   # steps from a file that another program appends to; the step ends with the line "end"
                 path = game.out / value
                 while game.proc.poll() is None:
