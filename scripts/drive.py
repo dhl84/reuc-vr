@@ -32,6 +32,7 @@ A STEP is one of:
   spray:N[,EVERY[,BUTTONS]]   move the pointer over a grid of points of the screen, N points, and press BUTTONS (default B) at each one,
                     one point every EVERY input frames (default 8, 2 at least); shoots at whatever is on the screen when the place of the enemies is not known
   bot:N[,EVERY[,TEXT[,WEAPONS]]]   like spray:N,EVERY (default 2) with B, and after each row of 7 points one more press, in turn: A, WAVE, Z, A, A+B, WAVE, A;
+                    each pass over the grid is moved a little, so that 16 passes shoot at every place in steps of 0.05 (small targets);
                     these pass most quick-time prompts of The Darkside Chronicles ("Press the A Button!", "Wave the Wii Remote!"), reload,
                     and take a choice of ways and the prompt Move (the A presses are at the right, in the middle and at the left of the screen); with TEXT the step ends
                     after the round of 35 points in which TEXT appears in the game log (searched from the last waitlog, until or bot match);
@@ -372,7 +373,11 @@ def main():
                     events = []   # (input frame, x, y, buttons)
                     batch = min(35, count - done)   # the server keeps at most 256 open commands
                     for i in range(batch):
-                        game.aim = points[(done + i) % len(points)]
+                        # each pass over the 35 points moves the grid by a part of its pitch: 16 passes cover the screen in steps of 0.05
+                        shift = (0.0, 0.1, 0.05, -0.05)
+                        turn = (done + i) // len(points)
+                        x, y = points[(done + i) % len(points)]
+                        game.aim = (round(x + shift[turn % 4], 3), round(y + shift[(turn // 4) % 4], 3))
                         events += [(at, game.aim[0], game.aim[1], BUTTONS["B"]), (at + 1, game.aim[0], game.aim[1], 0)]
                         at += every
                         if (done + i) % 7 == 6:
