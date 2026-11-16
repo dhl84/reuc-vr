@@ -23,6 +23,9 @@ struct TextureCopy {
     // source[3]/lines of the target's height, so a line keeps its place in the texture, and the rest repeats the last line. 0: the
     // source fills the target. The Vulkan renderer reads it; the DirectX renderers stretch the source over the target.
     uint32_t lines=0;
+    // No draw can sample this copy: the game replaces the texture before it samples it (runtime/hle/gx.cpp seal_or_hold, SBDE08). The
+    // packet is a packet with a copy for every choice of the renderer, and the renderer copies no pixels.
+    bool dead=false;
 };
 struct FramePacket {
     uint64_t serial = 0;

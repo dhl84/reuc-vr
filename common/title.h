@@ -35,6 +35,18 @@ inline constexpr uint32_t kTimedYieldMs = 2;
 // scale of its frame buffer: the picture is a texture of that size for the game, not a part of what the player sees. On a Quest 3
 // the frame buffer is 1514x2160 pixels for each eye, and the shadow packets took 3.4 ms of GPU time a frame. 0: no such copy.
 inline constexpr uint32_t kNativeCopyWidth = 512, kNativeCopyHeight = 480;
+// The game copies the picture to the same texture two or three times in a frame: after the solid part of the scene, after the
+// see-through part and after the effects. An effect that bends the picture samples the copy before it. Most frames have no such
+// effect, and the next copy replaces the texture before a draw sampled it. The builder (runtime/hle/gx.cpp seal_or_hold) drops a
+// copy that the game replaces unsampled, and joins the draws of its packet to the next packet. On a Quest 3 each joined packet
+// saves one load and one store of the whole frame buffer and one blit. false: every copy is made.
+inline constexpr bool kDropDeadCopies = true;
+// The post-processing chain of the game works in the top left corner of the frame buffer: it draws a quad there, copies the corner to
+// a texture, and draws the next quad with that texture (docs/darkside-port.md, "The post-processing chain"). The Vulkan renderer draws
+// such a packet in a small stand-in for that corner (the bloom proxy of RBUE08), and not in the large frame buffer of both eyes. The
+// stand-in has the pixel density of the frame buffer, so the picture is the same. false: the rule of RBUE08 (2 points a guest pixel,
+// from a frame buffer scale of 2.5, the bloom chain of that game). UC_NO_BLOOM_PROXY=1 turns the proxy off in both games.
+inline constexpr bool kCornerChainProxy = true;
 inline constexpr uint32_t kTestPadButtons = 0x1FFFF;   // the test server may send every Wii Remote and Nunchuk button, and the wave (bring-up)
 inline constexpr bool kKpadReadError = true;
 inline constexpr uint8_t kKpadPointerValid = 2;            // dpd_valid_fg: both sensor bar points seen (test value, see docs/darkside-port.md)
@@ -130,6 +142,8 @@ inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
 inline constexpr uint32_t kButtonWave = 0;
 inline constexpr uint32_t kTimedYieldMs = 0;
 inline constexpr uint32_t kNativeCopyWidth = 0, kNativeCopyHeight = 0;
+inline constexpr bool kDropDeadCopies = false;
+inline constexpr bool kCornerChainProxy = false;
 inline constexpr bool kKpadReadError = false;
 inline constexpr uint8_t kKpadPointerValid = 1;
 // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.

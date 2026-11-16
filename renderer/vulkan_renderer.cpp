@@ -5079,7 +5079,11 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     const PassTarget& active=scene_only ? scene_target : efb_target;
     captured_scene_=scene_only;
     if(copy_target) {
-        if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
+        if (packet.texture_copy->dead) {   // nothing samples it (gx::TextureCopy::dead): no pixels to copy, the image only gets the layout of a copy
+            barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_PIPELINE_STAGE_2_NONE,0,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,copy_target->mip_levels);
+            copy_target->mips_pending=false;
+        }
+        else if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
         else record_texture_copy(slot.command,active.color,native_packet_copy && active.color==efb_ && !overlay_frame ? native_extent(active.extent) : active.extent,
                                  packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
         if(const auto& readback=packet.texture_copy->target->readback) {   // the game reads this copy from memory (SBDE08's exposure): level 0 of the first layer goes to a buffer, collect() delivers it

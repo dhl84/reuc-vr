@@ -11,6 +11,7 @@
 #include "gx_audit.h"
 #include "vi.h"
 #include "late_aim.h"
+#include "graphics_effects.h"
 #include "native_input.h"
 #include <atomic>
 #include <bit>
@@ -1044,6 +1045,76 @@ void hash_packet(const gx::FramePacket& frame,uint64_t serial) {
     }
     std::fprintf(stderr,"[gx-hash] serial %llu draws %zu hash %016llX\n",(unsigned long long)serial,frame.draws.size(),(unsigned long long)f.h);
 }
+// Builder: gives a finished packet to the queue. The front predicted the serial.
+uint64_t seal_now(gx::FramePacket&& frame) {
+    const uint64_t serial=packets->seal_batch(std::move(frame));
+    if(serial!=++back_serial) {
+        static bool reported=false;
+        if(!reported) { reported=true; std::fprintf(stderr,"[gx-builder] sealed packet %llu where %llu was expected\n",(unsigned long long)serial,(unsigned long long)back_serial); }
+        back_serial=serial;
+    }
+    return serial;
+}
+// Builder: copies that no draw can sample (common/title.h kDropDeadCopies). A draw takes the newest copy of a texture address at the
+// time of the draw (snapshot_texture). So a copy is dead when the game copies to the same address again and no draw between the two
+// sampled the first one. A packet with a copy that does not clear waits here until the builder knows: a later packet samples it (then
+// every waiting packet goes to the queue as it is), or a later copy has its address (then the copy is dead). A dead copy gets the mark
+// dead (gx::TextureCopy), and the renderer copies no pixels for it. Its packet keeps its draws and stays a packet with a copy: the
+// renderer decides from the copy of a packet how it draws the packet (a small copy is a picture for a texture, not a view of the eyes).
+// A packet without draws loses its dead copy and goes to the queue empty, because the front counted its serial. A present, a
+// draw-done and a copy with a clear end the wait. See join_dead_packets for the draws of a packet with a dead copy.
+std::vector<gx::FramePacket> held_packets;
+uint64_t dead_copies=0,dead_copy_merges=0,held_seals=0;
+bool drop_dead_copies() {
+    static const bool on=uc::title::kDropDeadCopies && !std::getenv("UC_KEEP_DEAD_COPIES");   // UC_KEEP_DEAD_COPIES=1: every copy is made (to compare)
+    return on && !uc::chain_as_before();   // UC_CHAIN_AB (renderer/graphics_effects.h): the same switch while the game runs
+}
+// UC_JOIN_DEAD_COPIES=1 (tests): the draws of a packet with a dead copy go to the next packet when that packet copies the same part of
+// the frame buffer. The renderer then draws the solid part and the see-through part of the scene in one pass. Off by default: in one
+// frozen scene of the first chapter of SBDE08 the marks on a wall were brighter with it, and the cause is not found.
+bool join_dead_packets() {
+    static const bool on=std::getenv("UC_JOIN_DEAD_COPIES")!=nullptr;
+    return on;
+}
+void seal_held() {
+    auto waiting=std::move(held_packets); held_packets.clear();
+    for(auto& packet:waiting) seal_now(std::move(packet));
+}
+bool samples_texture(const gx::FramePacket& frame,const gx::TexturePixels* texture) {
+    for(const auto& draw:frame.draws) {
+        if(draw.texture.get()==texture) return true;
+        for(const auto& map:draw.texture_maps) if(map.get()==texture) return true;
+    }
+    return false;
+}
+uint64_t seal_or_hold(gx::FramePacket&& frame) {
+    if(!drop_dead_copies()) { seal_held(); return seal_now(std::move(frame)); }
+    bool sampled=false;
+    for(size_t i=0;i<held_packets.size();++i) {
+        auto& waiting=held_packets[i];
+        if(!waiting.texture_copy || waiting.texture_copy->dead) continue;
+        if(samples_texture(frame,waiting.texture_copy->target.get())) { sampled=true; continue; }
+        if(!frame.texture_copy || waiting.texture_copy->target->guest_address!=frame.texture_copy->target->guest_address) continue;
+        ++dead_copies;
+        if(waiting.draws.empty()) { waiting.texture_copy.reset(); continue; }
+        auto& next=i+1<held_packets.size() ? held_packets[i+1] : frame;
+        if(!join_dead_packets() || !next.texture_copy || next.texture_copy->source!=waiting.texture_copy->source) { waiting.texture_copy->dead=true; continue; }
+        waiting.texture_copy.reset();
+        for(auto& draw:next.draws) waiting.draws.push_back(std::move(draw));   // the draws of both, in their order
+        next.draws=std::move(waiting.draws); waiting.draws=gx::DrawQueue{}; ++dead_copy_merges;
+    }
+    const bool hold=frame.texture_copy && !frame.clear_after_copy && !frame.present && !frame.replay && !frame.black_output && !frame.clear_only &&
+        !frame.texture_copy->target->readback && frame.texture_copy->target->guest_address;
+    if(sampled || !hold || held_packets.size()>=8) seal_held();
+    static const bool stats=std::getenv("UC_GPU_PACKETS")!=nullptr;   // diagnostics: what the rule did, each 600 packets
+    if(stats && ++held_seals%600==0) {
+        std::fprintf(stderr,"[dead-copies] 600 packets: %llu copies not made, %llu packets joined to the next\n",(unsigned long long)dead_copies,(unsigned long long)dead_copy_merges);
+        dead_copies=dead_copy_merges=0;
+    }
+    if(!hold) return seal_now(std::move(frame));
+    held_packets.push_back(std::move(frame));
+    return back_serial+held_packets.size();
+}
 // Builder: seals the draws so far into a packet (the front predicted its serial).
 uint64_t submit_batch(const SealInputs& inputs,bool present,bool clear,uint32_t xfb=0,std::optional<gx::TextureCopy> texture_copy={},std::array<uint32_t,4> display_source={0,0,640,480},bool black=false) {
     if (!packets) return 0;
@@ -1077,13 +1148,8 @@ uint64_t submit_batch(const SealInputs& inputs,bool present,bool clear,uint32_t 
         if(present) {prompt_present+=carried_prompts.size();frame.prompts=std::move(carried_prompts);carried_prompts.clear();}
     }
     ++prompt_batch;
-    const uint64_t serial=packets->seal_batch(std::move(frame));
+    const uint64_t serial=seal_or_hold(std::move(frame));
     draws=gx::DrawQueue{};
-    if(serial!=++back_serial) {
-        static bool reported=false;
-        if(!reported) { reported=true; std::fprintf(stderr,"[gx-builder] sealed packet %llu where %llu was expected\n",(unsigned long long)serial,(unsigned long long)back_serial); }
-        back_serial=serial;
-    }
     return serial;
 }
 // Front: the serial of the next packet the builder seals.
@@ -1274,6 +1340,7 @@ std::shared_ptr<const GxSnapshot> gx_checkpoint() {
     if(front_prim.active || front_list)
         throw std::logic_error("GX checkpoint inside a primitive or display-list recording");
     drain();   // the builder's state is read below
+    seal_held();   // no packet waits for a later copy across a checkpoint (kDropDeadCopies)
     if(!capture || capture->active() || brec)
         throw std::logic_error("GX checkpoint inside a primitive or display-list recording");
     std::lock_guard lock(det_finish_m);
@@ -1288,6 +1355,7 @@ std::shared_ptr<const GxSnapshot> gx_checkpoint() {
 }
 void gx_restore(const GxSnapshot& saved) {
     drain();   // the builder is idle while its state is replaced
+    held_packets.clear();
     std::lock_guard lock(det_finish_m);
     det_finishes.clear(); det_early.clear();
     if(saved.scene)packets->restore(*saved.scene);
@@ -1348,7 +1416,7 @@ void gx_hle_init(Sched& sched, uint8_t* base, gx::Packets* packet_queue, bool pr
     dirty_state(); dirty_material();
     state = {}; transforms={}; live_transforms=gx::Transforms{}; import_transforms=gx::Transforms{}; mesh_transforms_block=gx::Transforms{}; live_state=gx::State{}; import_state=gx::State{}; mesh_state=gx::State{}; import_uniforms=gx::DrawUniform{}; mesh_uniforms_block=gx::DrawUniform{}; draws.clear(); finishes.clear(); resources.clear(); brec.reset(); capture = std::make_unique<gx::Vertices>(memory);
     copy_state={}; copies=0;
-    texture_copy_source={}; texture_copy_width=texture_copy_height=0; texture_copy_format=6; copied_textures.clear();
+    texture_copy_source={}; texture_copy_width=texture_copy_height=0; texture_copy_format=6; copied_textures.clear(); held_packets.clear();
     texture_cache.clear(); texture_decodes=0;
     mesh_index.clear(); mesh_cache.clear(); mesh_cache_bytes=0; geometry_hits=0; geometry_misses=0;
     blend_state={}; live_blend={}; color_uniforms={}; live_uniforms=gx::DrawUniform{}; live_material={}; texture_matrices={}; matrix_indices={}; indirect_stages={};

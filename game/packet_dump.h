@@ -219,7 +219,9 @@ public:
         if(packet.texture_copy) {
             const auto& copy=*packet.texture_copy;
             std::fprintf(file_," copy src %u:%u:%u:%u target %ux%u@%p",copy.source[0],copy.source[1],copy.source[2],copy.source[3],copy.target->levels[0].width,copy.target->levels[0].height,(const void*)copy.target.get());
+            std::fprintf(file_," guest %X lines %u%s",copy.target->guest_address,copy.lines,copy.dead ? " dead" : "");
         }
+        if(packet.clear_after_copy) std::fprintf(file_," clear");
         std::fprintf(file_,"\n");
         size_t index=0;
         for(const auto& draw:packet.draws) {
@@ -228,6 +230,8 @@ public:
             for(uint32_t stage=0;stage<draw.material.stages && stage<16;++stage) std::fprintf(file_," s%u:%03X",stage,draw.material.stage[stage].order&0x7F);
             if(draw.texture && !draw.texture->levels.empty()) std::fprintf(file_," t0=%ux%u@%p",draw.texture->levels[0].width,draw.texture->levels[0].height,(const void*)draw.texture.get());
             if(draw.texture && draw.texture->guest_address) std::fprintf(file_," copy@%X",draw.texture->guest_address);
+            if(draw.state->viewport) { const auto& v=*draw.state->viewport; std::fprintf(file_," vp %.4g,%.4g,%.4g,%.4g",v[0],v[1],v[2],v[3]); }
+            if(draw.state->scissor) { const auto& sc=*draw.state->scissor; std::fprintf(file_," sc %d,%d,%d,%d",int(sc[0]),int(sc[1]),int(sc[2]),int(sc[3])); }
             if(draw.reticle||draw.late_aim||draw.wake||draw.layer) std::fprintf(file_," flags[%s%s%s%s]",draw.reticle?"R":"",draw.late_aim?"L":"",draw.wake?"W":"",draw.layer?"Y":"");
             if(gx::is_perspective(draw.transforms->projection)) std::fprintf(file_," persp");
             else if(const auto range=gx::ortho_range(draw,0)) { std::fprintf(file_," ortho x %.3f..%.3f",(*range)[0],(*range)[1]); if(const auto y=gx::ortho_range(draw,1)) std::fprintf(file_," y %.3f..%.3f",(*y)[0],(*y)[1]); }   // after the ultrawide narrowing

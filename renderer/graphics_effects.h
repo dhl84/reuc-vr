@@ -1,9 +1,44 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <system_error>
 #include <optional>
 #include <string_view>
 namespace uc {
+// The bloom switch as the renderer has it now (config graphics.bloom, the headset's Glow), for a game whose own glow the port can turn
+// off (SBDE08, game/uc_main.cpp). The renderer writes it in set_bloom. The retrace callback of the game reads it.
+inline std::atomic<bool> game_glow_wanted{true};
+// A switch of a test that is a file: on while <file> exists and <file>.off does not. Five more rounds use <file>.2 with
+// <file>.2.off, and so on to <file>.6. scripts/drive.py makes such files with its step touch. On the headset, adb shell touch
+// does it.
+inline bool switch_file_on(const char* file) {
+    std::error_code error;
+    for(const char* round:{"",".2",".3",".4",".5",".6"}) {
+        const std::string name=std::string(file)+round;
+        if(std::filesystem::exists(name,error) && !std::filesystem::exists(name+".off",error)) return true;
+    }
+    return false;
+}
+// UC_CHAIN_AB=<file> (tests): while the switch file is on (switch_file_on), the port makes every EFB copy of the game and draws the
+// post-processing chain in the frame buffer, as it did before (SBDE08: common/title.h kDropDeadCopies and kCornerChainProxy). So one
+// run can show the same scene both ways, on the PC and on the headset. The files are looked at twice a second. Any thread.
+inline bool chain_as_before() {
+    static const char* const path=std::getenv("UC_CHAIN_AB");
+    if(!path || !*path) return false;
+    static std::atomic<bool> before{false};
+    static std::atomic<int64_t> checked{0};
+    const int64_t now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t last=checked.load(std::memory_order_relaxed);
+    if(now-last>500 && checked.compare_exchange_strong(last,now)) {
+        before.store(switch_file_on(path),std::memory_order_relaxed);
+    }
+    return before.load(std::memory_order_relaxed);
+}
 // Quality presets of the effects that have them (config graphics.*, launcher, menu).
 enum class EffectLevel { off, low, medium, high, ultra };
 inline std::string_view effect_level_name(EffectLevel level) {

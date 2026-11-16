@@ -928,11 +928,12 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             static const uint64_t capture_pass_serial=std::getenv("UC_CAPTURE_PASS_SERIAL") ? std::strtoull(std::getenv("UC_CAPTURE_PASS_SERIAL"),nullptr,10) : 0;
             // UC_CAPTURE_PASS_GO=<file>: the passes of one frame (24 at most), from the first packet after a present once the file exists.
             static const char* capture_pass_go=kPublicRelease ? nullptr : std::getenv("UC_CAPTURE_PASS_GO");
+            static const unsigned capture_pass_limit=std::getenv("UC_CAPTURE_PASS_MAX") ? unsigned(std::strtoul(std::getenv("UC_CAPTURE_PASS_MAX"),nullptr,10)) : 24u;   // the passes of one frame that are saved
             const bool capture_passes=options.capture_scene_passes || capture_pass_serial || capture_pass_go;
             if(capture_pass_go) { if(!scene_capture_started && at_frame_boundary && std::filesystem::exists(capture_pass_go)) scene_capture_started=true; }
             else
             if(capture_passes && !scene_capture_started) scene_capture_started=capture_pass_serial ? pending_serial>=capture_pass_serial : std::any_of(pending->draws.begin(),pending->draws.end(),[](const auto& draw){return draw.callsite==0x80366E14;});
-            if(capture_passes && scene_capture_started && scene_capture_pass<(capture_pass_serial ? 1u : 24u)) {
+            if(capture_passes && scene_capture_started && scene_capture_pass<(capture_pass_serial ? 1u : capture_pass_limit)) {
                 scene_capture_serial=pending_serial; ++scene_capture_pass;
                 std::fprintf(stderr,"[scene-pass] %u serial %llu draws %zu present %u clear %u\n",scene_capture_pass,(unsigned long long)pending->serial,pending->draws.size(),pending->present,pending->clear_after_copy);
                 if(pending->texture_copy) {
