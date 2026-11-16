@@ -25,14 +25,15 @@ PGO_MODE="${UC_QUEST_PGO:-use}"
 PGO_PROFILE="$ROOT/project/pgo/uc-quest.profdata"
 TITLE="${UC_TITLE:-uc}"; GEN="$ROOT/generated"; INSTALL="${UC_INSTALL_DIR:-}"; TITLE_ARGS=(); GRADLE_TITLE=(); DEFAULT_BUILD="$ROOT/build-android"
 if [ "$TITLE" = dc ]; then
-  GEN="$ROOT/generated-dc"; INSTALL="${DC_INSTALL_DIR:-}"; DEFAULT_BUILD="$ROOT/build-android-dc"; PGO_MODE="${UC_QUEST_PGO:-off}"   # no profile of this game yet
+  GEN="$ROOT/generated-dc"; INSTALL="${DC_INSTALL_DIR:-}"; DEFAULT_BUILD="$ROOT/build-android-dc"
+  PGO_PROFILE="$ROOT/project/pgo/dc-quest.profdata"   # recorded on the headset from a play-through of this game (docs/darkside-port.md)
   TITLE_ARGS=(-DUC_TITLE=dc -DUC_GENERATED_DIR="$GEN")
   GRADLE_TITLE=(-PappId=org.uc.darksidechronicles.vr "-PappName=Darkside Chronicles VR" -PdiscId=SBDE08 -PgameFolder=DarksideChronicles "-PgameTitle=Resident Evil: The Darkside Chronicles")
 fi
 # UC_APP_ID / UC_APP_NAME: another application ID and name, so that a test build installs next to the release (another signing key).
 [ -n "${UC_APP_ID:-}" ] && GRADLE_TITLE+=(-PappId="$UC_APP_ID"); [ -n "${UC_APP_NAME:-}" ] && GRADLE_TITLE+=("-PappName=$UC_APP_NAME")
 BUILD="${UC_QUEST_BUILD_DIR:-$DEFAULT_BUILD}"; PGO_ARGS=(-DUC_PGO_GENERATE=OFF -DUC_PGO_PROFILE="$PGO_PROFILE")
-if [ "$PGO_MODE" = generate ]; then BUILD="$ROOT/build-android-pgo"; PGO_ARGS=(-DUC_PGO_GENERATE=ON)
+if [ "$PGO_MODE" = generate ]; then BUILD="${UC_QUEST_PGO_BUILD_DIR:-$DEFAULT_BUILD-pgo}"; PGO_ARGS=(-DUC_PGO_GENERATE=ON)
 elif [ "$PGO_MODE" = off ]; then PGO_ARGS=(-DUC_PGO_GENERATE=OFF -DUC_PGO_PROFILE="$ROOT/project/pgo/none.profdata"); fi
 APP="$ROOT/quest/reuc/src/main"
 SHA256="shasum -a 256"; command -v shasum >/dev/null 2>&1 || SHA256=sha256sum   # Git Bash without perl has only sha256sum
