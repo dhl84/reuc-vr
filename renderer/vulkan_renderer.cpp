@@ -5065,6 +5065,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // present in the fight) leaves the EFB alone, so the clear waits on; anything else may read or write the EFB from here on.
     if (!packet.draws.empty() || copy_target || packet.present || packet.clear_only || packet.clear_after_copy || overlay_frame) record_efb_clear(slot.command,packet.draws.empty() ? "copy or present" : "draws, no EFB pass");
     const PassTarget& active=scene_only ? scene_target : efb_target;
+    captured_scene_=scene_only;
     if(copy_target) {
         if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
         else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
@@ -5074,7 +5075,6 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             const auto fragment=VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, transfer=VK_PIPELINE_STAGE_2_TRANSFER_BIT;
             barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,transfer,VK_ACCESS_2_TRANSFER_READ_BIT);
             VkBufferImageCopy region{}; region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}; region.imageExtent={extent.width,extent.height,1};
-    captured_scene_=scene_only;
             vkCmdCopyImageToBuffer(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,slot.readback.buffer,1,&region);
             barrier(slot.command,copy_target->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,transfer,VK_ACCESS_2_TRANSFER_READ_BIT,fragment,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             slot.readback_target=readback; slot.readback_extent=extent;
