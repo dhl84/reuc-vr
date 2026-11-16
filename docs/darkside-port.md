@@ -365,7 +365,15 @@ With both, the app played from the start through the menus, both movies and the 
 
 The frame rate. With native eye images (2064x2208) at 90 Hz the menus ran at 60 fps and the first fight at 30 to 35 fps. The GPU took 23 ms a frame. With the preset "72 Hz, no space warp" (eye images 1514x1620, render scale 2.25, high foveation) the first fight ran at 66 fps on average, and 104 of 110 seconds were at 60 fps or more. The GPU took 11 to 15 ms a frame there. This preset is now the default of the app (`xr/xr_settings.h`). The step of the game at 72 Hz is the timer step of `hle_DcFrameWait`.
 
-Not done on the headset: play by a person with the controllers, the sound, space warp, later chapters, and a key list from the headset itself (the list has 5 keys from it).
+Second day, 16 November 2026. Three faults showed only on the headset:
+
+- The input was read too seldom. After its first packet the main loop drew up to 64 more packets before it read the input again. A frame of this game is about 6 packets, so with a busy render thread one pass of the loop drew about 10 frames, and the VR controllers were read 5 to 8 times a second (`[profile] loops` in the log). The drain now stops when a packet presented its frame. After the change the loop ran 72 times a second or more.
+- The chapter stopped at "Loading data" after its first fight. With the timer step a late frame did not wait, so the main thread of the game never blocked, and the loading thread of the game got 20 to 34 ms of CPU time a second. A late frame now sleeps for 2 ms (`kTimedYieldMs`). The PC did not show this fault, because there the frame wait blocks on the retrace.
+- The test clock speed above 1 (`speed:N`) is of no use on the headset: the timer step takes real time.
+
+With these changes the app (0.0.9) played the first chapter of Operation Javier from the start to "RESULTS" in 24 minutes, with the test aid `UC_DC_GOD=1` in `env.txt` and the step `bot`, and went on into the next chapter. No crash. Over that chapter the frame rate was 57.8 fps on average, with 60 fps or more in 50 % of the seconds and less than 45 fps in 11 %. The bot fires all the time, which is more load than a player makes. The GPU took 14.6 ms a frame at the median and 18.6 ms at the 95th percentile, against 13.9 ms for 72 Hz. The game makes about 16 EFB copies a frame (`copies 960` a second in `[profile]`), and the scene is drawn in three or four passes with a copy of the whole picture between them.
+
+Not done on the headset: play by a person with the controllers, the sound, space warp, and a steady 60 fps in the fights.
 
 ## State
 
