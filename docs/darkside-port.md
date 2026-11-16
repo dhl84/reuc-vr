@@ -43,8 +43,8 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 ## Bring-up aids
 
 - `scripts/drive.py` starts a build with its test server, sends Wii Remote input at given game times, saves frames and reads guest memory. It needs no keyboard and no mouse. The steps `waitlog`, `until` and `waitpeek` wait for a text in the game log or for a value in guest memory, because the retrace count of a screen is not the same in every run. The step `dump` writes MEM1 and MEM2 to files. The step `spray` moves the pointer over a grid of points and shoots at each one. The step `touch` makes a file, which starts a diagnostic that waits for one.
-- `UC_PACKET_DUMP=<file>|go|<frames>` lists every render packet of some frames: its draws with call site, blend and textures, and its EFB copy. The list starts when `<file>.go` appears (`touch:packets.txt.go` in `scripts/drive.py`). `UC_PACKET_DUMP_TEV=1` adds the TEV stages, the colour registers and constants, the channel controls and the lights of each draw.
-- `UC_CAPTURE_PASS_GO=<file>` saves the frame buffer after each render packet of one frame as `pass-*.png` in the capture folder. It starts with the first packet after a present once the file exists (`touch:pass.go`).
+- `UC_PACKET_DUMP=<file>|go|<frames>` lists every render packet of some frames: its draws with call site, blend and textures, and its EFB copy. The list starts when `<file>.go` appears (`touch:packets.txt.go` in `scripts/drive.py`). `UC_PACKET_DUMP_TEV=1` adds the TEV stages, the colour registers and constants, the channel controls and the lights of each draw. It also adds the texgen of each texture coordinate that a stage uses: the control word and the two matrices. A draw with 32 vertices at most gets a list of its vertices.
+- `UC_CAPTURE_PASS_GO=<file>` saves the frame buffer after each render packet of one frame as `pass-*.png` in the capture folder. It starts with the first packet after a present once the file exists (`touch:pass.go`). The renderer draws the 3D part of a frame into its scene targets, not into the frame buffer. For a packet of that part the file shows the scene target. A packet that clears after its copy shows the cleared picture.
 - `UC_TRACE_NEW=<retrace>` (trace build) prints each guest function the first time it runs after that retrace count.
 - `UC_DUMP_THREADS=1` prints the state, the wait key and the registers of each guest thread once per second.
 - `UC_CAPTURE_RETRACES=300,900` saves the frame at those retrace counts as PNG files (`--capture-dir <dir>`).
@@ -140,7 +140,7 @@ One run stopped with an error: the point draw in the sixth chapter of "Memories 
 ### Faults found and fixed
 
 - The piece under the pointer on the chapter screen and on the character screen was a dark square. The logo of the title screen was black. The cause was the native `GXSetBlendMode`. The SDK function writes the subtract bit of the blend word at every call: it sets the bit for `GX_BM_SUBTRACT` and clears it for every other mode (803A7F98). The native kept the bit after it was set. After the first subtract draw, every draw that set its blend through this function was subtracted from the picture. The glow of the piece is an additive quad with an indirect texture (call site 804A0A20). The effect sprites (call site 8049CD48) use the same path. The bits that the native replaces are now a constant of each game (`kBlendModeBits` in `common/title.h`). `RBUE08` has the same SDK code, but it keeps its old value until one of its scenes with a subtract draw is checked.
-- The effect library draws one kind of particle as `GX_POINTS`, one point for each `GXBegin` (call site 804A1D10, in a display list). The native renderers have no point primitive. The draw stopped the game with "unsupported native draw topology" in the sixth chapter of "Memories of a Lost City". A point draw is dropped now (`kDropPointDraws` in `common/title.h`, `dropped_point_draw` in `runtime/hle/gx.cpp`), and the log names the first one. These particles are missing from the picture.
+- The effect library draws one kind of particle as `GX_POINTS`, one point for each `GXBegin` (call site 804A1D10, in a display list). The native renderers have no point primitive. The draw stopped the game with "unsupported native draw topology" in the sixth chapter of "Memories of a Lost City". The draw was dropped at first. Now each point becomes a square of two triangles (see "Point draws").
 - The test aid did not hold the partner's health at first. The partner's bar went down in the first chapter. In the fourth chapter of "Memories of a Lost City" one run opened `menu02.brstm` and went back to the menus. When the player is dead, the game opens this file: the three runs without the aid opened it after the health was 0, and no other run opened it. The players had the aid in that run, so the death of the partner is the probable cause. No frame shows it. The aid writes the partner's health now. Two more runs of that chapter reached "RESULTS", the first of them still without the write. The step `bot:N,2,menu02.brstm` ends at a game over.
 
 ### Not faults
@@ -239,6 +239,48 @@ Checked on 15 November 2026 (first chapter, speed 1, retrace counts, not wall ti
 - The first hit comes at the same time in the two modes. The ten hits take 3752 retraces with the 30 Hz step and 3601 with the 60 Hz step. Enemies at twice the speed need about half of that time. After the first hit the two runs do not fight the same fight, because the zombies choose their attacks. The difference of 4 % is not more than that.
 - Not checked: the speed of model animations that are not part of a fight. The code of the four readers above says that they keep their speed.
 - Not done: the pause of the PC port (`game_pacing_set_paused`) does nothing in this game.
+
+## Shadows
+
+How the game makes the shadows of its characters (16 November 2026, from the code of the shadow object at 8033B69C and from packet dumps):
+
+1. The game sets a viewport of 512x512 pixels at the top left of the frame buffer. The buffer of the console has 640x528 pixels.
+2. It draws a white quad over the viewport (call site 8033B7C8). Then it draws each caster with a black material colour, seen from the light through an orthographic projection (call site 804AD87C, one TEV stage). A white line strip closes the edge (8033D364).
+3. It copies the picture to a `GX_TF_Z16` texture of 512x512 texels (8033B9B8). This copy does not clear.
+4. It copies the picture at half size to a `GX_CTF_R8` texture of 256x256 texels (8033BBA0). This copy does not clear.
+5. It draws seven quads over the picture (call site 8033BCF8). Each quad adds the half-size texture times 0.5 to the red channel (blend one plus one, vertex colour 128, 0, 0). The quads are 448, 384, 320 and 256 pixels wide. Each one is moved by 0.5 to 4 pixels. A texel of a caster stays black only where no quad adds white. The result is a caster with a soft edge and without its rim.
+6. It copies the picture to a second `GX_CTF_R8` texture of 512x512 texels and clears (8033C528).
+7. The materials of the ground take that texture as texture map 2 (call site 804AD87C, four TEV stages). Texture coordinate 2 comes from the position, through the view matrix and a post matrix of the light. Stage 2 gives `K3.a x (1 - texture)`. Stage 3 mixes the colour with `K3.rgb` by that amount. `K3` is (0, 0.039, 0.157, 0.882) for some materials and (0, 0, 0, 0.502) for others.
+
+A second kind of material reads the `GX_TF_Z16` texture as `GX_TF_IA8`, together with a ramp texture (8033DF24). Byte 12 of the shadow data of the material selects it. No draw of the dumped frames of the first chapter does that. The port still gives the farthest depth for that texture.
+
+The fault: the native frame buffer has 480 lines. A copy of 512 lines took the 480 lines that exist and stretched them over the texture. A line of the picture was then at 512/480 of its place in the texture. The seven quads of step 5 read the half-size texture at the place that the console has. So they read 6 % of the line number away from the pixel that they added to: 4 lines at line 65, 12 lines at line 200. They added white to the casters, and the casters became white.
+
+The fix (`gx::TextureCopy::lines`, `VulkanRenderer::record_texture_copy`): the lines that exist keep their place in the texture, and the rows below them repeat the last line. The game's own filter then works as on the console. `RBUE08` never names such lines (`kEfbCopyLines` is 480 there).
+
+Checked on 16 November 2026 (first chapter, Vulkan, 1280x720 window):
+
+- Pass captures of the shadow packets: the caster pass shows the white picture with one black caster (Krauser, 283 texels at line 65). A test switch kept the picture of step 5. The old copy left a black core of about 5x10 texels inside a red rim.
+- A test switch dropped the quads of step 5. That run showed sharp shadows at the feet of the first zombie and beside its body. So the materials of the ground read the texture correctly.
+- After the fix the body of the first zombie has a soft dark patch on the ground beside it. The two zombies of the next street have one at their feet.
+- A script that does steps 4 to 6 on the captured caster picture gives 104 of 283 caster texels below 0.5 for the new copy. For this caster at line 65 the old copy gives 96. The game's filter takes the rim of a caster away on the console too.
+
+Not checked:
+
+- The old build was not captured at the places of the frames above. That its filter made the casters of later lines white follows from the offsets, not from a frame.
+- No picture of the console was compared. The size, the darkness and the direction of the shadows were not checked.
+
+## Point draws
+
+The effect library (NW4R `ef`) draws one kind of particle as `GX_POINTS`. Each `GXBegin` has one point. The call site is 804A1D10, inside a recorded display list. Before the draw it calls `GXSetPointSize` (803A4C68) with the size and the texture offset 5.
+
+- `GXSetPointSize` keeps the size in the word at `+0x7C` of the SDK state, in bits 8 to 15. The unit is a sixth of a pixel of the frame buffer. Bits 19 to 21 are the texture offset. Checked in the code of the function.
+- `GXEnableTexOffsets` (803A4C9C) keeps the switch of each texture coordinate in bit 19 of the word at `+0x108 + 4 x coordinate`.
+- The hardware draws a point as a square of that size around the projected vertex. The size on the screen is the same at every distance. With the texture offset 5 the corners get the texture coordinates 0 to 1, so the texture covers the square.
+
+The port makes the square where the draw packets are built (`expand_points` in `runtime/hle/gx.cpp`, `kPointQuads` in `common/title.h`). At the start of a draw it reads the two words from the SDK state. For a draw of a display list it reads them at the time of the recording. Each point becomes four vertices in the plane that faces the screen, and the draw becomes a quad draw without culling. So every renderer gets triangles. `RBUE08` has no point draws and keeps its path.
+
+Checked on 16 November 2026: the sixth chapter of "Memories of a Lost City" ran for 22000 retraces from its start without an error. The run went through the place of the first point draw. The log line of the first point draw gives size 6 (one pixel), texture offset 5 and texture coordinate 0. Not checked: a frame with the squares. The eight frames after the first point draw had no draw from that call site, so the particles live for a short time.
 
 ## Sound
 
@@ -352,14 +394,15 @@ Found on the way (each is a constant in `common/title.h` or a note in the code):
 - The exposure is a gain of `0.15 / brightness`, held between 0.75 and 1.25 (8036AFC4). After it the game draws its colour filter with six TEV stages (call site 802A0B04): 30 % less colour, a gain of 1 + (0.62, 0.56, 0.41) for red, green and blue in the first chapter, 8 % less blue, and a contrast curve `x (0.70 x + 0.30)`. The filter comes from the game's data. With the smallest exposure a part of the scene that is brighter than about 0.83 before the filter comes out as pale yellow (255, 255, about 210) without detail. Ground in direct sun does that: its material is twice the texture times the light (TEV scale 2), and the sun has the colour 255. No reference picture of the console was compared.
 - NW4R reads its stream files under a mutex that it takes with `OSTryLockMutex` and gives back with `OSUnlockMutex`. `OSUnlockMutex` is a native that keeps the state of a mutex outside the guest, and `OSTryLockMutex` was the SDK's code, which works on the fields of the guest's mutex. The first reader kept the mutex for ever, every later reader slept, and its read ended with "cancelled" when the game stopped the sound. `OSTryLockMutex` is a native now (`project/dc/hle_manual.txt`).
 - The native `GXSetBlendMode` kept the subtract bit of the blend word after the first subtract draw. Later draws that set their blend through this function were subtracted from the picture (see "Play-through").
-- The effect library draws one kind of particle as `GX_POINTS`. The native renderers have no point primitive, and such a draw stopped the game. The draw is dropped now (`kDropPointDraws` in `common/title.h`).
+- The effect library draws one kind of particle as `GX_POINTS`. The native renderers have no point primitive, and such a draw stopped the game. Each point is a square of two triangles now (`kPointQuads` in `common/title.h`, see "Point draws").
+- A copy of frame buffer lines that the native buffer does not have was stretched over its texture. The filter of the game's shadows then read the wrong lines, and the shadows were white (see "Shadows").
 
 Not done yet:
 
-- The game draws no shadows: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel (there is no depth copy yet), and a copy that names lines below 480 takes the 480 lines of the native colour buffer. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
+- Materials with the depth flag of the shadow data get no shadow: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel. No draw of the first chapter has that flag (see "Shadows"). The casters of the last 32 lines of the shadow picture are not drawn. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
 - No person listened to the sound. The numbers are in "Sound". In long fights 2.6 to 7.2 % of the samples are at full scale.
 - The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
-- The particles that the game draws as `GX_POINTS` are missing. A point primitive needs a square for each point in the renderers. It also needs the point size. `GXSetPointSize` (803A4C68) keeps it in the word at `+0x7C` of the SDK state: bits 8 to 15 are the size in sixths of a pixel, and bits 19 to 21 are the texture offset. The effect library sets the texture offset 5, so the texture covers the point.
+- No frame with the squares of the `GX_POINTS` particles was looked at (see "Point draws").
 - After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
 - In one run the player died at the spiders and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`); the B presses of the test input then started the chapter again. The screens between are not checked.
 - `__OSUnlockAllMutex` (8037CF28) is the SDK's code and reads the fields of the guest's mutex, which the natives do not write: a thread that ends with a mutex keeps it.
