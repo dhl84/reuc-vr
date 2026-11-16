@@ -143,6 +143,14 @@ inline constexpr uint32_t kDcPartnerHealth = 0x80735500 + 0xF8, kDcPartnerHealth
 inline constexpr uint32_t kDcEnemyVirtual = 0x10, kDcEnemyFunction = 0x8005D408, kDcEnemyHealthMax = 0x444, kDcEnemyHealth = 0x44C;
 inline constexpr uint32_t kDcPartnerVtables[2] = {0x806D85F0, 0x806D8A00};
 inline constexpr uint32_t kDcWeakHealthBits = 0x3F800000;   // 1.0f
+// The puppet theatre of the fourth chapter of "Game of Oblivion" is one object of an enemy class (vtable 806E0800). It has six
+// puppets of 0x11C bytes each: the boy, the girl, the knight, the bear and two fish. The float at +0x5C8 of a puppet is its health
+// (3 at the start), the byte at +0x6D9 says that a shot can hit it now, and the byte at +0x6DA says that it is dead (80188ABC takes
+// the damage away, 801887F0 looks at the health). When the boy or the girl is dead, the show starts again. A player shoots the other
+// puppets in the short times in which the show lets a shot hit them. The bot shoots at a grid of points: it hit the boy or the
+// girl in each show, and its grid has no point on the bear. With UC_DC_WEAK=1 the boy and the girl keep their health, and the four
+// other puppets have none, so they are dead from the start of the show.
+inline constexpr uint32_t kDcPuppetVtable = 0x806E0800, kDcPuppetHealth = 0x5C8, kDcPuppetSize = 0x11C, kDcPuppetFullBits = 0x40400000;   // 3.0f
 // The inventory is at +0xDC of the item manager, the static object at 80733694 (its getter is 80046F74, 800BFDB8 adds the 0xDC). An
 // item kind is an index into the item table at 806D7038 (16 bytes each, 800BFDF0): 6 is the handgun and 11 the rocket launcher. The
 // word at +0x120 + 4 x kind is the count. For a weapon it is the rounds plus 1, and 0 says that the players do not have the weapon

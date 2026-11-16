@@ -543,6 +543,13 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 const uint32_t vtable = ppc::rd32(c, object + 0x1C);
                 if (!mapped(vtable) || (vtable >= uc::title::kDcPartnerVtables[0] && vtable <= uc::title::kDcPartnerVtables[1])) continue;
                 if (ppc::rd32(c, vtable + uc::title::kDcEnemyVirtual) != uc::title::kDcEnemyFunction) continue;
+                if (vtable == uc::title::kDcPuppetVtable) {   // the puppet theatre: its boy and its girl keep their health, and the four others have none
+                    for (uint32_t puppet = 0; puppet < 6; ++puppet) {
+                        const uint32_t health_at = object + uc::title::kDcPuppetHealth + puppet * uc::title::kDcPuppetSize, wanted = puppet < 2 ? uc::title::kDcPuppetFullBits : 0;
+                        if (ppc::rd32(c, health_at) != wanted) ppc::wr32(c, health_at, wanted);
+                    }
+                    continue;
+                }
                 const uint32_t most_at = ppc::rd32(c, object + uc::title::kDcEnemyHealthMax), at = ppc::rd32(c, object + uc::title::kDcEnemyHealth);
                 if (!mapped(most_at) || !mapped(at)) continue;
                 const uint32_t most = ppc::rd32(c, most_at), health = ppc::rd32(c, at);
