@@ -543,7 +543,11 @@ The route to a chapter of "Memories of a Lost City" from a save, for `scripts/dr
 
 The piece of `s10c3` is at `aim:0.233,-0.237`, that of `s10c4` at `aim:0.033,0.068` and that of `s10c5` at `aim:0.325,0.045`. If the save holds checkpoint data of another chapter, the dialog comes. YES deletes that data. The reticle in a headset frame is not the pointer of the game. Find the places of a menu in the PC build.
 
-Not done on the headset: play by a person with the controllers, the sound, and space warp. At each start 74 pipelines fail to compile with `VkResult -13`. The `RBUE08` app has 78 such pipelines. Their draws keep the ubershader. Which pipelines they are is not known yet.
+Space warp. With `refresh 90` and `space_warp on` in `vr.cfg` the app 0.0.19 ran the boss scene for three minutes without a fault. The game rendered 45 or 46 frames each second, and the headset reported application space warp at 90 Hz. The GPU took 14.3 ms a frame. Nobody looked at the frames that the headset makes between the frames of the game, so space warp stays off by default.
+
+At each start 74 pipelines fail to compile with `VkResult -13`. The `RBUE08` app has 78 such failures. The log now names them (app 0.0.20). Each one is a small-draw ubershader of the families with one stage or two stages (`uber_merge.h`). The general small-draw ubershader compiles. So the draws lose only the shorter shader of their family. The cause in the driver is not known.
+
+Not done on the headset: play by a person with the controllers, and the sound.
 
 ## State
 
