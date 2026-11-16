@@ -124,6 +124,7 @@ struct PaletteData { gx::PaletteFormat format; std::vector<std::byte> bytes; };
 using Palettes=std::map<uint32_t,std::shared_ptr<const PaletteData>>;
 // shortcut: SDK region identity; unify aliased regions if observed (TD-038).
 Palettes palettes;
+uint32_t last_palette_region[8]{};   // front: the palette region that each texture map got last (common/title.h kPaletteLenient)
 using TextureBindings=std::array<std::optional<TextureSource>,8>;
 TextureBindings bound_textures;
 std::array<uint8_t,8> wraps(const TextureBindings& bindings) {
@@ -796,8 +797,8 @@ std::shared_ptr<const gx::TexturePixels> snapshot_texture(const std::optional<Te
     gx::PaletteView palette;
     if (source->palette) {
         auto found=loaded.find(*source->palette);
-        if (found==loaded.end()) throw gx::TextureError(gx::TextureErrorCode::descriptor,"GX texture uses an unloaded palette");
-        palette={found->second->format,found->second->bytes};
+        if (found==loaded.end() && !uc::title::kPaletteLenient) throw gx::TextureError(gx::TextureErrorCode::descriptor,"GX texture uses an unloaded palette");
+        if (found!=loaded.end()) palette={found->second->format,found->second->bytes};
     }
     auto result=texture_cache.snapshot(source->address,source->desc,bytes,palette);
     texture_decodes=texture_cache.decodes(); texture_evictions=texture_cache.evictions(); texture_resident=texture_cache.resident_bytes();
@@ -1422,7 +1423,7 @@ void gx_hle_init(Sched& sched, uint8_t* base, gx::Packets* packet_queue, bool pr
     texture_cache.clear(); texture_decodes=0;
     mesh_index.clear(); mesh_cache.clear(); mesh_cache_bytes=0; geometry_hits=0; geometry_misses=0;
     blend_state={}; live_blend={}; color_uniforms={}; live_uniforms=gx::DrawUniform{}; live_material={}; texture_matrices={}; matrix_indices={}; indirect_stages={};
-    bound_textures={}; palettes.clear(); live_texture.reset(); live_texture_maps={};
+    bound_textures={}; palettes.clear(); live_texture.reset(); live_texture_maps={}; std::fill(std::begin(last_palette_region),std::end(last_palette_region),0u);
     draw_count = 0; vertex_count = 0; submitted = 0; completed = 0; outside_bytes = 0;
     back_derived.clear(); material_cache={};
     known_sdk=0; front_resources.clear(); front_list.reset(); front_prim.active=false; uc::gx_fifo_window={}; uc::gx_fifo_outside=true; uc::gx_fifo_raw_state=0; uc::gx_fifo_outside_bytes=0;
@@ -1938,6 +1939,13 @@ void hle_GXLoadTexObjPreLoaded(ppc::Ctx& c) {
         const auto word=(read32(palette_region+4)&0xFFFFFF)|(uint32_t(tag)<<24);
         ppc::wr32(c,palette_region+4,word);
         uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word);
+        last_palette_region[map]=*source.palette;
+    } else if (uc::title::kPaletteLenient && format>=8 && format<=10 && last_palette_region[map]) {
+        // A texture with a palette format from GXInitTexObj: the SDK sends no palette word for it, and the hardware keeps the palette
+        // of the texture that this map had before.
+        source.palette=last_palette_region[map];
+        static bool said=false;
+        if (!said) { said=true; std::fprintf(stderr,"[palette-kept] texture %08X %ux%u format %u on map %u has no palette of its own: it gets the palette that the map had before\n",source.address,source.desc.width,source.desc.height,format,map); }
     }
     ppc::wr32(c,sdk+0x564+map*4,words[2]); ppc::wr32(c,sdk+0x584+map*4,words[0]);
     ppc::wr32(c,sdk+0x5FC,read32(sdk+0x5FC)|1); ppc::wr16(c,sdk+2,0);

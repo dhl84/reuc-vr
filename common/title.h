@@ -121,6 +121,13 @@ inline constexpr uint32_t kBlendModeBits = 0xFFE3;
 // draw topology" in the sixth chapter of "Memories of a Lost City". Each point becomes a square of two triangles where the draw
 // packets are made (runtime/hle/gx.cpp expand_points), so every renderer gets triangles. false: the draw goes to the renderer, which stops.
 inline constexpr bool kPointQuads = true;
+// A room of the fourth chapter of "Game of Oblivion" (R213) binds a GX_TF_C8 texture of 64x64 with a texture object from
+// GXInitTexObj, which has no palette. The decoder stopped the game with "GX palette index exceeds loaded palette". The SDK sends no
+// palette word, and the hardware keeps the palette that the texture map had before. true: the native GXLoadTexObjPreLoaded gives
+// such a texture the palette region of the texture before it on that map. When no palette is loaded, or an index is above the
+// loaded entries, the texel is clear (renderer/gx_textures.cpp). The hardware reads its texture memory there. false: these cases
+// stop the game with an error, as the tests of RBUE08 expect.
+inline constexpr bool kPaletteLenient = true;
 // The health of a player (the "LEON" bar of the HUD) is the float at +0x974 of the player object: 50 is full, 0 is dead. Its setter
 // (800AC7EC) holds it between 0 and 50, a hit takes its damage away (800ACA74), a herb adds (800AC86C). The player manager is the
 // object at 80736378 (its getter is 80046EFC). It keeps a handle of two words for each of the two players at +0xAC: an id and an
@@ -213,6 +220,7 @@ inline constexpr uint32_t kTextureVersionLimit = 0;
 // RBUE08 with a subtract draw is checked: a change here changes its picture.
 inline constexpr uint32_t kBlendModeBits = 0xF7E3;
 inline constexpr bool kPointQuads = false;
+inline constexpr bool kPaletteLenient = false;
 #endif
 }  // namespace uc::title
 

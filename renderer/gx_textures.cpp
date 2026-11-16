@@ -42,7 +42,16 @@ Pixel texel(TextureFormat format, std::span<const std::byte> tile, uint32_t x, u
         if (format==TextureFormat::c4) index=(byte(tile,(y*8+x)/2)>>((x&1) ? 0 : 4))&15;
         else if (format==TextureFormat::c8) index=byte(tile,y*8+x);
         else index=word(tile,(y*4+x)*2)&0x3FFF;
-        if (index>=palette.bytes.size()/2) throw TextureError(TextureErrorCode::truncated,"GX palette index exceeds loaded palette");
+        if (index>=palette.bytes.size()/2) {
+            // The hardware reads its texture memory at any index. A game that draws such a texture (common/title.h kPaletteLenient)
+            // gets a clear texel here, and the log names the first one.
+            if (uc::title::kPaletteLenient) {
+                static bool said=false;
+                if (!said) { said=true; std::fprintf(stderr,"[palette-index] texture format %u index %zu, the palette has %zu entries (format %u): clear texels\n",unsigned(format),index,palette.bytes.size()/2,unsigned(palette.format)); }
+                return {0,0,0,0};
+            }
+            throw TextureError(TextureErrorCode::truncated,"GX palette index exceeds loaded palette");
+        }
         const auto value=word(palette.bytes,index*2);
         switch (palette.format) {
         case PaletteFormat::ia8: { const auto i=uint8_t(value); return {i,i,i,uint8_t(value>>8)}; }
