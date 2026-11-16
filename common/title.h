@@ -30,6 +30,11 @@ inline constexpr uint32_t kButtonWave = 0x10000;
 // The game loads the next part of a chapter on a thread of lower priority while the chapter runs. With the timer step of the frame wait
 // (game/game_pacing.cpp timed_wait) a late frame sleeps for this number of milliseconds, so that such threads run. 0: no sleep.
 inline constexpr uint32_t kTimedYieldMs = 2;
+// The game draws its shadow map into the top left 512x480 pixels of the frame buffer and copies it from there (docs/darkside-port.md,
+// "Shadows"). The Vulkan renderer draws a packet with a copy of exactly this source at one pixel for each guest pixel, and not at the
+// scale of its frame buffer: the picture is a texture of that size for the game, not a part of what the player sees. On a Quest 3
+// the frame buffer is 1514x2160 pixels for each eye, and the shadow packets took 3.4 ms of GPU time a frame. 0: no such copy.
+inline constexpr uint32_t kNativeCopyWidth = 512, kNativeCopyHeight = 480;
 inline constexpr uint32_t kTestPadButtons = 0x1FFFF;   // the test server may send every Wii Remote and Nunchuk button, and the wave (bring-up)
 inline constexpr bool kKpadReadError = true;
 inline constexpr uint8_t kKpadPointerValid = 2;            // dpd_valid_fg: both sensor bar points seen (test value, see docs/darkside-port.md)
@@ -124,6 +129,7 @@ inline constexpr bool kNativeActionMap = true;
 inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
 inline constexpr uint32_t kButtonWave = 0;
 inline constexpr uint32_t kTimedYieldMs = 0;
+inline constexpr uint32_t kNativeCopyWidth = 0, kNativeCopyHeight = 0;
 inline constexpr bool kKpadReadError = false;
 inline constexpr uint8_t kKpadPointerValid = 1;
 // The start code runs on the SDK's DefaultThread: __OSThreadInit (802611B8) stores this OSThread in the current-thread word and fills it in.

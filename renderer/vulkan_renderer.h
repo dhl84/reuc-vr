@@ -269,7 +269,7 @@ private:
     void release_mesh(GpuMesh& mesh);
     void destroy_buffer(Buffer& buffer);
     Texture make_texture(const gx::TexturePixels* pixels, VkExtent2D physical_extent = {});
-    Texture make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source);
+    Texture make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, bool native=false);   // native: one pixel for each texel (a copy of a native-scale packet)
     void record_texture_copy(VkCommandBuffer command, VkImage source, VkExtent2D extent, const std::array<uint32_t,4>& region, Texture& target, VkImageLayout before, uint32_t lines=0);
     void record_copy_mips(VkCommandBuffer command, Texture& target);   // levels 1.. of an EFB copy from level 0 (SHADER_READ before and after)
     void recycle_copy_texture(Texture& texture);

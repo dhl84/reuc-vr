@@ -94,6 +94,13 @@ VkExtent2D post_shading_rate(const gx::DrawPacket& draw, VkExtent2D target) {
     return {axis(target.width/640.0),axis(target.height/480.0)};
 }
 VkExtent2D coarser(VkExtent2D a, VkExtent2D b) { return {std::max(a.width,b.width),std::max(a.height,b.height)}; }
+// A copy that the game uses as a texture of its own size, not as a part of the picture (common/title.h kNativeCopyWidth: the shadow map
+// of SBDE08). Its packet is drawn at one pixel for each guest pixel in the top left of the EFB (native_extent), and its texture has one
+// pixel for each texel.
+bool native_copy(const gx::TextureCopy& copy) {
+    return uc::title::kNativeCopyWidth && copy.source[0]==0 && copy.source[1]==0 && copy.source[2]==uc::title::kNativeCopyWidth && copy.source[3]==uc::title::kNativeCopyHeight;
+}
+VkExtent2D native_extent(VkExtent2D target) { return {std::min(640u,target.width),std::min(480u,target.height)}; }
 void vk_check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) throw std::runtime_error(std::string(operation) + " failed: VkResult " + std::to_string(result));
 }
@@ -888,11 +895,12 @@ VulkanRenderer::Texture VulkanRenderer::make_texture(const gx::TexturePixels* pi
     ++texture_creations_;
     return texture;
 }
-VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source) {
+VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<const gx::TexturePixels>& source, bool native) {
     if(!source || !source->gpu_only) throw std::invalid_argument("invalid owned GPU copy texture");
     validate_texture_chain(source.get());
     const auto& level=source->levels[0];
-    const VkExtent2D physical{std::max(1u,uint32_t((uint64_t(level.width)*efb_extent_.width+320)/640)),std::max(1u,uint32_t((uint64_t(level.height)*efb_extent_.height+240)/480))};
+    const VkExtent2D physical=native ? VkExtent2D{std::max(1u,uint32_t(level.width)),std::max(1u,uint32_t(level.height))}
+        : VkExtent2D{std::max(1u,uint32_t((uint64_t(level.width)*efb_extent_.width+320)/640)),std::max(1u,uint32_t((uint64_t(level.height)*efb_extent_.height+240)/480))};
     const auto mip_levels=std::min(uint32_t(source->levels.size()),uint32_t(std::bit_width(std::max(physical.width,physical.height))));
     auto found=std::find_if(recycled_copies_.begin(),recycled_copies_.end(),[&](const auto& texture) {
         return texture.extent.width==physical.width && texture.extent.height==physical.height && texture.mip_levels==mip_levels && texture.channels==source->channels;
@@ -3043,12 +3051,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         if(!width || !height || x>=640 || width>640-x || y>=480 || height>480-y || !request.target || !request.target->gpu_only) throw std::invalid_argument("invalid native EFB texture copy");
         auto found=copy_textures_.find(request.target.get());
         if(found==copy_textures_.end()) {
-            auto texture=make_copy_texture(request.target);
+            auto texture=make_copy_texture(request.target,native_copy(request));
             try { found=copy_textures_.emplace(request.target.get(),texture).first; } catch(...) { destroy_texture(texture); throw; }
         }
         if(found->second.initialized) throw std::invalid_argument("native EFB copy version cannot be overwritten");
         copy_target=&found->second; slot.copy_sources.push_back(request.target);
     }
+    const bool native_packet_copy=packet.texture_copy && native_copy(*packet.texture_copy);   // the packet draws a picture of the game's own size (native_copy)
     // Upscaling: a frame whose predecessor had a 3D scene draws into the internal scene targets until the scene boundary (the game's
     // copy of the finished scene, gx::SceneBoundary), is upscaled into efb_ there, and draws the rest (post chain, HUD) into efb_.
     const struct { gx::SceneBoundary boundary; bool frame_start, scene_phase, scene_mode, motion_cleared, gbuffer_cleared, reset_next; std::array<float,2> jitter; uint64_t whole_frame_upscales; size_t tracker; std::optional<gx::Projection> frame_projection; std::optional<ShadowFit> shadow_fit; bool shadow_cleared, rt_material_cleared; uint32_t rt_record_slot, rt_record_count; }
@@ -4096,6 +4105,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // every fragment inside its viewport). Load and store only cover the render area, so on a tiler (Quest) a post pass drawing one
     // 160x90 quad no longer loads and stores the whole EFB, colour and depth, for both eyes. Outside it the attachments keep their
     // contents. A first use (cleared) and the held overlay frame (other viewport mapping) keep the whole target.
+    // The size that the guest's 640x480 coordinates map to: the target, or 640x480 pixels for a native-scale packet (native_copy).
+    const bool native_packet = native_packet_copy && target.color==efb_ && !scene && !overlay_frame;
+    const VkExtent2D gx_extent = native_packet ? native_extent(target.extent) : target.extent;
     static const bool full_render_area = std::getenv("UC_FULL_RENDER_AREA") != nullptr;   // diagnostics: the whole target, as before
     VkRect2D render_area{{0, 0}, target.extent};
     if (initialized && !overlay_frame && !full_render_area) {
@@ -4127,7 +4139,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 bounded_reticle=true;
             }
             const auto v = draw.state->viewport.value_or(std::array<float,6>{0, 0, 640, 480, 0, 1});
-            const auto a = reticle_viewport(draw,uc::efb_viewport(v,target.extent.width,target.extent.height));
+            const auto a = reticle_viewport(draw,uc::efb_viewport(v,gx_extent.width,gx_extent.height));
             int64_t ax = int64_t(std::floor(std::min(a.x, a.x + a.width))), ay = int64_t(std::floor(std::min(a.y, a.y + a.height)));
             int64_t bx = int64_t(std::ceil(std::max(a.x, a.x + a.width))) + 1, by = int64_t(std::ceil(std::max(a.y, a.y + a.height))) + 1;
             if (draw.state->scissor && !draw.late_aim) {   // late aim may reset the scissor; retain its whole viewport
@@ -4154,7 +4166,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // 320x180 / 160x90 corners, a render-to-texture) is not what the eyes see where it is drawn: its draws keep their own rate.
     VkRenderingFragmentShadingRateAttachmentInfoKHR fovea_attachment{VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR};
     const bool foveated=fovea_level_ && fovea_efb_.view && target.color==efb_;
-    const bool fovea_packet=foveated && !(copy_target && packet.texture_copy->source[2]<300);
+    const bool fovea_packet=foveated && !(copy_target && packet.texture_copy->source[2]<300) && !native_packet;
     if (foveated) {
         fovea_attachment.imageView=fovea_efb_.view; fovea_attachment.imageLayout=VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR;
         fovea_attachment.shadingRateAttachmentTexelSize=fovea_texel_; rendering.pNext=&fovea_attachment;
@@ -4266,7 +4278,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         vkCmdClearAttachments(slot.command,2,clears,1,&rectangle);
         scene_clear_.pending=false;
     }
-    VkViewport viewport{0, 0, float(target.extent.width), float(target.extent.height), 0, 1}; VkRect2D scissor{{0, 0}, target.extent};
+    VkViewport viewport{0, 0, float(target.extent.width), float(target.extent.height), 0, 1}; VkRect2D scissor{{0, 0}, gx_extent};
     vkCmdSetViewport(slot.command, 0, 1, &viewport); vkCmdSetScissor(slot.command, 0, 1, &scissor);
     if (!gpu_draws.empty()) {
         const Buffer* bound_vertices=nullptr; const Buffer* bound_indices=nullptr; VkDeviceSize bound_vertex_offset=0, bound_index_offset=0;
@@ -4394,7 +4406,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (scene && effects_need_lights()) scene_lights_.add(*draw.uniforms);
             if (std::find(skipped_callsites.begin(),skipped_callsites.end(),draw.callsite)!=skipped_callsites.end()) continue;
             const auto v=draw.state->viewport.value_or(std::array<float,6>{0,0,640,480,0,1});
-            auto area=uc::efb_viewport(v,target.extent.width,target.extent.height);
+            auto area=uc::efb_viewport(v,gx_extent.width,gx_extent.height);
             if (overlay_frame) {   // EFB coordinates onto the output: the part of the EFB the held frame shows, stretched over the whole picture
                 const float sx=target.extent.width/float(display_source[2]),sy=target.extent.height/float(display_source[3]);
                 area={(v[0]-1.f/12-display_source[0])*sx,(v[1]-1.f/12-display_source[1])*sy,v[2]*sx,v[3]*sy};
@@ -4404,10 +4416,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             auto draw_scissor=scissor;
             if(draw.state->scissor && !overlay_frame) {
                 const auto& s=*draw.state->scissor;
-                const auto x=std::clamp<int64_t>(int64_t(s[0])*target.extent.width/640,0,target.extent.width);
-                const auto y=std::clamp<int64_t>(int64_t(s[1])*target.extent.height/480,0,target.extent.height);
-                const auto right=std::clamp<int64_t>((int64_t(s[0])+s[2])*target.extent.width/640,x,target.extent.width);
-                const auto bottom=std::clamp<int64_t>((int64_t(s[1])+s[3])*target.extent.height/480,y,target.extent.height);
+                const auto x=std::clamp<int64_t>(int64_t(s[0])*gx_extent.width/640,0,gx_extent.width);
+                const auto y=std::clamp<int64_t>(int64_t(s[1])*gx_extent.height/480,0,gx_extent.height);
+                const auto right=std::clamp<int64_t>((int64_t(s[0])+s[2])*gx_extent.width/640,x,gx_extent.width);
+                const auto bottom=std::clamp<int64_t>((int64_t(s[1])+s[3])*gx_extent.height/480,y,gx_extent.height);
                 draw_scissor={{int32_t(x),int32_t(y)},{uint32_t(right-x),uint32_t(bottom-y)}};
             }
             if (draw.layer && crosshair_hidden()) continue;   // the headset's "Game crosshair: Hidden": no reticle quad or wake (the laser aims)
@@ -5068,7 +5080,8 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     captured_scene_=scene_only;
     if(copy_target) {
         if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
-        else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
+        else record_texture_copy(slot.command,active.color,native_packet_copy && active.color==efb_ && !overlay_frame ? native_extent(active.extent) : active.extent,
+                                 packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
         if(const auto& readback=packet.texture_copy->target->readback) {   // the game reads this copy from memory (SBDE08's exposure): level 0 of the first layer goes to a buffer, collect() delivers it
             const auto extent=copy_target->extent; const VkDeviceSize bytes=VkDeviceSize(extent.width)*extent.height*4;
             if(slot.readback.size<bytes) { destroy_buffer(slot.readback); slot.readback=make_buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT,false,true); }
@@ -5202,8 +5215,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             depth.imageView=active.depth_view; depth.imageLayout=VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL; depth.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD; depth.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
             VkRenderingInfo clear_render{VK_STRUCTURE_TYPE_RENDERING_INFO}; clear_render.renderArea.extent=active.extent; clear_render.layerCount=1; clear_render.viewMask=layers_>1 ? 0b11u : 0u; clear_render.colorAttachmentCount=clear_rt ? 5 : clear_gbuffer ? 3 : clear_motion ? 2 : 1; clear_render.pColorAttachments=colors; clear_render.pDepthAttachment=&depth;
             const auto& source=copy_target ? packet.texture_copy->source : packet.display_source;
-            const uint32_t x=uint64_t(source[0])*active.extent.width/640,y=uint64_t(source[1])*active.extent.height/480;
-            const uint32_t right=std::max(x+1,uint32_t(uint64_t(source[0]+source[2])*active.extent.width/640)),bottom=std::max(y+1,uint32_t(uint64_t(source[1]+source[3])*active.extent.height/480));
+            const VkExtent2D scale=copy_target && native_packet_copy && active.color==efb_ ? native_extent(active.extent) : active.extent;   // a native-scale packet clears what it drew
+            const uint32_t x=uint64_t(source[0])*scale.width/640,y=uint64_t(source[1])*scale.height/480;
+            const uint32_t right=std::max(x+1,uint32_t(uint64_t(source[0]+source[2])*scale.width/640)),bottom=std::max(y+1,uint32_t(uint64_t(source[1]+source[3])*scale.height/480));
             VkClearRect rectangle{{{int32_t(x),int32_t(y)},{right-x,bottom-y}},0,1};
             // Only the cleared rectangle: every attachment of this pass is cleared over exactly its render area, so nothing is loaded
             // (on a tiler the rest of the EFB is neither read nor written back).
@@ -5234,8 +5248,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if (packet.clear_after_copy && (packet.present || copy_target || packet.clear_only)) {
         if (fold_clear && !scene_only && &active==&efb_target && !full_render_area_clears && efb_initialized_) {   // the next EFB pass applies it (efb_clear_)
             const auto& source=copy_target ? packet.texture_copy->source : packet.display_source;
-            const uint32_t x=uint64_t(source[0])*efb_extent_.width/640,y=uint64_t(source[1])*efb_extent_.height/480;
-            const uint32_t right=std::max(x+1,uint32_t(uint64_t(source[0]+source[2])*efb_extent_.width/640)),bottom=std::max(y+1,uint32_t(uint64_t(source[1]+source[3])*efb_extent_.height/480));
+            const VkExtent2D scale=copy_target && native_packet_copy ? native_extent(efb_extent_) : efb_extent_;   // a native-scale packet clears what it drew
+            const uint32_t x=uint64_t(source[0])*scale.width/640,y=uint64_t(source[1])*scale.height/480;
+            const uint32_t right=std::max(x+1,uint32_t(uint64_t(source[0]+source[2])*scale.width/640)),bottom=std::max(y+1,uint32_t(uint64_t(source[1]+source[3])*scale.height/480));
             efb_clear_.pending=true; efb_clear_.rect={{int32_t(x),int32_t(y)},{right-x,bottom-y}};
             for(size_t i=0;i<4;++i) efb_clear_.color.float32[i]=packet.clear_color[i]/255.f;
             efb_clear_.depth=packet.clear_depth/float(0xFFFFFF);
