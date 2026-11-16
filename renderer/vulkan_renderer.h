@@ -570,6 +570,8 @@ private:
     size_t pipeline_cache_loaded_ = 0;
     CompileGuard compile_guard_;   // pipelines whose compile crashed the driver in an earlier run are never compiled again (compile_guard.h)
     bool probe_fragment_ = false;   // UC_PROBE_FS (diagnostics): no folded TEV modules
+    bool folded_only_ = false;      // the headset: a specialized pipeline is compiled only from a folded TEV module (make_pipeline)
+    std::atomic<uint64_t> unfolded_keys_{0};   // pipelines that were not compiled for that reason
     // The headset's vertex pre-pass (smoke.slang xformMain): each packet's vertices are shaded once by a compute dispatch, the draws read
     // the results (smoke.stereo.xform.vert.spv). Needs bufferDeviceAddress (the jobs point at the mesh slabs); UC_NO_XFORM=1 turns it off.
     bool xform_ = false;

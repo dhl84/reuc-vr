@@ -1232,9 +1232,10 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
     // Neither pipeline exists yet: compile synchronously (the ubershader in uber-only mode, else the specialized one) and queue the ubershader for later misses.
     bool uber=uber_only_;
     if (compile_guard_.bad(uber ? fixed : key,uber) && !compile_guard_.bad(uber ? key : fixed,!uber)) uber=!uber;   // its compile crashed the driver before: the other form of the draw
-    const PipelineKey& wanted=uber ? fixed : key;
     const auto start=std::chrono::steady_clock::now();
-    auto pipeline=make_pipeline(wanted,uber);
+    auto pipeline=make_pipeline(uber ? fixed : key,uber);
+    if (!pipeline && !uber) { uber=true; pipeline=make_pipeline(fixed,true); }   // no folded module on the headset (make_pipeline): the ubershader
+    const PipelineKey& wanted=uber ? fixed : key;
     const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     std::lock_guard lock(pipelines_mutex_);
     std::pair<std::map<PipelineKey,VkPipeline>::iterator,bool> placed;
@@ -1505,6 +1506,10 @@ VkPipeline VulkanRenderer::make_pipeline(const PipelineKey& key,bool uber) {
                 if (all_indirect!=spec_values) folded=folded_module(all_indirect,early_variant,table);
             }
             if (folded) { stages[1].module=folded; stages[1].pSpecializationInfo=nullptr; }
+            // No folded module (a key that the build's lists do not have): the driver would specialize the 600 KB module itself. The Adreno
+            // shader compiler fails there (VkResult -13) or crashes (libllvm-qgl.so, five times on a Quest 3 on 15 and 16 November 2026).
+            // The headset does not compile such a pipeline: its draws keep the ubershader, and the recorded key gets a module in a later build.
+            else if (folded_only_) { ++unfolded_keys_; return VK_NULL_HANDLE; }
         }
         static_assert(sizeof(gx::GpuMeshVertex)==108 && sizeof(gx::Projection)==64);
         VkVertexInputBindingDescription binding; std::array<VkVertexInputAttributeDescription,14> attributes;
@@ -1598,6 +1603,9 @@ void VulkanRenderer::load_pipeline_cache() {
     vk_check(vkCreatePipelineCache(device,&info,nullptr,&pipeline_cache_),"pipeline cache");   // the driver ignores data from another driver or version
     pipeline_cache_loaded_=data.size();
     std::fprintf(stderr,"[pipeline] disk cache bytes=%zu\n",data.size());
+#if defined(__ANDROID__)
+    folded_only_=layers_>1 && std::getenv("UC_UNFOLDED_PIPELINES")==nullptr;   // UC_UNFOLDED_PIPELINES=1: the driver's specialization, as before
+#endif
     if (const size_t bad=compile_guard_.open(cache_dir_))
         std::fprintf(stderr,"[pipeline] %zu pipelines are not compiled: the graphics driver crashed in their compile (%zu found in the last run)\n",bad,compile_guard_.new_bad());
     g_compile_guard.store(&compile_guard_);
@@ -1653,6 +1661,10 @@ void VulkanRenderer::compile_worker() {
         catch (const std::exception& error) { std::fprintf(stderr,"[pipeline] background compile failed: %s\n",error.what()); }
         lock.lock();
         --compiling_; ++jobs_done_;
+        if (!pipeline && folded_only_ && !job.uber) {
+            static std::atomic<uint64_t> said{0};
+            if ((said++ & 63)==0) std::fprintf(stderr,"[pipeline] %llu keys without a folded module keep the ubershader\n",(unsigned long long)unfolded_keys_.load());
+        }
         if (pipeline) {
             ++compiled_; (job.uber ? compiled_uber_ms_ : compiled_ms_)+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count(); compiled_ubers_+=job.uber;
             if (!target.emplace(job.key,pipeline).second) vkDestroyPipeline(device,pipeline,nullptr);
