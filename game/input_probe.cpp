@@ -1,3 +1,4 @@
+#include "title.h"
 #include "input_probe.h"
 #include "gx_vertices.h"
 #include <algorithm>
@@ -31,6 +32,9 @@ namespace uc {
 InputProbeSnapshot input_probe_snapshot(const ppc::Ctx& c) {
     InputProbeSnapshot result;
     if(!c.mem)return result;
+    // The addresses below are RBUE08 game state. In another game they point at other data or at nothing, and each failed read throws:
+    // on a Quest 3 these throws took a third of the CPU time of the game thread of SBDE08 (one snapshot for each KPADRead).
+    if(!uc::title::kNativeActionMap)return result;
     gx::Memory memory{{reinterpret_cast<const std::byte*>(c.mem),24u<<20},{reinterpret_cast<const std::byte*>(c.mem+0x10000000),64u<<20},{}};
     if(auto bytes=read(memory,0x80596460+0x148,8); !bytes.empty()) {
         result.game_mode_valid=true; result.pause_state=word(bytes,0); result.game_mode=word(bytes,4);
