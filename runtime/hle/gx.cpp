@@ -67,6 +67,16 @@ struct SdkBlock {
     uint32_t word(uint32_t offset) const { return sdk_word(bytes.data(),offset); }
 };
 using SdkRef=std::shared_ptr<const SdkBlock>;
+// What the SDK block says about GX_POINTS draws. GXSetPointSize (803A4C68 in SBDE08) keeps the size in bits 8 to 15 of the word at +0x7C,
+// in sixths of a pixel of the frame buffer, and the texture offset code in bits 19 to 21. GXEnableTexOffsets (803A4C9C) keeps the switch of
+// each texture coordinate in bit 19 of the word at +0x108 + 4 x coordinate.
+struct PointState { uint8_t size=0,offset=0,coords=0; };
+PointState point_state(const SdkBlock& block) {
+    const uint32_t word=block.word(0x7C);
+    PointState result{uint8_t(word>>8),uint8_t((word>>19)&7),0};
+    for(uint32_t coord=0;coord<8;++coord) if(block.word(0x108+coord*4)&0x80000u) result.coords|=uint8_t(1u<<coord);
+    return result;
+}
 
 // ================= The builder's state (the back) =================
 gx::State state;
@@ -74,6 +84,7 @@ gx::Transforms transforms;
 // Blocks shared by consecutive draws; each path keeps its own so an interleaved path does not evict the other's.
 gx::Shared<gx::Transforms> live_transforms,import_transforms,mesh_transforms_block;
 gx::Shared<gx::State> live_state,import_state,mesh_state;
+PointState live_point;   // of the live primitive that is open (GX_POINTS)
 gx::BlendState blend_state,live_blend;
 gx::DrawUniform color_uniforms;
 gx::Shared<gx::DrawUniform> live_uniforms,import_uniforms,mesh_uniforms_block;
@@ -177,6 +188,7 @@ struct RecordedDraw {
     TextureSelectors texture_selectors;
     std::optional<uc::PromptDescription> prompt;
     bool compact=false;
+    PointState point;   // GX_POINTS: the point size when the draw was recorded
     mutable std::shared_ptr<DecodedDraw> decoded;   // the builder's cache (see DecodedDraw)
 };
 uint64_t list_stat[2]={};   // --profile: display-list draws imported and their vertices (the game records its lists again every frame: each is called about once)
@@ -830,6 +842,56 @@ void inherit_decodes(Resource& fresh,const Resource& previous) {
         draw->decoded=old.decoded;
     }
 }
+// GX_POINTS (common/title.h kPointQuads): the renderers have no point primitive, so each point becomes a square of two triangles here,
+// where the draw packets are made. The hardware draws a point as a square of `size` sixths of a pixel around the projected vertex, the
+// same on the screen at every distance. The corners get the vertex's texture coordinate plus the texture offset: nothing at the top
+// left, the offset in s at the right and in t at the bottom (the offset 1 of SBDE08's particles lays the whole texture over the point).
+// The corners are placed in view space, in the plane of the vertex that faces the screen, and go back to object space through the inverse
+// of the position matrix, so the draw keeps its matrices. Returns false for a draw that has nothing to draw: the caller drops it.
+gx::Shared<gx::State> point_quad_state;
+bool expand_points(gx::DrawPacket& draw,PointState point) {
+    if(draw.primitive!=0xB8 || !uc::title::kPointQuads) return true;
+    static bool logged=false;
+    if(!logged) { logged=true; std::fprintf(stderr,"[gx] GX_POINTS draws become quads: the first one is from call site %08X, size %u, texture offset %u, coordinates %02X%c",draw.callsite,unsigned(point.size),unsigned(point.offset),unsigned(point.coords),10); }
+    const auto& transform=*draw.transforms; const auto& projection=transform.projection;
+    const auto viewport=draw.state->viewport.value_or(std::array<float,6>{0,0,640,480,0,1});
+    const float pixels=point.size/6.f;
+    if(!point.size || !(viewport[2]>0) || !(viewport[3]>0) || projection[0][0]==0 || projection[1][1]==0) return false;
+    static constexpr float kTextureOffsets[8]={0,1/16.f,1/8.f,1/4.f,1/2.f,1,1,1};   // GX_TO_ZERO to GX_TO_ONE
+    const float offset=kTextureOffsets[point.offset];
+    const bool indexed=draw.state->descriptors[0]!=gx::Mode::none;
+    std::vector<gx::Vertex> quads; quads.reserve(draw.vertices.size()*4);
+    for(const auto& vertex:draw.vertices) {
+        const uint32_t row=indexed ? vertex.position_matrix : transform.current;
+        if(row>61 || !transform.loaded_rows[row] || !transform.loaded_rows[row+1] || !transform.loaded_rows[row+2]) continue;
+        const auto& a=transform.position_rows[row]; const auto& b=transform.position_rows[row+1]; const auto& c=transform.position_rows[row+2];
+        const float depth=c[0]*vertex.position[0]+c[1]*vertex.position[1]+c[2]*vertex.position[2]+c[3];
+        const float w=projection[3][2]*depth+projection[3][3];
+        if(!(w>0)) continue;   // behind the eye
+        // Half of the point in view space: `right` moves a corner to the right of the screen, `down` to its bottom (the projection has the Y flip of Vulkan).
+        const float right=pixels/viewport[2]*w/projection[0][0],down=pixels/viewport[3]*w/projection[1][1];
+        const float determinant=a[0]*(b[1]*c[2]-b[2]*c[1])-a[1]*(b[0]*c[2]-b[2]*c[0])+a[2]*(b[0]*c[1]-b[1]*c[0]);
+        if(!std::isfinite(determinant) || std::abs(determinant)<1e-20f) continue;
+        // The first two columns of the inverse of the 3x3 part: the object-space steps of one view-space unit in x and in y.
+        const std::array<float,3> step_x{(b[1]*c[2]-b[2]*c[1])/determinant,(b[2]*c[0]-b[0]*c[2])/determinant,(b[0]*c[1]-b[1]*c[0])/determinant};
+        const std::array<float,3> step_y{(a[2]*c[1]-a[1]*c[2])/determinant,(a[0]*c[2]-a[2]*c[0])/determinant,(a[1]*c[0]-a[0]*c[1])/determinant};
+        static constexpr float kCorners[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};   // top left, top right, bottom right, bottom left
+        for(const auto& corner:kCorners) {
+            auto moved=vertex;
+            for(size_t axis=0;axis<3;++axis) moved.position[axis]+=step_x[axis]*corner[0]*right+step_y[axis]*corner[1]*down;
+            for(uint32_t coord=0;coord<8;++coord) if(point.coords&(1u<<coord)) {
+                if(corner[0]>0) moved.texcoord[coord][0]+=offset;
+                if(corner[1]>0) moved.texcoord[coord][1]+=offset;
+            }
+            quads.push_back(moved);
+        }
+    }
+    if(quads.empty()) return false;
+    draw.primitive=0x80; draw.vertices=std::move(quads); draw.indices.clear(); draw.indices.reserve(draw.vertices.size()/4*6);
+    for(uint32_t i=0;i<draw.vertices.size();i+=4) draw.indices.insert(draw.indices.end(),{i,i+1,i+2,i,i+2,i+3});
+    if(draw.state->cull) { auto both=*draw.state; both.cull=0; draw.state=gx::share(point_quad_state,both); }   // the hardware never culls a point
+    return true;
+}
 void import_resource(uint32_t address,uint32_t length,gx::State& bindings,gx::Transforms& transform_state,CopyState& copy,TextureBindings& textures,Palettes& loaded,gx::BlendState& blend,gx::DrawUniform& colors,TextureMatrices& matrices,MatrixIndices& indices,Imported& imported,CopiedTextures& versions,std::vector<uint32_t>& path) {
     const uint32_t physical=address & 0x3FFFFFFF;
     // shortcut: nesting capped at64; replace traversal if a verified deeper native asset appears (TD-032).
@@ -899,7 +961,7 @@ void import_resource(uint32_t address,uint32_t length,gx::State& bindings,gx::Tr
                 if(profile_mesh && source->compact && prompt_color_logs++<12)std::fprintf(stderr,"[prompt-color] action %u pos %.2f %.2f rgba %u %u %u %u material %.2f %.2f %.2f channel %08X\n",unsigned(source->prompt->action),prompt->efb_corners[0],prompt->efb_corners[1],draw.vertices[0].color[0][0],draw.vertices[0].color[0][1],draw.vertices[0].color[0][2],draw.vertices[0].color[0][3],draw.uniforms->materials[0][0],draw.uniforms->materials[0][1],draw.uniforms->materials[0][2],draw.uniforms->channels[0]);
                 prompt->compact=source->compact;draw.native_prompt=std::move(*prompt);++prompt_annotations;
             }
-            imported.push_back(std::move(draw));
+            if(expand_points(draw,source->point)) imported.push_back(std::move(draw));
         } else if (const auto* array=std::get_if<Resource::ArrayBinding>(&item)) bindings.arrays[array->attribute]=array->array;
         else if (const auto* projection=std::get_if<Resource::Projection>(&item)) transform_state.projection=projection->matrix;
         else if (const auto* matrix=std::get_if<Resource::Position>(&item)) matrix_rows(matrices,&transform_state,matrix->row,matrix->matrix,3);
@@ -1096,20 +1158,14 @@ void live_begin(const SdkRef& block,uint8_t primitive,uint8_t vat,uint16_t count
     }
     gx::share(live_transforms,transforms);
     live_blend=blend_state;
-}
-// GX_POINTS: the native renderers have no point primitive, so a title may drop such a draw (common/title.h kDropPointDraws).
-bool dropped_point_draw(const gx::DrawPacket& draw) {
-    if(!uc::title::kDropPointDraws || draw.primitive!=0xB8) return false;
-    static uint64_t dropped=0;
-    if(!dropped++) std::fprintf(stderr,"[gx] GX_POINTS draws are not drawn: the first one is from call site %08X%c",draw.callsite,10);
-    return true;
+    live_point=point_state(*block);
 }
 void live_end(uint32_t who,std::span<const std::byte> bytes) {
     capture->write_attribute(who,bytes);
     auto draw = capture->take_draw(); add_guest_stat(vertex_count,capture->vertex_count()); add_guest_stat(draw_count,1);
     if(replaying)return;
-    if(dropped_point_draw(draw)) return;
     draw.transforms=live_transforms;
+    if(!expand_points(draw,live_point)) return;
     draw.texture=live_texture;
     draw.material=live_material; draw.uniforms=live_uniforms; draw.texture_bank=texture_bank(*draw.state,texture_matrices);
     draw.texture_maps=live_texture_maps;
@@ -1138,6 +1194,7 @@ void record_draw(const SdkRef& block,uint32_t lr,uint32_t callsite,uint8_t primi
     draw.callsite=callsite; draw.primitive=primitive; draw.vat=vat; draw.count=count;
     draw.material=snapped.material; draw.uniforms=snapped.uniforms; draw.texture_selectors=texture_selectors(*block);
     draw.offset=offset;
+    if(primitive==0xB8) draw.point=point_state(*block);
     brec->native.geometry.push_back(std::move(recorded));
 }
 bool prompt_attach(uint64_t token,uint32_t who,uint32_t list,bool overflow,const uc::PromptDescription& description,bool compact) {
@@ -1635,7 +1692,7 @@ void call_list(const SdkRef& block,uint32_t lr,uint32_t address,uint32_t length,
     catch(...) { list_readbacks.clear(); throw; }
     list_readbacks.clear();
     for (auto& item : imported) {
-        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); if(!dropped_point_draw(*draw)) draws.push_back(std::move(*draw)); }
+        if(auto* draw=std::get_if<gx::DrawPacket>(&item)) { add_guest_stat(vertex_count,draw->vertices.size()); add_guest_stat(draw_count,1); draws.push_back(std::move(*draw)); }
         else {
             auto& command=std::get<CopiedTexture>(item); copy_state=command.clear_state;
             submit_batch(inputs,false,command.clear,0,std::move(command.request));
