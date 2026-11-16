@@ -561,29 +561,31 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             }
         }
         // UC_DC_ROCKET=1 (test aid, off by default): while a chapter runs, the first player has the rocket launcher with rockets in the
-        // weapon slot kDcRocketSlot (Left on the +Control Pad). The weapon that was in that slot has no slot then. The last boss of
-        // "Memories of a Lost City" dies only from a rocket (docs/darkside-port.md, "The rest of the game").
+        // weapon slot kDcRocketSlot (Left on the +Control Pad) and the linear launcher in the slot kDcLinearSlot (Down). The weapons
+        // that were in those slots have no slot then. The last boss of "Memories of a Lost City" dies only from a rocket
+        // (docs/darkside-port.md, "The rest of the game").
         static const bool rocket = [] { const char* v = std::getenv("UC_DC_ROCKET"); return v && v[0] == '1'; }();
         if (rocket) {
             ppc::Ctx& c = sched.irq_ctx();
             const uint32_t handle = uc::title::kDcPlayerHandles, id = ppc::rd32(c, handle), index = ppc::rd32(c, handle + 4);
             if (id && index < 300 && ppc::rd32(c, uc::title::kDcObjectTable + index * 8) == id) {   // the first player exists: a chapter runs
-                const uint32_t inventory = uc::title::kDcInventory, kind = uc::title::kDcItemRocketLauncher;
-                const uint32_t count_at = inventory + uc::title::kDcInventoryCount + kind * 4, slot_at = inventory + uc::title::kDcInventorySlot;
-                const uint32_t count = ppc::rd32(c, count_at);
-                if (count < uc::title::kDcRocketCount) {
-                    if (!count) {   // a new weapon, as 800CDB84 makes it
-                        static bool said = false;
-                        for (uint32_t player = 0; player < 2; ++player) { ppc::wr32(c, inventory + kind * 8 + player * 4, 0); ppc::wr32(c, inventory + uc::title::kDcInventoryLoaded + kind * 8 + player * 4, 0xFFFFFFFF); }
-                        if (!said) { said = true; std::fprintf(stderr, "[dc-rocket] UC_DC_ROCKET=1: the first player has the rocket launcher in weapon slot %u\n", uc::title::kDcRocketSlot); }
+                static bool said = false;
+                if (!said) { said = true; std::fprintf(stderr, "[dc-rocket] UC_DC_ROCKET=1: the first player has the rocket launcher in weapon slot %u and the linear launcher in slot %u\n", uc::title::kDcRocketSlot, uc::title::kDcLinearSlot); }
+                const uint32_t inventory = uc::title::kDcInventory, slot_at = inventory + uc::title::kDcInventorySlot;
+                const uint32_t given[2][2] = {{uc::title::kDcItemRocketLauncher, uc::title::kDcRocketSlot}, {uc::title::kDcItemLinearLauncher, uc::title::kDcLinearSlot}};
+                for (const auto& [kind, slot] : given) {
+                    const uint32_t count_at = inventory + uc::title::kDcInventoryCount + kind * 4, count = ppc::rd32(c, count_at);
+                    if (count < uc::title::kDcRocketCount) {
+                        if (!count)   // a new weapon, as 800CDB84 makes it
+                            for (uint32_t player = 0; player < 2; ++player) { ppc::wr32(c, inventory + kind * 8 + player * 4, 0); ppc::wr32(c, inventory + uc::title::kDcInventoryLoaded + kind * 8 + player * 4, 0xFFFFFFFF); }
+                        ppc::wr32(c, count_at, uc::title::kDcRocketCount);
                     }
-                    ppc::wr32(c, count_at, uc::title::kDcRocketCount);
-                }
-                if (ppc::rd8(c, slot_at + kind * 2) != uc::title::kDcRocketSlot) {
-                    for (uint32_t other = 0; other < uc::title::kDcItemKinds; ++other)
-                        if (ppc::rd8(c, slot_at + other * 2) == uc::title::kDcRocketSlot) ppc::wr8(c, slot_at + other * 2, 0xFF);
-                    ppc::wr8(c, slot_at + kind * 2, uint8_t(uc::title::kDcRocketSlot));
-                    ppc::wr8(c, inventory + uc::title::kDcInventoryHerb + uc::title::kDcRocketSlot, 0);   // no herb in that slot
+                    if (ppc::rd8(c, slot_at + kind * 2) != slot) {
+                        for (uint32_t other = 0; other < uc::title::kDcItemKinds; ++other)
+                            if (ppc::rd8(c, slot_at + other * 2) == slot) ppc::wr8(c, slot_at + other * 2, 0xFF);
+                        ppc::wr8(c, slot_at + kind * 2, uint8_t(slot));
+                        ppc::wr8(c, inventory + uc::title::kDcInventoryHerb + slot, 0);   // no herb in that slot
+                    }
                 }
             }
         }

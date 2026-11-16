@@ -168,6 +168,9 @@ inline constexpr uint32_t kDcPuppetVtable = 0x806E0800, kDcPuppetHealth = 0x5C8,
 // gives the first player the rocket launcher in slot kDcRocketSlot.
 inline constexpr uint32_t kDcInventory = 0x80733694 + 0xDC, kDcInventoryCount = 0x120, kDcInventorySlot = 0x168, kDcInventoryLoaded = 0x90, kDcInventoryHerb = 0x18C;
 inline constexpr uint32_t kDcItemKinds = 18, kDcItemRocketLauncher = 11, kDcRocketSlot = 3, kDcRocketCount = 4;
+// The last boss of "Game of Oblivion" needs the linear launcher (item kind 13) in the same way ("Use the Launcher!"). The aid gives
+// it in slot kDcLinearSlot (Down).
+inline constexpr uint32_t kDcItemLinearLauncher = 13, kDcLinearSlot = 2;
 // The post-processing effects of the game are objects of one base class (docs/darkside-port.md, "The post-processing chain"). The byte
 // at +2 of an effect is its switch: the draw function of the base class (802D8D44) returns at once when it is 0, and the virtual
 // functions 802D8E60 and 802D8E78 write 1 and 0. The word at +4 is the vtable. The manager of the effects is the static object at
