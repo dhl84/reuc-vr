@@ -531,7 +531,19 @@ The headset now makes the missing module itself (`renderer/tev_fold.cpp`, app 0.
 - Checked on the headset: `UC_DEVICE_FOLD_TEST=16` in `env.txt` leaves the build's modules of one material in 16 unused. The app made 155 modules at its start (79 s instead of 4 s, once). It then ran the boss scene at 57 to 61 fps without a crash, and the frame was right.
 - `UC_NO_DEVICE_FOLD=1` turns the fold off.
 
-Not done on the headset: play by a person with the controllers, the sound, and space warp. The fifth chapter (`s10c4`) was measured before the fold and needs a new measurement.
+The fifth chapter (`s10c4`) with the app 0.0.19: the bot played it to its result screen in 20 minutes at 69.8 fps on average. 95 % of the seconds had 60 fps or more, and no second was below 45 fps. The device made two modules in play. The 45 fps of the long run came from keys without a module, not from the glow chain.
+
+The route to a chapter of "Memories of a Lost City" from a save, for `scripts/drive_quest.py`, has five steps:
+
+1. Press A on the piece of the chapter.
+2. Press A on YES in the checkpoint dialog (`aim:-0.16,0.115`).
+3. Press A on Leon (`aim:0.1,0.07`).
+4. Press A on NEXT (`aim:0.59,0.237`).
+5. Wait for the script with `until:Data/script/s10c,A,120,6000`.
+
+The piece of `s10c3` is at `aim:0.233,-0.237`, that of `s10c4` at `aim:0.033,0.068` and that of `s10c5` at `aim:0.325,0.045`. If the save holds checkpoint data of another chapter, the dialog comes. YES deletes that data. The reticle in a headset frame is not the pointer of the game. Find the places of a menu in the PC build.
+
+Not done on the headset: play by a person with the controllers, the sound, and space warp. At each start 74 pipelines fail to compile with `VkResult -13`. The `RBUE08` app has 78 such pipelines. Their draws keep the ubershader. Which pipelines they are is not known yet.
 
 ## State
 
