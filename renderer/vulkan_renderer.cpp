@@ -1763,7 +1763,10 @@ void VulkanRenderer::compile_worker() {
         VkPipeline pipeline=VK_NULL_HANDLE;
         const auto start=std::chrono::steady_clock::now();
         try { pipeline=make_pipeline(job.key,job.uber); }
-        catch (const std::exception& error) { std::fprintf(stderr,"[pipeline] background compile failed: %s\n",error.what()); }
+        catch (const std::exception& error) {   // the key's fixed state, stage count and last word tell which family of pipelines fails
+            std::fprintf(stderr,"[pipeline] background compile failed: %s (%s, key %08X stages %u first stage %06X %06X %06X state %08X)\n",error.what(),
+                         job.uber ? "ubershader" : "specialized",job.key[0],job.key[1],job.key[3],job.key[4],job.key[5],job.key[68]);
+        }
         lock.lock();
         --compiling_; ++jobs_done_;
         if (!pipeline && folded_only_ && !job.uber) {
