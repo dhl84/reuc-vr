@@ -54,10 +54,11 @@ typedef struct {
 #define LG_XR_DEFAULT_HEIGHT LG_XR_NATIVE_HEIGHT
 /* The Darkside Chronicles (UC_TITLE_DC): its scene and its post-processing passes cost more GPU time than The Umbrella Chronicles'. On a
  * Quest 3 the first fight ran at 30 to 35 fps with native eye images at 90 Hz (GPU 23 ms a frame). With the render scale 2.25 at 72 Hz
- * it ran at 66 fps on average, 60 or more in 104 of 110 seconds (15 November 2026). So that game starts with the "72 Hz, no space warp"
- * preset of the Display page. */
+ * it ran at 66 fps on average in a short test (15 November 2026). So that game starts at 72 Hz without space warp. A longer test with
+ * six shots a second (16 November 2026, after the CPU fixes of that day) gave 65 fps at the render scale 2.25 and 67 fps at 2.0, with
+ * 60 fps or more in 72 % and in 80 % of the seconds, so the default is 2.0 (eye images of 1346x1440). */
 #ifdef UC_TITLE_DC
-#define LG_XR_DEFAULT_RENDER_SCALE 2.25f
+#define LG_XR_DEFAULT_RENDER_SCALE 2.0f
 #else
 #define LG_XR_DEFAULT_RENDER_SCALE 0.0f
 #endif

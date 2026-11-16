@@ -9,7 +9,11 @@
 const XpPreset xp_presets[XP_PRESET_COUNT] = {
     { "90 Hz, space warp", 90, 1, 3, 0.0f },
     { "120 Hz, space warp", 120, 1, 3, 2.25f },
+#ifdef UC_TITLE_DC   /* The Darkside Chronicles: its default (xr_settings.h LG_XR_DEFAULT_RENDER_SCALE) */
+    { "72 Hz, no space warp", 72, 0, 3, 2.0f },
+#else
     { "72 Hz, no space warp", 72, 0, 3, 2.25f },
+#endif
 };
 int xp_preset_of(const LgXrSettings *cfg)
 {

@@ -373,7 +373,26 @@ Second day, 16 November 2026. Three faults showed only on the headset:
 
 With these changes the app (0.0.9) played the first chapter of Operation Javier from the start to "RESULTS" in 24 minutes, with the test aid `UC_DC_GOD=1` in `env.txt` and the step `bot`, and went on into the next chapter. No crash. Over that chapter the frame rate was 57.8 fps on average, with 60 fps or more in 50 % of the seconds and less than 45 fps in 11 %. The bot fires all the time, which is more load than a player makes. The GPU took 14.6 ms a frame at the median and 18.6 ms at the 95th percentile, against 13.9 ms for 72 Hz. The game makes about 16 EFB copies a frame (`copies 960` a second in `[profile]`), and the scene is drawn in three or four passes with a copy of the whole picture between them.
 
-Not done on the headset: play by a person with the controllers, the sound, space warp, and a steady 60 fps in the fights.
+The frame rate work of that day. The test is the first chapter from its first voice line to `VO_3015203.brstm` (about six minutes) with `bot:2400,12`, which is six shots a second. The step `bot:N,2` fires 36 shots a second and loads the game thread more than a player can.
+
+| Build | Change | Mean fps | Seconds at 60 fps or more | Seconds below 45 fps |
+|---|---|---|---|---|
+| 0.0.10 | the shadow map packets at 512x480 pixels | 57.6 | 44 % | 26 % |
+| 0.0.10 | render scale 2.0 instead of 2.25 | 58.4 | 48 % | 21 % |
+| 0.0.11 | profile-guided optimization | 58.7 | 47 % | 19 % |
+| 0.0.12 | no `RBUE08` state probe | 65.2 | 72 % | 1 % |
+| 0.0.12 | render scale 2.0 | 67.2 | 80 % | 0 % |
+
+How the causes were found:
+
+- `UC_GPU_PACKETS=1` in `env.txt` prints the GPU time of each kind of packet. In the first fight the scene took 12.2 ms a frame, the shadow map packets 3.4 ms, the post-processing chain 2.4 ms and the present 2.2 ms. The shadow map packets were drawn at the scale of the frame buffer (1211x2160 pixels for each eye). They are now drawn at one pixel for each guest pixel (`kNativeCopyWidth`), which takes 1.2 ms and gives sharper shadows.
+- `simpleperf record --app org.uc.darksidechronicles.vr -e cpu-clock -g` on the headset showed that a third of the CPU time of the game thread was in `input_probe_snapshot`. It reads `RBUE08` game state at fixed addresses for each `KPADRead`. In this game the reads fail, and each failed read throws. The probe now returns nothing for another game.
+- The profile for the optimizer is recorded on the headset: `UC_QUEST_PGO=generate scripts/build-quest.sh` builds an instrumented app, a run with `--seconds 900` in `args.txt` writes `uc.profraw` into the app folder when the game exits, and `llvm-profdata merge` of the NDK makes `project/pgo/dc-quest.profdata` from it. The folder `project/pgo` is not in the repository.
+- The boost levels of the CPU and the GPU (`UC_CPU_BOOST=1`, `UC_GPU_LEVEL=boost`) changed nothing in this test.
+
+The app now starts with the render scale 2.0. At that scale the test ran at the full 72 fps in 64 % of the seconds, and the GPU took 10.6 ms a frame at the median and 16.9 ms at the 95th percentile.
+
+Not done on the headset: play by a person with the controllers, the sound, space warp, and the rest of the GPU time in the heaviest scenes.
 
 ## State
 
