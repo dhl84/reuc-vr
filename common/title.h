@@ -55,11 +55,17 @@ inline constexpr uint32_t kMem1ArenaHi = 0x817D8320;
 // was 0.68 MB too small when the first chapter started. The allocation of a 1 MB heap at 80358284 then returned 0, the heap was
 // made at address 0, and its header went over low memory (the active thread queue at 800000DC): "Loading data" never ended.
 inline constexpr uint32_t kMem2ArenaHi = 0x935E0000;
-// The game copies a 512x512 part of the frame buffer of the console (640x528) to a GX_TF_Z16 texture for its shadows (8033B9B8).
-// The native renderers have a 640x480 colour buffer and no depth copies: a copy takes the lines that exist (stretched to its
-// texture), and the depth texture reads as the farthest depth in every texel (gx::TextureChannels::depth_far), so the game draws
-// no shadow. An approximation.
+// The game draws its shadow casters, black on white, into a 512x512 part of the frame buffer of the console (640x528), from the light
+// (8033B69C). It copies that part three times: to a GX_TF_Z16 texture (8033B9B8), at half size to a GX_CTF_R8 texture (8033BBA0), and,
+// after it has added the half-size texture seven times at small offsets, to the GX_CTF_R8 texture that the materials of the scene
+// lay over the ground (8033C528). The native renderers have a 640x480 colour buffer. A copy that names lines below 480 takes the
+// lines that exist. They keep their place in the texture (gx::TextureCopy::lines, Vulkan renderer): stretched over the whole texture,
+// the seven additions read the casters 6 % of their line number away from where they add, which made every shadow white.
+// The casters of the last 32 lines are not drawn.
 inline constexpr uint32_t kEfbCopyLines = 528;
+// The materials with the depth flag (byte 12 of their shadow data, 8033DF24) read the GX_TF_Z16 copy as GX_TF_IA8 with a ramp
+// texture. No draw of the first chapter does. The native renderers have no depth copies: the texture reads as the farthest depth
+// in every texel (gx::TextureChannels::depth_far), so such a material draws no shadow. An approximation.
 inline constexpr bool kDepthCopyAsFar = true;
 // The game measures the brightness of the picture for its exposure: it copies the middle of the frame buffer to GX_TF_I8 twice, the
 // second time to a 32x16 texture (8036AD98), and then reads 66 bytes of that texture from memory (8036AE74). From their mean it takes

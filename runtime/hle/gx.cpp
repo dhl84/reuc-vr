@@ -205,7 +205,7 @@ struct Resource {
     struct Current { uint32_t row; };
     struct MatrixIndex { uint32_t reg,value; };
     struct CopyClear { CopyState state; };
-    struct TextureCopy { std::array<uint32_t,4> source; uint32_t address,width,height; bool clear; uint32_t format=6; };
+    struct TextureCopy { std::array<uint32_t,4> source; uint32_t address,width,height; bool clear; uint32_t format=6; uint32_t lines=0; };   // lines: gx::TextureCopy::lines
     struct TextureBinding { uint32_t map; TextureSource source; };
     struct PaletteLoad { uint32_t region; PaletteSource source; };
     struct Blend { gx::BlendState state; };
@@ -976,7 +976,7 @@ void import_resource(uint32_t address,uint32_t length,gx::State& bindings,gx::Tr
             if(const auto found=std::find_if(list_readbacks.begin(),list_readbacks.end(),[&](const auto& entry){ return entry.first==command->address; });found!=list_readbacks.end()) { readback=std::move(found->second); list_readbacks.erase(found); }
             auto target=make_copy_texture(command->address,command->width,command->height,command->format,std::move(readback));
             versions[command->address&0x3FFFFFFF]=target;
-            imported.push_back(CopiedTexture{{command->source,std::move(target)},command->clear,copy});
+            imported.push_back(CopiedTexture{{command->source,std::move(target),command->lines},command->clear,copy});
         }
         else if (const auto* binding=std::get_if<Resource::TextureBinding>(&item)) textures[binding->map]=binding->source;
         else if (const auto* palette=std::get_if<Resource::PaletteLoad>(&item)) loaded[palette->region]=load_palette(palette->source);
@@ -1964,6 +1964,8 @@ void hle_GXCopyTex(ppc::Ctx& c) {
     if((address&31) || c.r[4]>1 || !texture_copy_source[2] || !texture_copy_width || !texture_copy_height) throw std::invalid_argument("invalid native EFB texture copy request");
     memory.read(address,gx::encoded_texture_size({texture_copy_width,texture_copy_height,copy_storage_format(texture_copy_format),1}));
     memory.read(sdk,0x254);
+    // The source height that the game named (the SDK's word of GXSetTexCopySrc) when the native buffer has fewer lines (gx::TextureCopy::lines).
+    const uint32_t named=((read32(sdk+0x244)>>10)&1023)+1,lines=uc::title::kEfbCopyLines>480 && (read32(sdk+0x244)>>24)==0x4A && named>texture_copy_source[3] ? named : 0;
     const auto control=(read32(sdk+0x24C)&~0xFF004800u)|0x52000000u|c.r[4]<<11;
     if(profile_mesh) back([clear=c.r[4],source=texture_copy_source,width=texture_copy_width,height=texture_copy_height,blend=read32(sdk+0x220),depth=read32(sdk+0x228)] {
         if(!mesh_profile_count || copy_profile_count>=24) return;
@@ -1977,7 +1979,7 @@ void hle_GXCopyTex(ppc::Ctx& c) {
         if(c.r[4]) for(auto word:{read32(sdk+0x228),read32(sdk+0x220)}) { uc::gx_fifo_store(1,0x61); uc::gx_fifo_store(4,word); }
         if(recording_push()) {
             front_list->effects.push_back({FrontEffect::texture_copy,address,texture_copy_width|texture_copy_height<<11|texture_copy_format<<22});
-            back([copy=Resource::TextureCopy{texture_copy_source,address,texture_copy_width,texture_copy_height,c.r[4]!=0,texture_copy_format}] { brec->native.geometry.push_back(copy); });
+            back([copy=Resource::TextureCopy{texture_copy_source,address,texture_copy_width,texture_copy_height,c.r[4]!=0,texture_copy_format,lines}] { brec->native.geometry.push_back(copy); });
         }
         ppc::wr32(c,sdk+0x24C,control); ppc::wr16(c,sdk+2,0);
         return;
@@ -1985,10 +1987,10 @@ void hle_GXCopyTex(ppc::Ctx& c) {
     std::shared_ptr<gx::CopyReadback> readback;
     if(copy_is_read_back(texture_copy_width,texture_copy_height,texture_copy_format)) readback=request_readback(address,texture_copy_width,texture_copy_height);   // SBDE08: the game reads this copy from memory
     next_seal();
-    back([inputs=seal_inputs(),address,width=texture_copy_width,height=texture_copy_height,format=texture_copy_format,source=texture_copy_source,clear=c.r[4]!=0,readback] {
+    back([inputs=seal_inputs(),address,width=texture_copy_width,height=texture_copy_height,format=texture_copy_format,source=texture_copy_source,clear=c.r[4]!=0,readback,lines] {
         auto target=make_copy_texture(address,width,height,format,readback);
         const auto [entry,inserted]=copied_textures.try_emplace(address&0x3FFFFFFF);
-        try { submit_batch(inputs,false,clear,0,gx::TextureCopy{source,target}); }
+        try { submit_batch(inputs,false,clear,0,gx::TextureCopy{source,target,lines}); }
         catch(...) { if(inserted) copied_textures.erase(entry); throw; }
         entry->second=std::move(target);
     });

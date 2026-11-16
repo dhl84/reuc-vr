@@ -907,7 +907,7 @@ VulkanRenderer::Texture VulkanRenderer::make_copy_texture(const std::shared_ptr<
     result.source=source; result.initialized=false;
     return result;
 }
-void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source, VkExtent2D extent, const std::array<uint32_t,4>& region, Texture& target, VkImageLayout before) {
+void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source, VkExtent2D extent, const std::array<uint32_t,4>& region, Texture& target, VkImageLayout before, uint32_t lines) {
     const auto [x,y,width,height]=region;
     const bool initialized=before!=VK_IMAGE_LAYOUT_UNDEFINED;
     barrier(command,target.image,before,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,initialized ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_2_NONE,
@@ -916,6 +916,15 @@ void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source
     copy.srcOffsets[0]={int32_t(uint64_t(x)*extent.width/640),int32_t(uint64_t(y)*extent.height/480),0};
     copy.srcOffsets[1]={std::max(copy.srcOffsets[0].x+1,int32_t(uint64_t(x+width)*extent.width/640)),std::max(copy.srcOffsets[0].y+1,int32_t(uint64_t(y+height)*extent.height/480)),1};
     copy.dstOffsets[1]={int32_t(target.extent.width),int32_t(target.extent.height),1};
+    // The game named more lines than the buffer has (gx::TextureCopy::lines): the lines that exist keep their place in the texture, and
+    // the rows below them repeat the last line.
+    const int32_t filled=lines>height ? std::clamp(int32_t(uint64_t(target.extent.height)*height/lines),1,int32_t(target.extent.height)) : int32_t(target.extent.height);
+    if(filled<int32_t(target.extent.height)) {
+        VkImageBlit parts[2]{copy,copy};
+        parts[0].dstOffsets[1].y=filled;
+        parts[1].srcOffsets[0].y=copy.srcOffsets[1].y-1; parts[1].dstOffsets[0].y=filled;
+        vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,2,parts,VK_FILTER_LINEAR);
+    } else
     vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy,VK_FILTER_LINEAR);
     if(target.intensity_sets[0]) {   // GX_TF_I8: the copied colour becomes the hardware's Y in every channel (SBDE08)
         barrier(command,target.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_STORAGE_READ_BIT|VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,VK_IMAGE_ASPECT_COLOR_BIT,target.mip_levels);
@@ -2136,7 +2145,7 @@ void VulkanRenderer::record_upscale(VkCommandBuffer command, bool black_output) 
     if (scene_restore_copy_) {   // restore reconstructed pixels after bloom, rather than the raw jittered scene saved before this boundary
         slots_[next_slot_].copy_sources.push_back(scene_restore_copy_->target);   // the refresh submission owns this GPU use too
         auto& texture=copy_textures_.at(scene_restore_copy_->target.get());
-        record_texture_copy(command,efb_,efb_extent_,scene_restore_copy_->source,texture,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        record_texture_copy(command,efb_,efb_extent_,scene_restore_copy_->source,texture,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,scene_restore_copy_->lines);
         scene_restore_copy_.reset();
     }
     // Draws after the boundary (particles in front of the HUD, 3D markers) test against the scene depth.
@@ -5057,8 +5066,8 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if (!packet.draws.empty() || copy_target || packet.present || packet.clear_only || packet.clear_after_copy || overlay_frame) record_efb_clear(slot.command,packet.draws.empty() ? "copy or present" : "draws, no EFB pass");
     const PassTarget& active=scene_only ? scene_target : efb_target;
     if(copy_target) {
-        if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED);
-        else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED);
+        if (bloom_chain) record_texture_copy(slot.command,bloom_proxy_.color,bloom_proxy_.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
+        else record_texture_copy(slot.command,active.color,active.extent,packet.texture_copy->source,*copy_target,VK_IMAGE_LAYOUT_UNDEFINED,packet.texture_copy->lines);
         if(const auto& readback=packet.texture_copy->target->readback) {   // the game reads this copy from memory (SBDE08's exposure): level 0 of the first layer goes to a buffer, collect() delivers it
             const auto extent=copy_target->extent; const VkDeviceSize bytes=VkDeviceSize(extent.width)*extent.height*4;
             if(slot.readback.size<bytes) { destroy_buffer(slot.readback); slot.readback=make_buffer(bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT,false,true); }

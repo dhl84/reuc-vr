@@ -18,6 +18,11 @@ using DrawQueue=std::deque<DrawPacket,FrameAllocator<DrawPacket>>;
 struct TextureCopy {
     std::array<uint32_t,4> source; // x,y,width,height in the SDK's640x480 EFB coordinates
     std::shared_ptr<const TexturePixels> target;
+    // The height of the source as the game named it, when that is more than the lines that the native buffer has (SBDE08 copies 512 lines
+    // of the 528 of the console's buffer for its shadows, common/title.h kEfbCopyLines). The `source` lines then fill the part
+    // source[3]/lines of the target's height, so a line keeps its place in the texture, and the rest repeats the last line. 0: the
+    // source fills the target. The Vulkan renderer reads it; the DirectX renderers stretch the source over the target.
+    uint32_t lines=0;
 };
 struct FramePacket {
     uint64_t serial = 0;
