@@ -20,6 +20,7 @@
 #include "buffer_memory.h"
 #include "upscale_math.h"
 #include "upscaler_probe.h"
+#include "tev_fold.h"
 #ifdef _WIN32
 #include <vulkan/vulkan_win32.h>
 #endif
@@ -117,6 +118,7 @@ uint32_t chain_points() {
 struct GpuOps { uint64_t frames=0, efb_passes=0, other_passes=0, copies=0, corner_blits=0; double copy_pixels=0; };
 GpuOps gpu_ops;
 const bool gpu_ops_on=std::getenv("UC_GPU_PACKETS")!=nullptr;
+thread_local bool no_device_fold=false;   // the render thread, around a pipeline that it compiles itself (pipeline_for): no fold_module there
 // The guest rectangle that a flat draw can reach (x0, y0, x1, y1 in guest pixels, with the origin of efb_viewport): the box of its
 // vertices in its viewport. Nothing for a draw of the world, of the reticle, or with a depth test or a depth write.
 std::optional<std::array<float,4>> flat_draw_rect(const gx::DrawPacket& draw) {
@@ -1247,7 +1249,9 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
     bool uber=uber_only_;
     if (compile_guard_.bad(uber ? fixed : key,uber) && !compile_guard_.bad(uber ? key : fixed,!uber)) uber=!uber;   // its compile crashed the driver before: the other form of the draw
     const auto start=std::chrono::steady_clock::now();
+    no_device_fold=true;   // a fold takes a second or two: the compile threads do it when the key comes to them (queue_pipeline at the next draw)
     auto pipeline=make_pipeline(uber ? fixed : key,uber);
+    no_device_fold=false;
     if (!pipeline && !uber) { uber=true; pipeline=make_pipeline(fixed,true); }   // no folded module on the headset (make_pipeline): the ubershader
     const PipelineKey& wanted=uber ? fixed : key;
     const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
@@ -1414,13 +1418,84 @@ VkPipeline VulkanRenderer::make_shadow_pipeline() {
 // The build-time specialized TEV fragment module for these constants and variant (1: early-Z; 2, 3: the same with the texture table), or null;
 // loaded once, kept until shutdown.
 // Names: FNV-1a 64 of the 68 constants (little-endian words) and the variant byte, as tools/fold_tev_shaders.py writes them.
-VkShaderModule VulkanRenderer::folded_module(const std::array<uint32_t,68>& values,bool early,bool table) {
-    static const bool off=std::getenv("UC_NO_FOLDED_SHADERS")!=nullptr;   // diagnostics: the driver specializes every pipeline
-    if (off) return VK_NULL_HANDLE;
+namespace {
+uint64_t folded_name(const std::array<uint32_t,68>& values,bool early,bool table) {
     uint64_t hash=0xCBF29CE484222325ull;
     const auto mix=[&](uint8_t byte) { hash^=byte; hash*=0x100000001B3ull; };
     for (const uint32_t value:values) for (int shift=0;shift<32;shift+=8) mix(uint8_t(value>>shift));
     mix(uint8_t((early ? 1 : 0)|(table ? 2 : 0)));   // 2, 3: the texture-table modules (TEX_TABLE)
+    return hash;
+}
+std::vector<uint32_t> spirv_words(const std::filesystem::path& path) {   // the words of a SPIR-V file, or nothing
+    std::ifstream in(path,std::ios::binary);
+    const std::vector<char> code((std::istreambuf_iterator<char>(in)),{});
+    std::vector<uint32_t> words(code.size()/4);
+    if (code.empty() || code.size()%4) return {};
+    std::memcpy(words.data(),code.data(),code.size());
+    if (words[0]!=0x07230203u) return {};
+    return words;
+}
+}
+// The folder of the modules made on the device: one for each set of TEV modules, so a new build never takes a module of an old one.
+void VulkanRenderer::open_device_fold() {
+    device_fold_=layers_>1 && uc::tev_fold_available() && !std::getenv("UC_NO_DEVICE_FOLD") && !std::getenv("UC_NO_FOLDED_SHADERS");
+    if (!device_fold_) return;
+    uint64_t hash=0xCBF29CE484222325ull;
+    for (const char* name:{"smoke.stereo.frag.spv","smoke.stereo.early.frag.spv","smoke.stereo.tex.frag.spv","smoke.stereo.tex.early.frag.spv"})
+        for (const uint32_t word:spirv_words(shaders_/name)) { hash^=word; hash*=0x100000001B3ull; }
+    char folder[40]; std::snprintf(folder,sizeof folder,"folded-%016llx",(unsigned long long)hash);
+    device_folded_dir_=cache_dir_/folder;
+    std::error_code error;
+    for (const auto& entry:std::filesystem::directory_iterator(cache_dir_,error))   // the modules of other builds
+        if (entry.is_directory(error) && entry.path().filename().string().rfind("folded-",0)==0 && entry.path()!=device_folded_dir_) std::filesystem::remove_all(entry.path(),error);
+    std::filesystem::create_directories(device_folded_dir_,error);
+    size_t kept=0;
+    for (const auto& entry:std::filesystem::directory_iterator(device_folded_dir_,error)) kept+=entry.path().extension()==".spv";
+    std::fprintf(stderr,"[pipeline] TEV modules are folded on the device for keys without one: %zu kept from earlier runs\n",kept);
+}
+VkShaderModule VulkanRenderer::fold_module(const std::array<uint32_t,68>& values,bool early,bool table) {
+    const uint64_t hash=folded_name(values,early,table);
+    const uint32_t variant=(early ? 1u : 0u)|(table ? 2u : 0u);
+    std::lock_guard one(fold_mutex_);   // one fold at a time: the game's threads keep their cores
+    {   // another compile thread made it while this one waited (keys that differ in their fixed state only share a module)
+        std::lock_guard guard(folded_mutex_);
+        if (const auto found=folded_modules_.find(hash); found!=folded_modules_.end() && found->second) return found->second;
+    }
+    auto& base=fold_base_[variant];
+    if (base.empty()) {
+        static const char* const names[4]={"smoke.stereo.frag.spv","smoke.stereo.early.frag.spv","smoke.stereo.tex.frag.spv","smoke.stereo.tex.early.frag.spv"};
+        base=spirv_words(shaders_/names[variant]);
+        if (base.empty()) { std::fprintf(stderr,"[pipeline] device fold: cannot read %s\n",names[variant]); return VK_NULL_HANDLE; }
+    }
+    const auto start=std::chrono::steady_clock::now();
+    std::string why;
+    const auto words=uc::tev_fold(base,values,why);
+    const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+    if (words.empty()) { std::fprintf(stderr,"[pipeline] device fold failed: %s\n",why.c_str()); return VK_NULL_HANDLE; }
+    VkShaderModule module=VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize=words.size()*4; info.pCode=words.data();
+    if (vkCreateShaderModule(device,&info,nullptr,&module)!=VK_SUCCESS) return VK_NULL_HANDLE;
+    char file[32]; std::snprintf(file,sizeof file,"%016llx.spv",(unsigned long long)hash);
+    {   // kept for the next starts; written whole, then renamed
+        const auto path=device_folded_dir_/file; auto temporary=path; temporary+=".tmp";
+        std::error_code error;
+        if (std::ofstream out(temporary,std::ios::binary|std::ios::trunc); out.write(reinterpret_cast<const char*>(words.data()),std::streamsize(words.size()*4))) { out.close(); std::filesystem::rename(temporary,path,error); }
+        else error=std::make_error_code(std::errc::io_error);
+        if (error) std::fprintf(stderr,"[pipeline] device fold: cannot keep %s\n",path.string().c_str());
+    }
+    {
+        std::lock_guard guard(folded_mutex_);
+        folded_modules_[hash]=module;   // in place of the remembered miss
+    }
+    ++device_folds_; device_fold_ms_+=ms;
+    if (device_folds_<=8 || (device_folds_&15)==0)
+        std::fprintf(stderr,"[pipeline] device fold: %llu modules made (this one %.0f ms, %zu of %zu words; %.0f ms in all)\n",(unsigned long long)device_folds_,ms,words.size(),base.size(),device_fold_ms_);
+    return module;
+}
+VkShaderModule VulkanRenderer::folded_module(const std::array<uint32_t,68>& values,bool early,bool table) {
+    static const bool off=std::getenv("UC_NO_FOLDED_SHADERS")!=nullptr;   // diagnostics: the driver specializes every pipeline
+    if (off) return VK_NULL_HANDLE;
+    const uint64_t hash=folded_name(values,early,table);
     std::lock_guard guard(folded_mutex_);
     if (const auto found=folded_modules_.find(hash); found!=folded_modules_.end()) return found->second;
     char file[32]; std::snprintf(file,sizeof file,"%016llx.spv",(unsigned long long)hash);
@@ -1429,6 +1504,10 @@ VkShaderModule VulkanRenderer::folded_module(const std::array<uint32_t,68>& valu
     static const char* const folded_dir=std::getenv("UC_RELAXED_TEV") ? "folded_rp" : "folded";
     std::ifstream in(shaders_/folded_dir/file,std::ios::binary);
     std::vector<char> code((std::istreambuf_iterator<char>(in)),{});
+    if (code.empty() && device_fold_) {   // a module that an earlier run made on the device (fold_module)
+        std::ifstream kept(device_folded_dir_/file,std::ios::binary);
+        code.assign((std::istreambuf_iterator<char>(kept)),{});
+    }
     if (!code.empty() && code.size()%4==0) {
         VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize=code.size(); info.pCode=reinterpret_cast<const uint32_t*>(code.data());
         if (vkCreateShaderModule(device,&info,nullptr,&module)!=VK_SUCCESS) module=VK_NULL_HANDLE;
@@ -1519,6 +1598,9 @@ VkPipeline VulkanRenderer::make_pipeline(const PipelineKey& key,bool uber) {
                 for (uint32_t stage=0;stage<std::min<uint32_t>(key[1],16);++stage) all_indirect[4+4*stage]&=~kTevDirectStage;
                 if (all_indirect!=spec_values) folded=folded_module(all_indirect,early_variant,table);
             }
+            // No module of the build fits: the headset makes the module of this key now (fold_module, a second or two on this compile
+            // thread). The render thread never does that: its draw takes the ubershader, and the key goes to the compile threads.
+            if (!folded && device_fold_ && !no_device_fold) folded=fold_module(spec_values,early_variant,table);
             if (folded) { stages[1].module=folded; stages[1].pSpecializationInfo=nullptr; }
             // No folded module (a key that the build's lists do not have): the driver would specialize the 600 KB module itself. The Adreno
             // shader compiler fails there (VkResult -13) or crashes (libllvm-qgl.so, five times on a Quest 3 on 15 and 16 November 2026).
@@ -1619,7 +1701,10 @@ void VulkanRenderer::load_pipeline_cache() {
     std::fprintf(stderr,"[pipeline] disk cache bytes=%zu\n",data.size());
 #if defined(__ANDROID__)
     folded_only_=layers_>1 && std::getenv("UC_UNFOLDED_PIPELINES")==nullptr;   // UC_UNFOLDED_PIPELINES=1: the driver's specialization, as before
+#else
+    folded_only_=layers_>1 && std::getenv("UC_FOLDED_ONLY")!=nullptr;   // test aid: the stereo preview compiles as the headset does
 #endif
+    open_device_fold();
     if (const size_t bad=compile_guard_.open(cache_dir_))
         std::fprintf(stderr,"[pipeline] %zu pipelines are not compiled: the graphics driver crashed in their compile (%zu found in the last run)\n",bad,compile_guard_.new_bad());
     g_compile_guard.store(&compile_guard_);

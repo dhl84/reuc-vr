@@ -447,6 +447,42 @@ else()
   target_link_libraries(uc_vulkan PRIVATE uc_miniz)   # PNG captures (png.cpp); Windows encodes them with WIC
 endif()
 add_dependencies(uc_vulkan uc_smoke_shaders)
+# The headset makes the TEV fragment module of a pipeline key that the build's lists do not have (tev_fold.cpp), as
+# tools/fold_tev_shaders.py does at build time. It needs the optimizer of SPIRV-Tools, in the version of the build's spirv-opt.
+# Without UC_DEVICE_FOLD such a key keeps the ubershader until a later build lists it.
+# UC_SPIRV_ARCHIVE_DIR: a folder that holds the two source archives, for a build without the network.
+if(ANDROID)
+  set(UC_DEVICE_FOLD_DEFAULT ON)
+else()
+  set(UC_DEVICE_FOLD_DEFAULT OFF)
+endif()
+option(UC_DEVICE_FOLD "Make TEV fragment modules for new pipeline keys at run time (SPIRV-Tools optimizer)" ${UC_DEVICE_FOLD_DEFAULT})
+target_sources(uc_vulkan PRIVATE tev_fold.cpp)
+if(UC_DEVICE_FOLD)
+  set(spirv_tag vulkan-sdk-1.4.363.0)
+  set(spirv_headers_archive "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/${spirv_tag}.tar.gz")
+  set(spirv_tools_archive "https://github.com/KhronosGroup/SPIRV-Tools/archive/refs/tags/${spirv_tag}.tar.gz")
+  if(UC_SPIRV_ARCHIVE_DIR AND EXISTS "${UC_SPIRV_ARCHIVE_DIR}/SPIRV-Headers-${spirv_tag}.tar.gz" AND EXISTS "${UC_SPIRV_ARCHIVE_DIR}/SPIRV-Tools-${spirv_tag}.tar.gz")
+    set(spirv_headers_archive "${UC_SPIRV_ARCHIVE_DIR}/SPIRV-Headers-${spirv_tag}.tar.gz")
+    set(spirv_tools_archive "${UC_SPIRV_ARCHIVE_DIR}/SPIRV-Tools-${spirv_tag}.tar.gz")
+  endif()
+  set(SPIRV_HEADERS_SKIP_EXAMPLES ON CACHE BOOL "" FORCE)
+  set(SPIRV_HEADERS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+  set(SPIRV_SKIP_TESTS ON CACHE BOOL "" FORCE)
+  set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
+  set(SPIRV_WERROR OFF CACHE BOOL "" FORCE)
+  set(SKIP_SPIRV_TOOLS_INSTALL ON CACHE BOOL "" FORCE)
+  set(SPIRV_TOOLS_BUILD_STATIC ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(SPIRV-Headers URL "${spirv_headers_archive}"
+    URL_HASH SHA256=5b3a0d099f5c7649e29c0938476c462e71d66ad89a0bde42fa1ba3eb476956c9
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE EXCLUDE_FROM_ALL)
+  FetchContent_Declare(SPIRV-Tools URL "${spirv_tools_archive}"
+    URL_HASH SHA256=e6c83a215538fbfd265ccf398d3877985055df1273dbed73912bd05307664688
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(SPIRV-Headers SPIRV-Tools)
+  target_link_libraries(uc_vulkan PRIVATE SPIRV-Tools-opt)
+  target_compile_definitions(uc_vulkan PRIVATE UC_DEVICE_FOLD=1)
+endif()
 set_property(TARGET uc_vulkan APPEND PROPERTY INTERFACE_LINK_DEPENDS ${UC_SHADER_FILES})
 if(WIN32)
   add_executable(renderer_smoke ${CMAKE_SOURCE_DIR}/tests/renderer_smoke.cpp)

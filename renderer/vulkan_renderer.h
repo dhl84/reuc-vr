@@ -300,6 +300,13 @@ private:
     VkPipeline table_pipeline(const PipelineKey& key);   // the texture-table variant of a draw's pipeline when compiled (else queued, null)
     VkPipeline uber_merge_pipeline(const PipelineKey& key,uint32_t family=0);   // the small-draw ubershader pipeline of the draw's fixed-function state when compiled (else queued, null)
     std::mutex folded_mutex_; std::unordered_map<uint64_t,VkShaderModule> folded_modules_;
+    // The headset: a key without a module of the build gets one made on the device (tev_fold.h), on a compile thread, one at a time.
+    // The module is kept in device_folded_dir_ (the cache folder, a folder for each set of TEV modules) for the next starts.
+    VkShaderModule fold_module(const std::array<uint32_t,68>& values,bool early,bool table);
+    void open_device_fold();
+    bool device_fold_=false; std::mutex fold_mutex_; std::filesystem::path device_folded_dir_;
+    std::array<std::vector<uint32_t>,4> fold_base_;   // the words of the four TEV modules (folded_module's variants), read at their first use
+    uint64_t device_folds_=0; double device_fold_ms_=0;   // fold_mutex_
     void queue_pipeline(const PipelineKey& key,bool uber);   // pipelines_mutex_ held
     void load_pipeline_cache();
     void save_pipeline_cache();
