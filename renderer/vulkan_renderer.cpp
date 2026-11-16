@@ -129,6 +129,20 @@ std::optional<std::array<float,4>> flat_draw_rect(const gx::DrawPacket& draw) {
     return std::array<float,4>{v[0]-1.f/12+(std::max((*box)[0],-1.f)*.5f+.5f)*v[2],v[1]-1.f/12+(std::max((*box)[1],-1.f)*.5f+.5f)*v[3],
                                v[0]-1.f/12+(std::min((*box)[2],1.f)*.5f+.5f)*v[2],v[1]-1.f/12+(std::min((*box)[3],1.f)*.5f+.5f)*v[3]};
 }
+// UC_GPU_PACKETS: the draws that took the ubershader because their own pipeline is not there (on the headset: a key without a folded
+// TEV module), by call site, each 2 s. The area is the guest rectangle of a flat draw (flat_draw_rect); a draw of the world adds none.
+void note_uber_fallback(const gx::DrawPacket& draw) {
+    struct Site { uint64_t draws=0, world=0; double area=0; };
+    static std::map<uint32_t,Site> sites; static auto since=std::chrono::steady_clock::now();
+    auto& site=sites[draw.callsite]; ++site.draws;
+    if (const auto rect=flat_draw_rect(draw)) site.area+=double(std::max(0.f,(*rect)[2]-(*rect)[0]))*std::max(0.f,(*rect)[3]-(*rect)[1]);
+    else ++site.world;
+    if (std::chrono::steady_clock::now()-since<std::chrono::seconds(2)) return;
+    std::fprintf(stderr,"[uber-fallback] 2 s:");
+    for (const auto& [callsite,s]:sites) std::fprintf(stderr," %08X %llu draws (%llu not flat) %.2f guest Mpx;",callsite,(unsigned long long)s.draws,(unsigned long long)s.world,s.area/1e6);
+    std::fprintf(stderr,"\n");
+    sites.clear(); since=std::chrono::steady_clock::now();
+}
 bool holds_rect(const std::array<float,4>& outer,const std::array<float,4>& inner) {   // with a fifth of a guest pixel of slack
     return inner[0]>=outer[0]-.2f && inner[1]>=outer[1]-.2f && inner[2]<=outer[2]+.2f && inner[3]<=outer[3]+.2f;
 }
@@ -3291,6 +3305,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const bool indexed=draw.state->descriptors[0]!=gx::Mode::none;
         DrawGpu info; info.indexed=indexed; info.current=draw.transforms->current;
         info.key=pipeline_key(draw); info.choice=pipeline_for(info.key);
+        if (gpu_ops_on && info.choice.uber) note_uber_fallback(draw);
         if (draw.mesh) {
             GpuMesh& mesh=gpu_mesh(draw.mesh);   // uploaded and validated on first use
             if (mesh.index_count % group != 0) throw std::invalid_argument("index count does not match native draw topology");
