@@ -289,7 +289,7 @@ How the game finishes its picture, and what the port does with it (16 November 2
 ### The effect objects
 
 - Each effect is an object of one base class. The byte at `+2` is its switch. The word at `+4` is its vtable. When the switch is 0, the draw function of the base class (802D8D44) returns. If not, it calls the draw function of the effect (vtable `+0x18`). The virtual functions 802D8E60 and 802D8E78 write 1 and 0 to the switch.
-- The manager of the effects is the static object at 8075B010. Its getter is 80323304. It holds two sets of effects, at `+2824` and at `+4336`. The function 803254A8 builds a set of nine effects. The glow is at `+220` of the set. Its vtable is 806EE568 and its draw function is 802A5E30. This was read from memory in a run.
+- The manager of the effects is the static object at 8075B010. Its getter is 80323304. It holds three sets of effects. It draws the set at `+64`. Two more sets are at `+2824` and at `+4336`. A set has nine effects (803254A8 builds one). The glow is at `+220` of a set. Its vtable is 806EE568 and its draw function is 802A5E30. This was read from memory in a run.
 - The other draw functions are named by the order of their code, not by a look at memory: the soft focus 802A6E78, the colour filter 802DCD08, the exposure 8036AFC4 with its measure 8036ABD0, and a colour gradient 8036B6C4. What the effects with the draw functions 802A0040, 802D1064 and 80310AE4 draw was not looked at.
 - Four helpers draw the quads. 802A0978 draws a quad with a texture (call site 802A0B04). 802A0C40 does the same with a moved texture (802A0DBC). 802A0EF8 draws a quad of one colour (802A100C). 802A1E40 draws a quad with a texture and puts a part of the picture back (802A1F8C).
 - Every effect works in the top left corner of the frame buffer, on top of the finished scene. It draws a small picture there, copies the corner to a texture, and draws the next step with that texture. Before an effect uses the corner, it copies the corner of the scene to a texture. After its last step it draws that texture back.
@@ -350,7 +350,7 @@ The log of a run on the headset on 16 November 2026 has the GPU time of each kin
 - When a packet reads what the chain did not draw, the renderer first copies the corner of the frame buffer into the proxy. An opaque first quad of a packet makes its part of the corner. All the chains of the two chapters start with such a quad, so the corner is never copied in.
 - The game puts the corner of the picture back with an opaque quad of its own (call site 802A1F8C or 802A0B04). Sometimes the first draw of the next packet is such a quad over all that the chain drew. Then the proxy is not copied back.
 - `UC_CHAIN_SCALE=1` to `4` gives the proxy that number of points for each guest pixel, and the copies of the chain that size. This is for tests. With 1 or 2 the steps of the chain are softer, and small bright things lose their glow.
-- **The glow switch.** With the bloom switch of the port off, the game draws no glow. The switch is `graphics.bloom` in `config.json`. On the headset it is `glow` in `vr.cfg`, or Glow in the settings panel. The port then holds the switch byte of the two glow effects at 0 (`kDcGlowEffects`). `UC_DC_GLOW=0` or `1` decides instead of the switch. The glow is on by default.
+- **The glow switch.** With the bloom switch of the port off, the game draws no glow. The switch is `graphics.bloom` in `config.json`. On the headset it is `glow` in `vr.cfg`, or Glow in the settings panel. The port then holds the switch byte of the three glow effects at 0, one in each set (`kDcGlowEffects`). The two later sets alone are not sufficient: the game then still draws the glow. `UC_DC_GLOW=0` or `1` decides instead of the switch. The glow is on by default.
 - The empty draw function 8029FFE0 in the vtable of the glow effect is no way to turn the glow off. The base class then still prepares the draw, and the effects after the glow draw at twice their size.
 
 ### Test aids
@@ -372,7 +372,10 @@ The method. `UC_DC_FREEZE_FILE` stops the game time in a scene. `UC_CHAIN_AB` th
 - Runs that also joined packets (as `UC_JOIN_DEAD_COPIES=1` does now) had the same result in five of six scenes. In one fight scene of the first chapter the marks on a wall were brighter: 0.38 % of the pixels differed by more than 16 levels. The cause is not found. So the port does not join packets by default.
 - A run that only dropped dead copies (`UC_NO_BLOOM_PROXY=1`) showed no difference above the noise of its two scenes.
 - The proxy with fewer points changes the picture. With `UC_CHAIN_SCALE=1` the mean difference to the old way was 1.7 to 2.0 levels in two scenes. A lit EXIT sign lost its glow: its pixels differed by up to 138 levels. With `UC_CHAIN_SCALE=2` the mean difference was 0.6 to 1.3 levels and the largest 33 to 190. The bright pass of the glow then reads the half-size scene with too few samples.
-- The glow switch, six scenes of `s10c4`. In three scenes the frame with the glow off was equal to the frame with the glow on. In the three others 0.06 to 1.2 % of the pixels differed by more than 2 levels: a soft brightening of lit walls, 29 levels at most over an area, and more on a few pixels. The game wrote its 1 to the switch byte again once in two of the six scenes, so a frame with glow can still come.
+- The glow switch, in a scene of `s10c4` with a lit EXIT sign. With the glow off the sign lost its halo. 8.8 % of the pixels differed by more than 2 levels, and 1.3 % by more than 16. A part of that is a slightly sharper top left quarter of the picture: with the glow, the game copies that corner and draws it back one more time. In a second scene 3.1 % of the pixels differed by more than 2 levels.
+- With the glow off, a frame of `s10c4` has 18 packets, as a frame of the first chapter. The game played on with the glow off for about 4000 retraces.
+- In 270 retraces the game wrote its 1 to the switch byte of the drawn effect two times. The port writes the 0 again at the next retrace, so a frame with glow can still come.
+- While the game time stood still, the glow did not come back after the switch was on again. With the time running it came back.
 - The log line `[chain-proxy]` of each run: the corner was copied in 0 times and copied out 0 times. The game's own quad put it back three times a frame in `s10c4` and two times in the first chapter.
 
 The work of the GPU for a frame, from the line `[gpu-ops]` and from packet dumps:
@@ -381,7 +384,7 @@ The work of the GPU for a frame, from the line `[gpu-ops]` and from packet dumps
 |---|---|---|---|
 | `s10c4`, before | 19 or 20 | 0 | 24 or 25 |
 | `s10c4`, now | 9 or 10 | 10 | 21 |
-| `s10c4`, glow off (from the packet list, not counted in a run) | 8 or 9 | 3 | 11 or 12 |
+| `s10c4`, glow off | 8 or 9 | 3 | 11 |
 | `s10c4`, with `UC_JOIN_DEAD_COPIES=1` | 8 | 10 | 21 |
 | First chapter, before | 12 or 13 | 0 | 14 or 15 |
 | First chapter, now | 9 or 10 | 3 | 12 |
