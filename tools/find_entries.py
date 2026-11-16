@@ -5,6 +5,8 @@
 #
 # A candidate must lie in a text section, be 4-aligned, follow a terminator (blr, b, bctr, rfi) or padding, and not start with padding.
 # The register that holds the `lis` value is followed through the function: the pair must be in one function (no blr between them).
+# The value is also followed through a word of the stack frame (`stw rS,d(r1)`, later `lwz rD,d(r1)`): a large constructor keeps the
+# high half there while it builds many addresses.
 import argparse
 import re
 import struct
@@ -38,13 +40,24 @@ def main():
     found = {}
     for base, w in text:
         hi = {}  # register -> (value, pc)
+        slot = {}  # displacement from r1 -> value of a `lis` that the function stored there
         for k, x in enumerate(w):
             pc = base + 4 * k
             op, rd, ra, imm = x >> 26, (x >> 21) & 31, (x >> 16) & 31, x & 0xFFFF
             if x == 0x4E800020:
                 hi.clear()
+                slot.clear()
                 continue
             v = None
+            if op == 36 and ra == 1:  # stw rS,d(r1)
+                if rd in hi:
+                    slot[imm] = hi[rd][0]
+                else:
+                    slot.pop(imm, None)
+                continue
+            if op == 32 and ra == 1 and imm in slot:  # lwz rD,d(r1)
+                hi[rd] = (slot[imm], pc)
+                continue
             if op == 15 and ra == 0:
                 hi[rd] = (imm, pc)
                 continue
