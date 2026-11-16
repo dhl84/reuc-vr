@@ -9,6 +9,11 @@ A STEP is one of:
                     press:A*30 holds the buttons for 30 input frames (default 4)
   hold:BUTTONS*N    hold the buttons for N input frames and go on with the next step at once
   aim:X,Y           move the pointer (each value from -1 to 1; 0,0 is the centre of the screen)
+  wii:BUTTONS[*N]   press buttons of the Wii Remote on the host input path (A B ONE TWO PLUS MINUS HOME UP DOWN LEFT RIGHT Z C) for N
+                    input frames (default 6). The steps press and aim write the sample that the game reads; this step goes through
+                    the bindings and the action map, as a real remote and the VR controllers do
+  wiiaim:X,Y        move the pointer on the host input path
+  wiishake[:N]      swing the remote N times (default 8) on the host input path
   shot[:NAME]       save the current frame as a PNG in <folder>
   state             print the input frame counter and the retrace counter
   draws             print every draw of the current frame
@@ -55,6 +60,10 @@ from uctest.transport import PipeTransport  # noqa: E402
 # Names follow docs/testing/test-server.md (plus 0x1000, minus 0x10). A name of the form 0x.... sends that mask as it is.
 BUTTONS = {"A": 0x800, "B": 0x400, "PLUS": 0x1000, "MINUS": 0x10, "LEFT": 0x1, "RIGHT": 0x2, "DOWN": 0x4, "UP": 0x8, "Z": 0x2000, "C": 0x4000,
            "WAVE": 0x10000}   # WAVE: The Darkside Chronicles only, a swing of the Wii Remote (common/title.h kButtonWave)
+
+
+# The buttons of the host input path (common/input_bindings.h, wii_button codes).
+WII_BUTTONS = {"LEFT": 0, "RIGHT": 1, "DOWN": 2, "UP": 3, "PLUS": 4, "TWO": 5, "ONE": 6, "B": 7, "A": 8, "MINUS": 9, "HOME": 10, "Z": 11, "C": 12}
 
 
 def button_mask(names):
@@ -186,6 +195,19 @@ def main():
                 mask = button_mask(names)
                 game.command("input", kpad={"x": game.aim[0], "y": game.aim[1], "buttons": mask}, hold_frames=int(hold or 4))
                 print("press %s at retrace %d" % (value, game.retraces()), flush=True)
+            elif kind == "wii":   # the host input path: the buttons of a Wii Remote, as a real remote or the VR controllers send them
+                names, _, hold = value.partition("*")
+                for name in names.split("+"):
+                    game.command("input", wii_button={"button": WII_BUTTONS[name.upper()], "down": True}, hold_frames=int(hold or 6))
+                print("wii %s at retrace %d" % (value, game.retraces()), flush=True)
+            elif kind == "wiiaim":   # the pointer of the remote on the host input path
+                x, y = (float(v) for v in value.split(","))
+                game.command("input", wii_pointer={"x": x, "y": y})
+            elif kind == "wiishake":   # N swings of the remote, to the right and to the left in turn, one every 3 retraces
+                for i in range(int(value or 8)):
+                    game.command("input", wii_motion={"x": 900 if i % 2 == 0 else -900, "y": 0})
+                    game.wait(3)
+                print("wiishake %s at retrace %d" % (value or 8, game.retraces()), flush=True)
             elif kind == "aim":
                 x, y = (float(v) for v in value.split(","))
                 game.aim = (x, y)
