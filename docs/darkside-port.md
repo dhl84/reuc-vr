@@ -637,6 +637,8 @@ Two more runs stopped the game time at the same retrace (`UC_DC_FREEZE_FILE`) an
 
 Without a ray the step `bot:420,2` ran three times in the same fight. With the build of 15 November the boss lost 166 of its health. With the new build it lost 178 and 168. With `UC_XR_SHOT_LOG=1` the runs without a ray logged no changed query and no changed bullet.
 
+The item pick-up. One run held the pointer on the wall to the upper right and used a ray through the middle of the screen. It pressed B and A in turn, with `UC_DC_WEAK=1`. The shots took the boss to its state 15. Before that state Ada throws the rocket launcher to the floor. A took it: the count of the launcher in the inventory went from 0 to 4. The log showed 42 pick-up queries along the ray.
+
 The unit test `tests/test_xr_shot.cpp` has the cases of `SBDE08` in a build of that game. It passes in that build and in a build of `RBUE08`.
 
 The reticle. The game draws its reticle at the pointer, in 2D, and not at the hit point. While the game aims at an enemy, the ring of the reticle is red. At other times it is gray. On the headset the pointer is the place where the ray of the controller meets the scene, seen from the game camera (`StereoScene::aim`). The renderer draws the marked reticle at that depth. The reticle is then on the ray, and the shot goes along the same ray. This path was not run for `SBDE08`: the PC has no controller, and the headset was in use.
@@ -646,7 +648,6 @@ The stereo preview has no controller. It draws the reticle at the pointer of the
 Open:
 
 - The hooks did not run on a headset. The scale of the tracked ray (game units for each meter) was not checked for this game.
-- The hook of the item pick-up has its unit test. No run on the PC picked an item up with a test ray.
 - One enemy class (state function 8021291C, test in 80212C44) makes its own test of the pointer. It unprojects the pointer and marks the parts of the enemy that a player aims at. It still uses the pointer.
 - The function 80059C04 tests the line of sight from the camera to the object under the pointer. It was not changed.
 - The second player uses the same code with player index 1. It was not run.
