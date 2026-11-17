@@ -194,7 +194,7 @@
 # OFF (not found): @8024585C IntroLogoUpdate
 # OFF (not found): @801426D4 MovieUpdate
 # Native ultrawide: C_MTXPerspective with a wider aspect on a wider output; the original body continues at 80265468 (game/intro.cpp).
-# OFF (excluded, reference game logic): @80383B90 MTXPerspective  # MTXPerspective, carried exact
+@80383B90 MTXPerspective  # MTXPerspective, carried exact
 # OFF (not found): @801581E0 GameFrameWait
 # OFF (not found): @8003F670 GameLoop
 # OFF (not found): @800C790C ActorStepTime

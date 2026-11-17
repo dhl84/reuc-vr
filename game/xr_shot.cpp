@@ -149,6 +149,9 @@ uint32_t dc_view_matrix(ppc::Ctx& c,const gx::Memory& memory) {
     return ppc::rd32(c,camera+title::kDcCameraFlags)&title::kDcCameraClean ? camera : 0;
 }
 }
+// UC_DC_RAY_SHOT=0 (test aid): the two hooks do nothing, so the shot follows the pointer of the game again.
+// Read at the first use: the headset applies its env.txt after the static initializers.
+static bool dc_ray_shot_off() { static const bool off=[] { const char* v=std::getenv("UC_DC_RAY_SHOT"); return v && *v=='0'; }(); return off; }
 bool align_dc_bullet(ppc::Ctx& c,uint32_t bullet,unsigned player,const TrackedRay& ray) {
     if(!c.mem || player>1)return false;
     const auto memory=guest_memory(c);
@@ -179,7 +182,7 @@ bool align_dc_bullet(ppc::Ctx& c,uint32_t bullet,unsigned player,const TrackedRa
 DcShotScope::DcShotScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions()) {
     // 800B4E30(r3 bullet, r4 origin or 0, r5 direction, r6 weapon kind, r7 player, r8 pellet) from 800B6AE4, whose one caller is the
     // weapon fire 800B8C10. r4 = 0: the bullet starts at the camera.
-    if(c.lr!=title::kDcBulletInitReturn || c.r[4]!=0 || c.r[7]>1)return;
+    if(dc_ray_shot_off() || c.lr!=title::kDcBulletInitReturn || c.r[4]!=0 || c.r[7]>1)return;
     object_=c.r[3];player_=c.r[7];ray_=input_xr_ray(player_);
     if(const auto& diagnostic=diagnostic_ray())ray_=diagnostic;
 }
@@ -193,7 +196,7 @@ DcPickScope::DcPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions
     // the player aims at, fires at and picks up. From 800C12E8 (categories 0x10) it picks the item to take, camera to that hit point.
     // Both run along the ray of the VR controller instead.
     const bool pointer=c.lr==title::kDcPointerQueryReturn,pickup=c.lr==title::kDcPickupQueryReturn;
-    if((!pointer && !pickup) || !c.mem || c.r[4]>1)return;
+    if(dc_ray_shot_off() || (!pointer && !pickup) || !c.mem || c.r[4]>1)return;
     const unsigned player=c.r[4];const uint32_t aim=title::kDcAim+player*title::kDcAimSize;
     if(pointer && c.r[6]!=aim+title::kDcAimHit)return;
     auto ray=input_xr_ray(player);if(diagnostic_ray())ray=diagnostic_ray();

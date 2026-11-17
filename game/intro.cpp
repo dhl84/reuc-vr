@@ -1,3 +1,4 @@
+#include "title.h"
 #include "intro.h"
 #include "dispatch.h"
 #include "gx_vertices.h"
@@ -71,7 +72,7 @@ void hle_MTXPerspective(ppc::Ctx& c) {
             c.f[2]=aspect*std::max(1.f,vr)/std::max(1.f,vr_y);
         }
     }
-    uc::call_indirect(c,0x80265468);
+    uc::call_indirect(c,UC_ADDR(0x80265468));   // SBDE08: 80383B94 (project/dc/dc.cfg)
 }
 
 void hle_MovieUpdate(ppc::Ctx& c) {

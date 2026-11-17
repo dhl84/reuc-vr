@@ -165,7 +165,7 @@ on   GXSetIndTexOrder             803A72C4 carried exact
 on   GXSetFog                     803A7AD0 carried call
 off  IntroLogoUpdate              not found
 off  MovieUpdate                  not found
-off  MTXPerspective               excluded; 80383B90 carried exact
+on   MTXPerspective               80383B90 carried exact
 off  GameFrameWait                not found
 off  GameLoop                     not found
 off  ActorStepTime                not found

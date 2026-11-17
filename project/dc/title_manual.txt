@@ -4,3 +4,4 @@
 addr 806A0041 8080AC01   # byte 1 of the word at 806A0040, which moved to 8080AC00 (27 votes in data_addresses.txt)
 addr 801619C4 BAD00004   # movie draw call site (a log line only)
 addr 802F21EC 80411E60   # KPADRead: the read entry the game calls (project/dc/hle_manual.txt)
+addr 80265468 80383B94   # the body of C_MTXPerspective after its stwu: 80265464 is carried exact to 80383B90 (project/dc/symbols.txt)
