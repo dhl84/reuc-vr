@@ -99,6 +99,7 @@ void feed_xr_input(XrCompositor& xr, NativeInput& input) {
     if (snapshot.valid[0] && ray.x >= 0 && ray.y >= 0 && ray.x < XrCompositor::kAimWidth && ray.y < XrCompositor::kAimHeight)
         input.host_xr_pointer(2.f * (ray.x + .5f) / XrCompositor::kAimWidth - 1, 2.f * (ray.y + .5f) / XrCompositor::kAimHeight - 1,
                              TrackedRay{snapshot.shot[0].origin,snapshot.shot[0].direction});
+    else if (!snapshot.valid[0]) input.host_xr_ray_lost();   // no tracked controller: the old ray must not aim the next shots
     // Swings: the knife (hold A and swing) and the shake prompts read the Wii Remote's pushes as mouse counts (host_wii_motion). The gun's turn
     // since the last sample, as yaw right / pitch down in kGyroCountsPerRadian (a gyro pad's scale): a flick of ~2 rad/s reaches kKnifeSpeed,
     // careful aiming (under 1 rad/s) does not. The first sample after the ray was lost only sets the start.

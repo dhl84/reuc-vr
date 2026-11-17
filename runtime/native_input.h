@@ -57,6 +57,7 @@ public:
     void wiimote_settings(const WiimoteSettings&);   // smoothing and the binding table; throws std::invalid_argument for an invalid set
     void host_wii_pointer(float x,float y,uint64_t timestamp_ns) override;
     void host_xr_pointer(float x,float y,std::optional<TrackedRay> ray={}); // normalized screen, no IR smoothing or swing gesture
+    void host_xr_ray_lost(); // the controller is not tracked, or a test client drives the input: the shot follows the pointer again
     std::optional<TrackedRay> consumed_xr_ray();
     void host_wii_stick(float x,float y) override;
     void host_wii_motion(float dx,float dy,uint64_t timestamp_ns) override;

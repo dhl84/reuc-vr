@@ -315,6 +315,9 @@ int main() {
         tracked.host_xr_pointer(0,0,second);
         CHECK(tracked.consumed_xr_ray()->origin==first.origin); // frozen with the consumed pointer
         tracked.consume();CHECK(tracked.consumed_xr_ray()->origin==second.origin);
+        tracked.host_xr_ray_lost();CHECK(tracked.consumed_xr_ray()->origin==second.origin); // the consumed frame keeps its ray
+        tracked.consume();CHECK(!tracked.consumed_xr_ray()); // a lost controller: the next frame has no ray
+        tracked.host_xr_pointer(0,0,second);tracked.consume();CHECK(tracked.consumed_xr_ray()->origin==second.origin);
         tracked.focus(false); tracked.host_xr_pointer(0,0); CHECK(!tracked.consume().valid);
         CHECK(!tracked.consumed_xr_ray());tracked.focus(true);tracked.consume();CHECK(!tracked.consumed_xr_ray());
         tracked.host_xr_pointer(0,0,first);uc::InputFrame network;network.sample.valid=true;tracked.install_frame(network);

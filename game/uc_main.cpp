@@ -1510,6 +1510,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 renderer.set_menu_context(input.current_context()!=uc::InputContext::gameplay && input.current_context()!=uc::InputContext::qte);   // the VR HUD (preview or headset)
 #ifdef UC_OPENXR
                 if(xr && !controlled) uc::feed_xr_input(*xr,input);   // the headset controllers as the game's Wii Remote (not while the harness drives input: its pointer would be overridden)
+                else if(xr) input.host_xr_ray_lost();   // the harness aims with its pointer: a ray from before it took over must not aim its shots
 #endif
                 if(wiimote) {
                     wiimote->update(&input,!host_keys.menu_open && !host_keys.paused && (SDL_GetWindowFlags(window.get())&SDL_WINDOW_INPUT_FOCUS)!=0,options.wiimote);

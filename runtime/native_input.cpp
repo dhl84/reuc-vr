@@ -199,6 +199,7 @@ void NativeInput::host_xr_pointer(float x,float y,std::optional<TrackedRay> ray)
     std::lock_guard lock(mutex_);
     if(state_.valid) { aim_toward(x*kAimEdgeX,y*kAimEdgeY,0,true); xr_ray_=ray; }
 }
+void NativeInput::host_xr_ray_lost() { std::lock_guard lock(mutex_); xr_ray_.reset(); }
 std::optional<TrackedRay> NativeInput::consumed_xr_ray() { std::lock_guard lock(mutex_); return consumed_xr_ray_; }
 std::optional<TrackedRay> input_xr_ray(unsigned channel) {
     auto* source=channel==0 ? input : channel==1 ? second_input : nullptr;
