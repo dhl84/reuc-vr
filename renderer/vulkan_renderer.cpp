@@ -117,7 +117,9 @@ uint32_t chain_points() {
 // (the proxy, the layers), and blits (EFB copies, the corner of the proxy). The line [gpu-ops] comes each 120 presented frames.
 struct GpuOps { uint64_t frames=0, efb_passes=0, other_passes=0, copies=0, corner_blits=0; double copy_pixels=0; };
 GpuOps gpu_ops;
-const bool gpu_ops_on=std::getenv("UC_GPU_PACKETS")!=nullptr;
+// UC_GPU_PACKETS=1: the diagnostics of the GPU work. A function, and not a constant of this file: the headset applies its env.txt after the
+// static initializers of the library ran.
+bool gpu_ops_enabled() { static const bool on=std::getenv("UC_GPU_PACKETS")!=nullptr; return on; }
 thread_local bool no_device_fold=false;   // the render thread, around a pipeline that it compiles itself (pipeline_for): no fold_module there
 // The guest rectangle that a flat draw can reach (x0, y0, x1, y1 in guest pixels, with the origin of efb_viewport): the box of its
 // vertices in its viewport. Nothing for a draw of the world, of the reticle, or with a depth test or a depth write.
@@ -1025,7 +1027,7 @@ void VulkanRenderer::record_texture_copy(VkCommandBuffer command, VkImage source
     // The game named more lines than the buffer has (gx::TextureCopy::lines): the lines that exist keep their place in the texture, and
     // the rows below them repeat the last line.
     const int32_t filled=lines>height ? std::clamp(int32_t(uint64_t(target.extent.height)*height/lines),1,int32_t(target.extent.height)) : int32_t(target.extent.height);
-    if(gpu_ops_on) { ++gpu_ops.copies; gpu_ops.copy_pixels+=double(target.extent.width)*target.extent.height*layers_; }
+    if(gpu_ops_enabled()) { ++gpu_ops.copies; gpu_ops.copy_pixels+=double(target.extent.width)*target.extent.height*layers_; }
     if(filled<int32_t(target.extent.height)) {
         VkImageBlit parts[2]{copy,copy};
         parts[0].dstOffsets[1].y=filled;
@@ -1917,6 +1919,7 @@ void VulkanRenderer::collect() {
                   std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second.second > b.second.second; });
                   uint64_t total = 0; for (const auto& [name, v] : sorted) total += v.second;
                   std::fprintf(stderr, "[gpu-packets] 2 s: %.1f ms GPU\n", total / 1e6);
+                  std::fprintf(stderr, "[gpu-packets] %8.2f ms  the vertex pre-pass of all packets (a part of the times below)\n", pass_timer_.take_total_ms(GpuPass::vertex_prepass));
                   for (size_t i = 0; i < sorted.size() && i < 14; ++i)
                       std::fprintf(stderr, "[gpu-packets] %8.2f ms %5llu x  avg %.3f ms  %s\n", sorted[i].second.second / 1e6, (unsigned long long)sorted[i].second.first,
                                    sorted[i].second.second / 1e6 / double(sorted[i].second.first), sorted[i].first.c_str());
@@ -2787,7 +2790,7 @@ void VulkanRenderer::bloom_proxy_corner(VkCommandBuffer command, bool to_efb) {
     blit.dstOffsets[1]={std::max(blit.dstOffsets[0].x+1,edge(area[2],target_extent.width,0)),std::max(blit.dstOffsets[0].y+1,edge(area[3],target_extent.height,1)),1};
     if (to_efb && !(bloom_proxy_.covered[2]>bloom_proxy_.covered[0] && bloom_proxy_.covered[3]>bloom_proxy_.covered[1])) blit.dstOffsets[1]=blit.dstOffsets[0];   // nothing drawn: nothing to put back
     if (blit.dstOffsets[1].x>blit.dstOffsets[0].x) vkCmdBlitImage(command,source,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&blit,VK_FILTER_LINEAR);
-    if (gpu_ops_on && blit.dstOffsets[1].x>blit.dstOffsets[0].x) ++gpu_ops.corner_blits;
+    if (gpu_ops_enabled() && blit.dstOffsets[1].x>blit.dstOffsets[0].x) ++gpu_ops.corner_blits;
     barrier(command,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,all,any);
     if (!to_efb) bloom_proxy_.initialized=true;
 }
@@ -3205,7 +3208,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     // UC_GPU_PACKETS: why a packet is not taken, each 2000 times in a row (a packet that is never taken stops the game).
     static uint64_t refusals=0;
     const auto refused=[&](const char* why) {
-        if (gpu_ops_on && ++refusals%2000==0) std::fprintf(stderr,"[render-refused] %llu times in a row: %s (packet %llu, draws %zu, present %d)\n",(unsigned long long)refusals,why,(unsigned long long)packet.serial,packet.draws.size(),int(packet.present));
+        if (gpu_ops_enabled() && ++refusals%2000==0) std::fprintf(stderr,"[render-refused] %llu times in a row: %s (packet %llu, draws %zu, present %d)\n",(unsigned long long)refusals,why,(unsigned long long)packet.serial,packet.draws.size(),int(packet.present));
         return false;
     };
     if (!requested_.width || !requested_.height) return refused("the window has no size");
@@ -3443,7 +3446,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const bool indexed=draw.state->descriptors[0]!=gx::Mode::none;
         DrawGpu info; info.indexed=indexed; info.current=draw.transforms->current;
         info.key=pipeline_key(draw); info.choice=pipeline_for(info.key);
-        if (gpu_ops_on && info.choice.uber) note_uber_fallback(draw);
+        if (gpu_ops_enabled() && info.choice.uber) note_uber_fallback(draw);
         if (draw.mesh) {
             GpuMesh& mesh=gpu_mesh(draw.mesh);   // uploaded and validated on first use
             if (mesh.index_count % group != 0) throw std::invalid_argument("index count does not match native draw topology");
@@ -3861,7 +3864,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             rt_material_cleared_=upscale_before.rt_material_cleared; rt_record_slot_=upscale_before.rt_record_slot; rt_record_count_=upscale_before.rt_record_count;
             tracker_.rollback(upscale_before.tracker);
             frame_reticle_.resize(reticle_before);
-            { static uint64_t waits=0; if (gpu_ops_on && ++waits%2000==0) std::fprintf(stderr,"[render-refused] %llu times: no swapchain image (packet %llu)\n",(unsigned long long)waits,(unsigned long long)packet.serial); }
+            { static uint64_t waits=0; if (gpu_ops_enabled() && ++waits%2000==0) std::fprintf(stderr,"[render-refused] %llu times: no swapchain image (packet %llu)\n",(unsigned long long)waits,(unsigned long long)packet.serial); }
             return false;
         }
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR) resized_ = true;   // stale swapchain while the window is resized: the frame is rendered but not shown, the guest must not wait for the rebuild
@@ -4115,6 +4118,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,nullptr,slot.xform_set,numbers[i],0,1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,nullptr,&infos[i],nullptr};
             }
             vkUpdateDescriptorSets(device,8,writes,0,nullptr);
+            if (gpu_ops_enabled()) pass_timer_.begin(slot.command,uint32_t(&slot-slots_.data()),GpuPass::vertex_prepass);
             vkCmdBindPipeline(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_pipeline_);
             vkCmdBindDescriptorSets(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_layout_,0,1,&slot.xform_set,0,nullptr);
             vkCmdDispatch(slot.command,uint32_t(chunks.size()),1,1);
@@ -4123,6 +4127,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             written.dstStageMask=VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT; written.dstAccessMask=VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
             VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; dependency.memoryBarrierCount=1; dependency.pMemoryBarriers=&written;
             vkCmdPipelineBarrier2(slot.command,&dependency);
+            if (gpu_ops_enabled()) pass_timer_.end(slot.command,uint32_t(&slot-slots_.data()),GpuPass::vertex_prepass);
         }
     }
     std::vector<WarpDraw> warp_draws;   // the space warp's motion pass of this packet (record_warp_pass after its EFB passes)
@@ -5409,7 +5414,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     }
     else if (!scene_only && !overlay_frame && (!efb_initialized_ || scene_draws<packet.draws.size())) { record_pass(efb_target,scene_draws,packet.draws.size(),false); record_layer(glow_,2); record_layer(hud_,1); }
     if (hudless_wanted && !hudless_taken_ && packet.present) take_hudless();
-    if (gpu_ops_on && packet.present && !overlay_frame && ++gpu_ops.frames==120) {
+    if (gpu_ops_enabled() && packet.present && !overlay_frame && ++gpu_ops.frames==120) {
         const double f=double(gpu_ops.frames);
         std::fprintf(stderr,"[gpu-ops] 120 frames, for each frame: %.2f passes on the frame buffer, %.2f passes on other targets, %.2f copies of %.3f M pixels, %.2f blits of the proxy corner\n",
                      gpu_ops.efb_passes/f,gpu_ops.other_passes/f,gpu_ops.copies/f,gpu_ops.copy_pixels/f/1e6,gpu_ops.corner_blits/f);
