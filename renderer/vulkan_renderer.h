@@ -672,6 +672,11 @@ private:
     std::unordered_map<const gx::TexturePixels*,std::weak_ptr<Texture>> texture_pool_;   // before slots_: the slots' textures erase themselves from it
     static constexpr size_t kRecycledTextures = 512;
     std::vector<Texture> recycled_textures_;   // images of pooled textures (Texture::pooled) that no slot holds; before slots_ for the same reason
+    // GPU textures that no slot uses now, but whose pixels the CPU cache or a queued packet still holds: kept for their next use and
+    // swept every kRetainedSweep submissions. Before slots_ and after texture_pool_ and recycled_textures_: the deleter of a texture uses both.
+    static constexpr uint32_t kRetainedSweep = 256;
+    std::unordered_map<const gx::TexturePixels*,std::shared_ptr<Texture>> retained_textures_;
+    uint32_t retained_sweep_=0;
     std::array<Slot, kFrameSlots> slots_{};
     // RT albedo/material targets (scene extent, created and destroyed with rt_material_active()) and the records of the frame: per frame-in-flight
     // buffers, grow-only, filled per scene packet from rt_record_count_ on. Read by RT passes at the scene boundary.

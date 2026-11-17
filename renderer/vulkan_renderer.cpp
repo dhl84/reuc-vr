@@ -2133,6 +2133,7 @@ void VulkanRenderer::retire_images(bool keep_buffers) {
     if (swapchain_) present_.destroy(device, swapchain_, nullptr);
     swapchain_ = VK_NULL_HANDLE;
     hdr_pass_.forget();   // the device is idle: the sets of the slot images below can go
+    if (!keep_buffers) retained_textures_.clear();
     for (auto& slot : slots_) {
         if (!keep_buffers) {
             retire_textures(slot);
@@ -3362,12 +3363,23 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     }
     // This slot's fence is retired. A texture's GPU image is shared by all slots; the renderer holds one reference to its pixels, so more
     // belong to the CPU cache or queued packets, which retain it across passes.
-    for (auto it=slot.textures.begin();it!=slot.textures.end();) {
-        Texture& texture=**it;
-        if (texture.initialized && texture.uploader==&slot) { destroy_buffer(texture.upload); texture.uploader=nullptr; }
-        const bool owned=texture.source && texture.source.use_count()>1;
-        const bool used=!texture.source || used_textures.contains(texture.source.get());
-        if (!used && !owned) it=slot.textures.erase(it); else ++it;
+    // The slot keeps only the textures of its own submission. A texture that this packet does not use leaves the slot: with another
+    // holder of its pixels it waits in retained_textures_ for its next use, else it ends when the last slot drops it. (Each slot used to
+    // keep every such texture, and every packet walked the whole list and made a lookup table of it: with the game's texture cache the
+    // list grew for the whole session. After 50 minutes of The Darkside Chronicles a frame of 27 packets took 9 ms more on a Quest 3.)
+    {
+        size_t kept=0;
+        for (size_t i=0;i<slot.textures.size();++i) {
+            Texture& texture=*slot.textures[i];
+            if (texture.initialized && texture.uploader==&slot) { destroy_buffer(texture.upload); texture.uploader=nullptr; }
+            if (!texture.source || used_textures.contains(texture.source.get())) { if (kept!=i) slot.textures[kept]=std::move(slot.textures[i]); ++kept; continue; }
+            if (texture.source.use_count()>1) retained_textures_.try_emplace(texture.source.get(),std::move(slot.textures[i]));
+        }
+        slot.textures.resize(kept);
+    }
+    if (++retained_sweep_>=kRetainedSweep) {   // a retained texture whose pixels have no other holder any more ends here
+        retained_sweep_=0;
+        std::erase_if(retained_textures_,[](const auto& held) { return held.second->source.use_count()<=1; });
     }
     // Per draw: where its vertices live (a persistent mesh buffer, or this frame's dynamic buffer for non-mesh draws) and which palette it reads.
     struct DrawGpu { PipelineKey key{}; PipelineChoice choice{}; const Buffer* vertices=nullptr; const Buffer* indices=nullptr; VkDeviceSize vertex_offset=0, index_offset=0; uint32_t index_count=0, first_index=0; int32_t first_vertex=0; uint32_t palette=0, current=0, indexed=0, bank=kNoBank; uint64_t mesh_id=0; const std::array<float,6>* box=nullptr; };   // box: a cached mesh's object-space bounds   // mesh_id: GpuMesh::id of a cached mesh draw (0 for an inline draw)
