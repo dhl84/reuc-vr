@@ -813,19 +813,26 @@ The automatic render scale (`uc::AutoScale` in `renderer/auto_scale.h`, app 0.0.
 - A change of the scale costs one frame of about 50 ms.
 - `UC_AUTO_SCALE=0` turns it off. `tests/test_auto_scale.cpp` runs the rule on recorded seconds.
 
-The long run with the app 0.0.31, 17 November 2026. The app has all changes of this section and the automatic render scale. The run had `UC_DC_GOD=1` and `bot:60000,6`, as the runs above. It played for two hours without a crash. Then the PC ran short of memory and stopped the script that drives the run, in the seventh chapter. The eighth chapter did not run.
+The long run with the app 0.0.31, 17 November 2026. The app has all changes of this section and the automatic render scale. The run had `UC_DC_GOD=1` and `bot:60000,6`, as the runs above. It played the same eight chapters in 2 h 53 min without a crash. The table has the column of the app 0.0.20 again, which is the run before the changes of this section.
 
-| Chapter | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
-|---|---|---|---|---|
-| `s30c1` | 1,467 | 71.4 | 98 % | 50 fps |
-| `s10c1` | 769 | 67.4 | 81 % | 39 fps |
-| `s10c2` | 615 | 72.2 | 100 % | 63 fps |
-| `s10c3` | 1,185 | 71.0 | 100 % | 55 fps |
-| `s10c4` | 943 | 71.9 | 100 % | 63 fps |
-| `s10c5` | 1,566 | 70.5 | 96 % | 37 fps |
-| `s10c6`, its first 450 s | 450 | 69.6 | 99 % | 48 fps |
+| Chapter | Seconds | 0.0.20, mean fps | 0.0.31, mean fps | 0.0.31, seconds at 60 fps or more | 0.0.31, lowest second |
+|---|---|---|---|---|---|
+| `s30c1` | 1,399 | 69.5 | 71.2 | 97 % | 42 fps |
+| `s10c1` | 709 | 50.5 | 67.4 | 83 % | 42 fps |
+| `s10c2` | 618 | 64.7 | 72.3 | 100 % | 63 fps |
+| `s10c3` | 1,154 | 44.4 | 70.4 | 99 % | 56 fps |
+| `s10c4` | 938 | 47.8 | 71.9 | 100 % | 61 fps |
+| `s10c5` | 1,554 | 54.4 | 70.6 | 96 % | 37 fps |
+| `s10c6` | 1,258 | 44.1 | 70.1 | 90 % | 50 fps |
+| `s10c7` | 2,193 | 49.3 | 71.5 | 100 % | 38 fps |
 
-In `s10c1` the slow seconds are in the minutes with 1,000 to 1,200 draws a frame. Those minutes ran at 62 to 67 fps. No profile of them was recorded.
+What is left below 60 fps in this run:
+
+- In `s10c1` the minutes with 1,000 to 1,200 draws a frame ran at 62 to 67 fps, with single seconds below 60 fps. No profile of them was recorded.
+- In `s10c6` the span with 970 draws a frame ran at about 61 fps (see above).
+- In `s10c5` one minute needs 16 ms of game code a frame (see above).
+
+The render scale of this run: the app held the scale 2.0 for 4 to 100 % of a chapter. It held 1.75 or 1.5 for the rest. A first run of this app stopped after two hours in `s10c6`. The PC ran short of memory and ended the script that drives the run. Its chapters had the same frame rates within 1 fps.
 
 The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
