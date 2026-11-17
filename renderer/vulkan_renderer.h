@@ -1,4 +1,5 @@
 #pragma once
+#include "auto_scale.h"
 #include "dlss5_pass.h"
 #include "graphics_effects.h"
 #include "gx_packets.h"
@@ -556,6 +557,13 @@ private:
     VkExtent2D extent_{};
     VkExtent2D requested_{};
     double configured_scale_=0.5, render_aspect_=16.0/9;
+    // The headset's automatic render scale (auto_scale.h): user_scale_ is the chosen scale, configured_scale_ the one in use.
+    double user_scale_=0.5;
+    uc::AutoScale auto_scale_;
+    bool auto_scale_on_=false;
+    std::chrono::steady_clock::time_point auto_window_start_{};
+    uint64_t auto_presents_=0, auto_busy_ns_=0;
+    void auto_scale_tick();
     bool native_eye_scale_=false;
     uint32_t max_image_dimension_=0;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;

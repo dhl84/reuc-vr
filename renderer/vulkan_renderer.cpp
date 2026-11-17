@@ -285,10 +285,13 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
         std::fprintf(stderr, "[vr-preview] stereo preview: scale %.3f game units per metre, eyes side by side\n", settings.scale);
         // The picture takes the simulated eye's shape (preview_publish: 52+41 degrees wide, 50+42 high), as the headset's takes its eye image's.
         render_aspect_ = double(std::tan(52.f * .017453292f) + std::tan(41.f * .017453292f)) / (std::tan(50.f * .017453292f) + std::tan(42.f * .017453292f));
-        set_render_scale(configured_scale_);
+        set_render_scale(user_scale_);
     }
     if (preview_) std::fprintf(stderr, "[vr] eye picture aspect %.3f\n", render_aspect_);
     layers_ = (xr_ || preview_) ? 2 : 1;   // the headset (or its preview): both eyes in every pass (multiview)
+    // The automatic render scale: on for the headset (UC_AUTO_SCALE=0 turns it off); the preview takes it with UC_AUTO_SCALE=1 for tests
+    // (its target rate: UC_AUTO_SCALE_HZ, 60 without it).
+    { const char* v = std::getenv("UC_AUTO_SCALE"); auto_scale_on_ = xr_ ? !(v && *v == '0') : preview_ && v && *v == '1'; }
     std::vector<const char*> extensions;
     if (!xr_) {   // the headset needs no window surface: OpenXR adds what it needs to the instance
         Uint32 count = 0; const char* const* required = SDL_Vulkan_GetInstanceExtensions(&count);
@@ -810,7 +813,7 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
             render_aspect_ = double(xr_->eye_width()) / xr_->eye_height();
             // Native: the scene (720 rows at 1x) gets exactly the eye image's rows, so the eye sees the game at the display's resolution
             // with nothing resampled (2064x2208 on the Quest 3: 3.07x). An explicit render_scale overrides it.
-            set_render_scale(native_eye_scale_ ? std::clamp(xr_->eye_height() / 720.0, 0.5, 6.0) : configured_scale_);
+            set_render_scale(native_eye_scale_ ? std::clamp(xr_->eye_height() / 720.0, 0.5, 6.0) : user_scale_);
         }
         std::fprintf(stderr, "[vr] eye picture aspect %.3f, scale %.3f\n", render_aspect_, configured_scale_);
         const auto picture=manual_render_extent(configured_scale_,render_aspect_);
@@ -1984,7 +1987,33 @@ void VulkanRenderer::resize(uint32_t width, uint32_t height) {
 void VulkanRenderer::set_render_scale(double scale) {
     owner();
     manual_render_extent(scale,render_aspect_);
-    if(configured_scale_!=scale) { configured_scale_=scale; resized_=true; }
+    user_scale_=scale;
+    // The automatic render scale takes pixels off the chosen scale, but never below the game's own 720 rows (or the chosen scale, if lower).
+    const double used=std::max(std::min(scale,1.0),scale*auto_scale_.factor());
+    if(configured_scale_!=used) { configured_scale_=used; resized_=true; }
+}
+// One window of about a second of presented frames for uc::AutoScale. A window with a pause in it (loading, the headset off the head)
+// says nothing about the GPU and is left out.
+void VulkanRenderer::auto_scale_tick() {
+    const auto now=std::chrono::steady_clock::now();
+    const bool first=auto_window_start_==std::chrono::steady_clock::time_point{};
+    const double seconds=std::chrono::duration<double>(now-auto_window_start_).count();
+    if (!first && seconds<1.0) return;
+    const uint64_t presents=presentations_.load(), busy=gpu_busy_ns_.load();
+    const uint64_t frames=presents-auto_presents_;
+    const double gpu_ms=frames && busy>=auto_busy_ns_ ? double(busy-auto_busy_ns_)/1e6/double(frames) : 0;
+    auto_window_start_=now; auto_presents_=presents; auto_busy_ns_=busy;
+    if (first || seconds>1.5 || !frames) return;
+    double target=60;
+#ifdef UC_OPENXR
+    if (xr_) { if (const uint32_t hz=xr_->game_step_hz()) target=hz; }
+    else
+#endif
+    if (const char* v=std::getenv("UC_AUTO_SCALE_HZ")) target=std::atof(v);
+    const double fps=double(frames)/seconds, was=configured_scale_;
+    if (!auto_scale_.window(fps,gpu_ms,target)) return;
+    set_render_scale(user_scale_);
+    std::fprintf(stderr,"[vr] automatic render scale %.3f -> %.3f (%.1f fps of %.0f, GPU %.2f ms a frame)\n",was,configured_scale_,fps,target,gpu_ms);
 }
 void VulkanRenderer::configure_upscaling(UpscalerKind kind, UpscaleMode mode, bool sharpening, double sharpness, bool frame_generation, uint32_t multiplier) {
     if (instance_) throw std::logic_error("upscaling is configured before initialize()");
@@ -3200,6 +3229,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     if (xr_ && xr_->take_render_scale_change()) {   // the settings panel's Render scale: the EFB is remade at the next rebuild (below), no restart
         const float chosen=xr_->render_scale();
         native_eye_scale_=!(chosen>0);
+        auto_scale_={};   // a new choice starts at its own size
         set_render_scale(native_eye_scale_ ? std::clamp(xr_->eye_height()/720.0,0.5,6.0) : double(chosen));
         std::fprintf(stderr,"[vr] render scale %.3f (%s) from the settings panel\n",configured_scale_,native_eye_scale_ ? "native" : "chosen");
     }
@@ -3222,10 +3252,12 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
 #else
             const double native=3.0;
 #endif
+            auto_scale_={};
             set_render_scale(native_eye_scale_ ? native : scale);
             std::fprintf(stderr,"[vr] render scale %.3f at frame %u (UC_VR_SCALE_SWITCH)\n",configured_scale_,frame_index_);
         }
     }
+    if (auto_scale_on_ && packet.present && display) auto_scale_tick();
     const bool has_output = swapchain_ != VK_NULL_HANDLE || (xr_ && efb_);   // the headset has no window swapchain: its output is the XR swapchain
     if (const auto now = std::chrono::steady_clock::now(); uc::rebuild_due(resized_, has_output, now, last_rebuild_)) {
         last_rebuild_ = now; rebuild();        if (resized_) return refused("the swapchain is not rebuilt yet");

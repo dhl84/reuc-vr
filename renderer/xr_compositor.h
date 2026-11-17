@@ -112,6 +112,7 @@ public:
     // Each projection view then carries a motion vector image (NDC, RGBA16F) and a depth image at the runtime's recommended size, and the
     // runtime synthesizes every other displayed frame: the game runs at half the display rate.
     bool space_warp() const;
+    uint32_t game_step_hz() const;   // the game's frames each second: half the display rate with space warp, the rate itself up to 72 Hz, else 0 (the frame limit's)
     // The Display page's tests: "Head only" (space_warp 2): no motion pass (no motion, far depth); "No head in vectors" (3): the vectors'
     // previous positions through this frame's eye instead of last frame's (the head's motion left out of them).
     // "Flat depth" (4) and "Flat depth, no head" (5): the vectors, but the depth image cleared to the far plane after the motion pass
