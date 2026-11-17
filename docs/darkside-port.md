@@ -729,7 +729,7 @@ The route to a chapter of "Memories of a Lost City" from a save, for `scripts/dr
 4. Press A on NEXT (`aim:0.59,0.237`).
 5. Wait for the script with `until:Data/script/s10c,A,120,6000`.
 
-The piece of `s10c3` is at `aim:0.233,-0.237`, that of `s10c4` at `aim:0.033,0.068` and that of `s10c5` at `aim:0.325,0.045`. If the save holds checkpoint data of another chapter, the dialog comes. YES deletes that data. The reticle in a headset frame is not the pointer of the game. Find the places of a menu in the PC build.
+The piece of `s10c3` is at `aim:0.233,-0.237`, that of `s10c4` at `aim:0.033,0.068` and that of `s10c5` at `aim:0.325,0.045`. The piece of `s10c6` is at `aim:0.188,0.26`. If the save holds checkpoint data of another chapter, the dialog comes. YES deletes that data. The reticle in a headset frame is not the pointer of the game. Find the places of a menu in the PC build.
 
 Space warp. With `refresh 90` and `space_warp on` in `vr.cfg` the app 0.0.19 ran the boss scene for three minutes without a fault. The game rendered 45 or 46 frames each second, and the headset reported application space warp at 90 Hz. The GPU took 14.3 ms a frame. Nobody looked at the frames that the headset makes between the frames of the game, so space warp stays off by default.
 
@@ -789,14 +789,33 @@ The table gives the seconds 60 to 480 after the script of `s10c5` opened. Both r
 
 After the change the GPU limits most of that scene. At the render scale 2.0 it ran at 59.5 fps with 15.8 ms of GPU time a frame. The automatic render scale went to 1.5, and the scene then ran at 69 fps. In one minute of the scene the code of the game itself needs 16 ms a frame (15 million guest cycles). The frame rate falls to 52 fps there.
 
+A span of `s10c6` stays at 61 fps with the app 0.0.28. It starts about six minutes into the chapter. A frame has about 970 draws there, in 27 packets. The GPU is 93 % busy at 640 MHz and takes 14.6 ms a frame. What was measured there:
+
+- The render scale does not change the GPU time. The scene packet took 7.9 ms at the scale 2.0 and 6.6 ms at the scale 1.0. `UC_VR_SCALE_SWITCH=<frame>:<scale>,...` changed the scale at fixed frames for this test.
+- The vertex pre-pass is not the cost. It took 0.05 ms a frame (the line `the vertex pre-pass of all packets` of `UC_GPU_PACKETS=1`).
+- Without the pre-pass (`UC_NO_XFORM=1`) the span ran at 42 fps, with 22.8 ms of GPU time a frame.
+- The time of the scene packet follows its draws more than its triangles. A packet with 712 draws and 193,000 indices took 7.3 ms. A packet with 341 draws and 205,000 indices took 3.9 ms.
+
+The cause of this GPU cost of a draw is not found. The piece of `s10c6` on the chapter screen is at `aim:0.188,0.26`, so a run can start in that chapter.
+
 Two traps of these measurements:
 
-- `UC_GPU_PACKETS=1` makes the render thread about 50 % slower in such a scene (18 ms a frame against 12 ms). It computes the screen box of each draw for its statistics. Do not read the time of the render thread from a run with it.
+- `UC_GPU_PACKETS=1` makes the render thread about 50 % slower in such a scene (18 ms a frame against 12 ms). It computes the screen box of each draw for its statistics. Do not read the time of the render thread or the frame rate from a run with it. The span of `s10c6` ran at 48 fps with it.
 - The addresses of the installed `libmain.so` can differ from those of a later build. Keep the `libmain.so` of the build folder for each app that runs on the headset. Before you use `llvm-addr2line`, compare the address of one function in both files with `llvm-nm`.
+
+The automatic render scale (`uc::AutoScale` in `renderer/auto_scale.h`, app 0.0.24). The GPU of the headset stays at 545 MHz while it is less than about 85 % busy. A frame that needs a little more than one refresh at 545 MHz misses each third refresh. The GPU then idles between the frames, so the clock does not rise. The headset therefore gives the picture fewer pixels while the GPU limits the frame rate:
+
+- It has three levels: the chosen scale, 0.875 of it and 0.75 of it. For the scale 2.0 these are 2.0, 1.75 and 1.5.
+- Each second it reads the frame rate and the GPU time of a frame.
+- A slow second has less than 93 % of the refresh rate and a GPU time above 78 % of the period. After two slow seconds it goes one level down.
+- It then judges the step. If the step gave no more frames and the GPU time did not fall, the pixels were not the limit. It goes back, and the next try waits longer (60 s at first, 600 s at most).
+- A good second is on time, and its GPU time with the pixels of the level above stays below 88 % of the period. After ten good seconds it goes one level up.
+- A change of the scale costs one frame of about 50 ms.
+- `UC_AUTO_SCALE=0` turns it off. `tests/test_auto_scale.cpp` runs the rule on recorded seconds.
 
 The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
-Not done on the headset: play by a person with the controllers, and the sound.
+Not done on the headset: play by a person with the controllers, the shot along the ray of the controller, and the sound. The remote play has no tracked ray, so its shots still follow the pointer.
 
 ## State
 
