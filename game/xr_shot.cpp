@@ -215,6 +215,11 @@ DcPickScope::DcPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions
         if(pointer) {
             const V d=sub(read(c,c.r[6]),eye);const float length=std::sqrt(dot(d,d));
             if(!std::isfinite(length) || length<=0)return;
+            if(std::getenv("UC_XR_SHOT_LOG")) {   // how far the ray is from the aim line of the game: the angle, and the camera's own forward axis
+                const float cosine=std::clamp(dot(d,direction)/length,-1.f,1.f);
+                std::fprintf(stderr,"[xr-pick] game line %.5f,%.5f,%.5f ray %.5f,%.5f,%.5f angle %.3f degrees, eye to ray origin %.4f units\n",d[0]/length,d[1]/length,d[2]/length,
+                             direction[0],direction[1],direction[2],std::acos(cosine)*57.29578f,std::sqrt(dot(sub(origin,eye),sub(origin,eye))));
+            }
             V far;for(unsigned i=0;i<3;++i)far[i]=origin[i]+direction[i]*length;
             write(c,c.r[6],far);write(c,aim+title::kDcAimFar,far);   // +0x3C8: the far point without the hit, a copy of the end
         }
