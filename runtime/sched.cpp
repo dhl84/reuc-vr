@@ -313,7 +313,16 @@ void Sched::block_on(uint32_t key) {
     self->state = Thread::State::Waiting;
     self->wait_key = key;
     waitq_[key].push_back(self);
+    const uint64_t since = now_ticks();
     reschedule(self);
+    self->blocked_ticks += now_ticks() - since;
+}
+
+uint64_t Sched::take_blocked_ticks() {
+    if (!running_) return 0;
+    const uint64_t ticks = running_->blocked_ticks;
+    running_->blocked_ticks = 0;
+    return ticks;
 }
 
 Thread* Sched::wake_one(uint32_t key) {

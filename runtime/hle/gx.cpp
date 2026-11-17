@@ -1198,7 +1198,13 @@ void request_finish(ppc::Ctx& ctx) {
         constexpr bool kAtBuildDefault=false;
 #endif
         static const bool at_build=[] { const char* v=std::getenv("UC_DRAW_DONE_AT_BUILD"); return v && *v ? std::strcmp(v,"0")!=0 : kAtBuildDefault; }();
-        if(packets->detached() || (at_build && !sched.deterministic())) {
+        // UC_DRAW_DONE_AT_BUILD=2 (the default of a game with uc::title::kDrawDoneFromBuilder): the builder itself posts the draw-done after
+        // the seal. The guest thread then waits for it in its own GXWaitDrawDone, without the baton, so the game's other threads run
+        // meanwhile. =1: the guest thread keeps the baton and waits for the builder here.
+        static const bool from_builder=[] { const char* v=std::getenv("UC_DRAW_DONE_AT_BUILD"); return v && *v ? std::strcmp(v,"2")==0 : bool(uc::title::kDrawDoneFromBuilder); }();
+        if(!packets->detached() && at_build && from_builder && queue.threaded() && !sched.deterministic()) {
+            back([serial,generation=sched.generation()] { if(uc::Sched* target=scheduler) post_finish(target,serial,generation); });
+        } else if(packets->detached() || (at_build && !sched.deterministic())) {
             drain();   // network play delivers the draw-done at once: the builder must have read what this frame drew before the guest reuses it
             post_finish(&sched,serial,sched.generation());
         } else if(sched.deterministic() && !queue.threaded()) {

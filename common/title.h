@@ -30,6 +30,11 @@ inline constexpr uint32_t kButtonWave = 0x10000;
 // The game loads the next part of a chapter on a thread of lower priority while the chapter runs. With the timer step of the frame wait
 // (game/game_pacing.cpp timed_wait) a late frame sleeps for this number of milliseconds, so that such threads run. 0: no sleep.
 inline constexpr uint32_t kTimedYieldMs = 2;
+// On the headset the game thread gets its draw-done when the builder thread sealed the packet of the frame (runtime/hle/gx.cpp
+// request_finish). true: the builder posts the draw-done, and the game thread waits for it as on the console, without the baton, so the
+// other threads of the game run in that time. false: the game thread keeps the baton and waits for the builder inside the call.
+// A frame of this game has up to 2,000 draws, and the builder then needs 7 ms more than the game thread (Quest 3).
+inline constexpr bool kDrawDoneFromBuilder = true;
 // The game draws its shadow map into the top left 512x480 pixels of the frame buffer and copies it from there (docs/darkside-port.md,
 // "Shadows"). The Vulkan renderer draws a packet with a copy of exactly this source at one pixel for each guest pixel, and not at the
 // scale of its frame buffer: the picture is a texture of that size for the game, not a part of what the player sees. On a Quest 3
@@ -228,6 +233,7 @@ inline constexpr bool kNativeActionMap = true;
 inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
 inline constexpr uint32_t kButtonWave = 0;
 inline constexpr uint32_t kTimedYieldMs = 0;
+inline constexpr bool kDrawDoneFromBuilder = false;
 inline constexpr uint32_t kNativeCopyWidth = 0, kNativeCopyHeight = 0;
 inline constexpr bool kDropDeadCopies = false;
 inline constexpr bool kCornerChainProxy = false;

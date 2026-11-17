@@ -29,6 +29,7 @@ struct Thread {
     bool started = false;
     bool cancelled = false;    // OSCancelThread: the host thread unwinds instead of resuming
     bool ee = true;            // this thread's interrupt-enable state while it is not running (OSContext MSR)
+    uint64_t blocked_ticks = 0; // how long block_on kept this thread off the baton since take_blocked_ticks (frame pacing only)
     ppc::Ctx ctx{};
     std::function<void(ppc::Ctx&)> body;
     std::condition_variable cv;
@@ -63,6 +64,7 @@ public:
     Thread* wake_one(uint32_t key);
     int wake_all(uint32_t key);
     void sleep_ticks(uint64_t ticks);
+    uint64_t take_blocked_ticks();               // the running thread's time in block_on since the last call; resets it
     [[noreturn]] void exit_current(uint32_t value);
     uint32_t join(Thread* t);
     void set_priority(Thread* t, int priority);

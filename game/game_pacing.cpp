@@ -39,14 +39,17 @@ void timed_wait() {
     if(uc::deterministic_clock()) period=std::min<uint64_t>(period*uc::input_demo_speed(uc::clock_speed()),uc::ms_to_ticks(50));
     if(network_period_ticks)period=network_period_ticks;
     const uint64_t now=uc::now_ticks(),spin=uc::ms_to_ticks(2);
+    const uint64_t blocked=uc::os_sched().take_blocked_ticks();   // how long this thread was off the baton in this frame (its wait for the draw-done)
     deadline_ticks=std::max(deadline_ticks+period,now);   // a late frame starts the next one at once instead of waiting for the next slot
     if(deadline_ticks>now+spin) uc::os_sched().sleep_ticks(deadline_ticks-spin-now);
     // A late frame does not wait here, so the game's main thread never blocks. The guest threads of lower priority then get no CPU time: on a
     // Quest 3 at 72 Hz the first fight of The Darkside Chronicles ran at 50 fps, and the game then showed "Loading data" for ever, because
     // its loading thread ran 20 to 34 ms a second. On the console the wait for the next retrace gives those threads their time. A game
-    // with such threads (common/title.h kTimedYieldMs) sleeps for a short time in a late frame too.
-    else if(uc::title::kTimedYieldMs) uc::os_sched().sleep_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
+    // with such threads (common/title.h kTimedYieldMs) sleeps for a short time in a late frame too. It does not sleep when the thread was
+    // blocked for that long in the frame already: those threads ran then.
+    else if(uc::title::kTimedYieldMs && (uc::deterministic_clock() || blocked<uc::ms_to_ticks(uc::title::kTimedYieldMs))) uc::os_sched().sleep_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
     while(uc::now_ticks()<deadline_ticks) {}
+    uc::os_sched().take_blocked_ticks();   // the sleeps above are not a part of the next frame
 }
 float timed_step() {
     const uint64_t now=uc::now_ticks();
