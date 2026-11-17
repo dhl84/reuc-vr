@@ -59,7 +59,7 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 - `UC_SMALL_TEXTURES=0` turns the handling of small rewritten textures off (see "The render thread"): the texture cache keeps every version, and the renderer makes a GPU image for each. Use it to compare.
 - The step `trace:NAME,N[,EVERY]` of `scripts/drive.py` writes the screen box of every draw of N frames to a file. The boxes of the same draws over the retraces show how the camera and the models move. Two runs can be compared this way (the pictures of two runs are never taken at the same game time).
 - `UC_DC_GOD=1` keeps the health of the two players and of the partner full (see "Play-through"). It is a test aid and is off by default.
-- `UC_DC_WEAK=1` holds the health of every enemy at 1 or below. `UC_DC_ROCKET=1` gives the first player the rocket launcher and the linear launcher. Both are test aids and are off by default (see "The rest of the game").
+- `UC_DC_WEAK=1` holds the health of every enemy at 1 or below. `UC_DC_ROCKET=1` gives the first player the rocket launcher and the linear launcher. `UC_DC_BLOOD=1` gives the good ending of "Operation Javier". The three are test aids and are off by default (see "The rest of the game").
 - The step `bot:N[,EVERY[,TEXT]]` of `scripts/drive.py` is the spray with one more press after each row of points: A at the right of the screen, the wave, Z, A in the middle, A+B, the wave, A at the left. It passes the quick-time prompts, reloads, takes a choice of ways and the prompt "Move". With TEXT, the step ends after the game log holds that text. An example is `chapterResult_us.arc`, which the game opens for the result screen of a chapter.
 - The step `live:NAME` takes its steps from a file while the game runs. Another program appends lines to the file. Use it for a screen that is not known yet: look at a frame, then send the next steps.
 - The step `watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]` reads a pointer and watches the value behind it. It prints each change of the value with the retrace count. It also prints each new log line that holds one of the texts.
@@ -151,7 +151,7 @@ One run stopped with an error: the point draw in the sixth chapter of "Memories 
 
 ### The rest of the game
 
-On 16 November 2026 the Windows build was played on from the last boss of "Memories of a Lost City" (script `s10c8`). The first run started from a save of the headset at the checkpoint of that boss. The scripts of "Memories of a Lost City" are `s10c1` to `s10c8`. Those of "Game of Oblivion" are `s20c1` to `s20c7`. Those of "Operation Javier" are `s30c1` to `s30c7`.
+On 16 and 17 November 2026 the Windows build was played on from the last boss of "Memories of a Lost City" (script `s10c8`). The first run started from a save of the headset at the checkpoint of that boss. The scripts of "Memories of a Lost City" are `s10c1` to `s10c8`. Those of "Game of Oblivion" are `s20c1` to `s20c7`. Those of "Operation Javier" are `s30c1` to `s30c7`.
 
 #### What the boss of `s10c8` needs
 
@@ -171,7 +171,8 @@ Checked: the states, the health and the byte `+0x685` were read from the running
 
 - `UC_DC_WEAK=1` holds the health of every enemy at 1 or below, so one hit takes it to 0. An enemy is an object whose class comes from the enemy base class: its vtable has the function 8005D408 at `+0x10`. The two partner classes are left out. The game still runs the phases of a boss. With this aid the Tyrant reaches its state 15 after 21000 retraces. Without it the state came after 36000 retraces.
 - `UC_DC_ROCKET=1` gives the first player two weapons while a chapter runs: the rocket launcher in the left weapon slot and the linear launcher in the lower slot. The weapons that were in those slots have no slot then. The game itself gives the rocket launcher at the result screen of `s10c8`.
-- Both aids are off by default. The constants are in `common/title.h`, and the code is in `game/uc_main.cpp`. The other game does not have them.
+- `UC_DC_BLOOD=1` is for the last boss of "Operation Javier". It holds the count of Manuela's burns at 0. It also keeps the time for the last hit on the boss open (see "What opens the sixth chapter").
+- The three aids are off by default. The constants are in `common/title.h`, and the code is in `game/uc_main.cpp`. The other game does not have them.
 - The fourth value of the `bot` step is a list of buttons, one for each row of 7 shots, for example `UP/LEFT/DOWN/-/-/-/-`. The bot presses the button after the row. Up is the handgun, Left the rocket launcher and Down the linear launcher.
 - Each pass of the `bot` step over its grid is moved by a part of the grid pitch. After 16 passes the bot has shot at every place in steps of 0.05.
 - The step `probe:NAME=ADDR,OFFSET,...,SIZE` names a value behind a chain of pointers. The `bot` step prints each change of it. The table of objects is at 80732B88. The Tyrant was entry 68, so `probe:hp=80732DAC,0x44C,0,4` is its health.
@@ -183,6 +184,20 @@ Three later places needed more than the health:
 - The puppet theatre of `s20c4` is one object of an enemy class (vtable 806E0800) with six puppets. When a shot kills the boy or the girl, the show starts again. A player shoots the knight, the bear and the two fish in the short times in which the show lets a shot hit them. With `UC_DC_WEAK=1` the boy and the girl keep their health, and the four other puppets have none.
 - The Tyrant in the plane of `s20c5` takes no damage in its last part. A rocket starts the scene with the missile (voice line "At this range!?"). The bot passed it with `UP/LEFT/-/-/-/-/-` in 140 shots. With the handgun alone it did not pass in 4 minutes.
 - The last boss of `s20c7` needs the linear launcher ("Use the Launcher!"). With the handgun and the rocket launcher the run stood there for 4 minutes. With `UP/LEFT/DOWN/-/-/-/-` the chapter ended.
+
+#### What opens the sixth chapter
+
+The chapters 6 and 7 of "Operation Javier" are the scripts `s30c6` and `s30c7`. Krauser is the first player in them, and Leon is the partner. They are on a fourth piece of the stage screen, which also has the name "Operation Javier".
+
+- The game opens chapters at the result of a chapter (8008F018 to 8008F418). The save keeps a word of flags for each chapter (800CF7B0). Bit 0 says that the chapter is open, and bit 2 says that it was cleared. The bits 0x08 to 0x80 name the difficulty of the clear.
+- The clear of the fifth chapter opens the sixth one only with two more conditions. The clear was at difficulty 2 or above (bits 0xF0). The byte at `+12` of the ending block is 1, which is the good ending.
+- The ending block is at `+0xCC` of the static object 80733B68, and the save keeps a copy. Its word at `+8` counts the times that Manuela burns the last boss with her blood (80226574). When the boss dies, the game writes the byte: 1 if the count is at most a number of the boss data, else 0 (802223F0).
+- The boss (vtable 806E7798) dies from one shot on its head in a time of 4 seconds. Flag 4 of the word at `+0x7FC` marks that time (802262A8). After each such time without that shot Manuela burns the boss once.
+- The `bot` step hit the head only after 14 such times in one run and after more than 40 in another. The save then had the bad ending. Its flags of the fifth chapter were 0x225, and the byte was 0. The port stops no flag.
+- `s00c1` has no part in this. It is the extra chapter with blocks of tofu as enemies. After the first clear of the fifth chapter the main menu has the button SECRET at the place of NEXT (`_SetSecretChapter` in `zMaster_Root.lub`). The A presses for the result screens pressed it.
+- After the fifth and the seventh chapter the game plays the end movie and the staff roll (`MV_0XX_10.sfd`, 260 seconds). Then it shows the result screen, saves and goes to the main menu.
+
+With `UC_DC_BLOOD=1 UC_DC_ROCKET=1` the fifth chapter ended with the good ending after 6090 shots from its checkpoint. The stage screen then showed the fourth piece with the mark NEW, and its chapter screen showed "Chapter 6". After the sixth chapter the chapter screen showed the seventh one.
 
 #### What ran
 
@@ -201,8 +216,10 @@ The runs used `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1`, speed 4 to 6 and the `b
 | `s20c7` | Game of Oblivion, Chapter 7 | "RESULTS". The last part was played again from its checkpoint with the linear launcher. Clear time 00:18:28, 409 enemies. |
 | `s30c3` | Operation Javier, Chapter 3 | "RESULTS". Clear time 00:12:42, 195 enemies. |
 | `s30c4` | Operation Javier, Chapter 4 | "RESULTS". The boss in the dam was played again from its checkpoint without `UC_DC_WEAK`. Clear time 00:16:15, 79 enemies. |
-| `s30c5` | Operation Javier, Chapter 5 | "RESULTS" without `UC_DC_WEAK`. Clear time 00:25:38, 2 enemies. |
-| `s00c1` | A chapter with Claire alone, which the game starts after `s30c5` | "RESULTS" without `UC_DC_WEAK`. Clear time 00:13:29, 79 enemies. After its result screens the game opened `s00c1` again. |
+| `s30c5` | Operation Javier, Chapter 5 | "RESULTS" without `UC_DC_WEAK`: the bad ending. Clear time 00:25:38, 2 enemies. Played again from its checkpoint with `UC_DC_BLOOD=1`: the good ending. Clear time 00:13:50. |
+| `s30c6` | Operation Javier, Chapter 6 | "RESULTS" with `UC_DC_BLOOD=1 UC_DC_ROCKET=1`. Clear time 00:25:09, 70 enemies. |
+| `s30c7` | Operation Javier, Chapter 7 | "RESULTS" with `UC_DC_BLOOD=1 UC_DC_ROCKET=1`, in two runs. Clear time 00:26:17, 2 enemies. The second run showed the staff roll for 2 minutes: nine frames have the title and the names. |
+| `s00c1` | The extra chapter with Claire alone and blocks of tofu | "RESULTS" without `UC_DC_WEAK`. Clear time 00:13:29, 79 enemies. The same A presses then pressed SECRET again. |
 
 After each chapter the game showed its result screens and the next weapon screen, and it wrote the save file. The log of each run was searched for "guest trap", "fatal", "unsupported", "exception" and "assert".
 
@@ -237,15 +254,21 @@ These routes were used. Each one follows CHRONICLES at the main menu. "Step afte
 | `s20c7` | `save_s20c7_cp` (seven pieces, checkpoint) | `aim:0.14,-0.32`, `aim:0.26,-0.1`, YES |
 | `s30c3` | Step after `s20c7` | NEXT |
 | `s30c4` | `save_s30c4_cp` (four pieces, checkpoint) | `aim:0.36,0.108`, `aim:0.14,0.0`, YES |
-| `s30c5` | Step after `s30c4` | NEXT |
-| `s00c1` | Step after `s30c5` | The game starts it during the NEXT presses of the result screens. |
+| `s30c5` | Step after `s30c4`, or `save_s30c4_done` | NEXT. From the save: `aim:0.36,0.108`, `aim:0.2,-0.41`, NEXT. From `save_s30c5_cp` the same pieces, then YES. |
+| `s30c6` | `save_s30c5_done_good` | `aim:0.47,0.34` (the fourth piece), `aim:0.02,0.05`, NEXT |
+| `s30c7` | `save_s30c6_done` | `aim:0.47,0.34`, `aim:0.16,-0.14`, NEXT |
+| `s00c1` | The main menu after the fifth chapter | The button SECRET at `aim:0.59,0.237` |
 
 With four pieces of "Operation Javier" the chapters 1 to 3 are at `aim:-0.12,0.29`, `aim:-0.14,-0.15` and `aim:0.04,-0.39`.
+
+The fifth and the seventh chapter end at the main menu, not at the menu with CHRONICLES. Use `aim:0.59,0.237 until:mainMenu_us.arc,A,90,3000` for their result screens, and stop the presses there. The game saves before it loads that menu.
 
 #### Open
 
 - With `UC_DC_WEAK=1` the run stood at the boss of `s30c4` for 4 minutes. The health of the boss was 1 of 1200, and the fight did not go on. Without the aid the bot passed it in 1400 shots with the two launchers. The cause in the boss class (vtable 806E8A90) was not looked for. An aid that makes each loss of health larger is a possible next step.
-- `s30c6` and `s30c7` were not played. After `s30c5` the game starts `s00c1`. The save after `s00c1` shows five chapter pieces of "Operation Javier" and no sixth one. The step that opens the sixth chapter was not found.
+- Without `UC_DC_BLOOD=1` the bot gets the bad ending of the fifth chapter, and the sixth chapter stays closed.
+- The scripts `z10c1` and `z10c2` were not started. The extra chapter `s00c1` was played once.
+- The sixth and the seventh chapter were not played with `UC_DC_WEAK=1`.
 - The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. The cause was not looked for.
 - The six new entries are not in `project/dc/dc.cfg`.
 - The pictures of the two renderer changes were not compared with a console. Three frames of room R213 after the change show the corridor and its enemies without a fault. No frame of room R224 was looked at.
@@ -667,7 +690,7 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
 - The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
 - With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run. It plays the first seven chapters of "Memories of a Lost City" and most of the eighth (see "Play-through").
-- With the test aids `UC_DC_WEAK=1` and `UC_DC_ROCKET=1` it plays the end of "Memories of a Lost City" and all of "Game of Oblivion". It also plays the chapters 2 to 5 of "Operation Javier" (see "The rest of the game").
+- With the test aids `UC_DC_WEAK=1` and `UC_DC_ROCKET=1` it plays the end of "Memories of a Lost City" and all of "Game of Oblivion". With `UC_DC_BLOOD=1` it also plays the chapters 2 to 7 of "Operation Javier" and the staff roll (see "The rest of the game").
 - Its mixed sound is the sound of the game. The title music is equal to the stream file, sample for sample, at the right rate and in stereo (see "Sound").
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
@@ -689,7 +712,6 @@ Not done yet:
 - Materials with the depth flag of the shadow data get no shadow: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel. No draw of the first chapter has that flag (see "Shadows"). The casters of the last 32 lines of the shadow picture are not drawn. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
 - No person listened to the sound. The numbers are in "Sound". In long fights 2.6 to 7.2 % of the samples are at full scale.
 - The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
-- The chapters 6 and 7 of "Operation Javier" were not played (see "The rest of the game", "Open").
 - No frame with the squares of the `GX_POINTS` particles was looked at (see "Point draws").
 - After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
 - In one run the player died at the spiders, and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`). The B presses of the test input then started the chapter again. The screens between are not checked.
