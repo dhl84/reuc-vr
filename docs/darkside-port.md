@@ -653,6 +653,26 @@ Open:
 - The second player uses the same code with player index 1. It was not run.
 - A grenade and the knife were not looked at. Each bullet of a weapon goes through the bullet initializer.
 
+### The first play by a person
+
+On 17 November 2026 a person played the app 0.0.31 for five minutes. The report: bad texture flicker, strange pop-in and an inaccurate aim. No run of the bot showed these faults, because the bot runs kept numbers and no pictures. The stereo preview on the PC showed most of them.
+
+How to look for such faults without the headset:
+
+- `UC_VR_PREVIEW=1` with `UC_VR_YAW` shows both eyes. Compare the two halves of a frame: a thing that is in one eye only is a fault.
+- `UC_DC_FREEZE_FILE` holds the game time. Eight frames of the standing scene, one retrace apart, were equal in each test. So nothing flickers by itself with a still head on the PC.
+- `UC_VR_FOVEATION=3` shows the coarse shading of the headset in the preview.
+- `UC_POST_DUMP=N` with `UC_POST_DUMP_FROM=F` lists the passes and the draws of 12 frames from frame F. The count of presented frames at the start of a chapter is in the `[bench]` lines of the log.
+- A flat run of the same streets gives the picture of the game itself. The torn posters on the walls look like a fault, and they are the art of the game.
+
+What was found:
+
+- The water read the wrong part of the picture. The water is a draw of the world (call site 804AD87C) with a half-size copy of the picture as texture 0. Its texgen takes the position through the game camera to the screen. So the coordinate is the place of the pixel in the picture of that one camera. In the headset the copy holds the picture of an eye. The water then showed parts of the scene that lie beside it, each eye had other parts, and they moved with the head. A second call site (8049CF24) does the same in the streets.
+- The fix is `gx::screen_lookup` (`renderer/screen_lookup.h`). It finds such a texgen from the matrices of the draw: its three rows are multiples of the x, y and w rows of the clip transform of the camera. The vertex stage of the headset then makes that coordinate from the clip position of the eye (`StereoBlock::lookup` in `smoke.slang`). `UC_VR_NO_SCREEN_LOOKUP=1` keeps the coordinate of the game. In the preview the water is the same in both eyes with it, also with the head turned 35 degrees.
+- The wide view of the game was off. `MTXPerspective` (`game/intro.cpp`) widens the view of the game so that it draws what the eyes see. For `SBDE08` it was off, because its body went on at an `RBUE08` address. It is on now (the entry 80383B94 in `project/dc/dc.cfg`). The first chapter has 6 % more draws a frame with it in the preview.
+- The coarse shading is visible. At the render scale 2.0 the headset shades 63 % of an eye image in blocks of 4x4 pixels (foveation level 3). The automatic render scale goes down to 1.5. In the preview the edges are steps and the textures are blocks with these values. This is the likely cause of the texture flicker. The values were set for the frame rate before a person looked at the picture. They are not changed yet: the cost of a finer setting is not measured on the headset.
+- The aim is not found. The world scale is right: a person of this game is 18.5 units tall, and the headset takes 10 units for a metre. On the PC a shot along a test ray lands where the ray points, also while the camera moves. `UC_DC_RAY_SHOT=0` turns the shot hooks off for a comparison on the headset.
+
 ## On the headset
 
 First runs on a Quest 3, 15 November 2026. The game was played from the PC, with nobody in the headset.
