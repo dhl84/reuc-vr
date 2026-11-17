@@ -227,8 +227,8 @@ These routes were used. Each one follows CHRONICLES at the main menu. "Step afte
 | Script | Start | Steps |
 |---|---|---|
 | `s10c8` | The save of the headset at the boss | `aim:-0.1,0.05` (scenario), `aim:-0.151,0.336` (chapter), YES |
-| `s30c2` | Step after `s10c8` | NEXT on the weapon screen |
-| `s20c1` | Step after `s30c2` | The character at the left, then NEXT |
+| `s30c2` | Step after `s10c8` | NEXT on the weapon screen. From `save_s10c8_done` the pieces are at `aim:0.36,0.108` and `aim:-0.06,-0.27` (read from a frame, not pressed). |
+| `s20c1` | Step after `s30c2` | The character at the left, then NEXT. From `save_s30c2_done` the pieces are at `aim:0.14,-0.32` and `aim:0.05,0.0` (read from a frame, not pressed). |
 | `s20c2` | `save_s20c1_done` | `aim:0.14,-0.32`, `aim:-0.21,0.2`, NEXT |
 | `s20c3` | `save_s20c2_done` | `aim:0.14,-0.32`, `aim:-0.45,-0.19`, NEXT |
 | `s20c4` | `save_s20c4_cp` (four pieces) | `aim:0.14,-0.32`, `aim:0.1,-0.3`, NEXT |
@@ -245,10 +245,10 @@ With four pieces of "Operation Javier" the chapters 1 to 3 are at `aim:-0.12,0.2
 #### Open
 
 - With `UC_DC_WEAK=1` the run stood at the boss of `s30c4` for 4 minutes. The health of the boss was 1 of 1200, and the fight did not go on. Without the aid the bot passed it in 1400 shots with the two launchers. The cause in the boss class (vtable 806E8A90) was not looked for. An aid that makes each loss of health larger is a possible next step.
-- `s30c6` and `s30c7` were not played. After `s30c5` the game starts `s00c1`, and the way from there to `s30c6` was not found.
+- `s30c6` and `s30c7` were not played. After `s30c5` the game starts `s00c1`. The save after `s00c1` shows five chapter pieces of "Operation Javier" and no sixth one. The step that opens the sixth chapter was not found.
 - The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. The cause was not looked for.
 - The six new entries are not in `project/dc/dc.cfg`.
-- The pictures of the two renderer changes were not compared with a console. The frames of the rooms R224 and R213 were not looked at.
+- The pictures of the two renderer changes were not compared with a console. Three frames of room R213 after the change show the corridor and its enemies without a fault. No frame of room R224 was looked at.
 - With `UC_DC_ROCKET=1` the bow gun and the hand grenade have no weapon slot, and the save keeps that.
 - The plain `bot` step with the handgun alone does not pass `s10c8`, `s20c5` and `s20c7`.
 
