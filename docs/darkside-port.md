@@ -579,6 +579,8 @@ The PC action layer of `RBUE08` reads the game state of that game. For `SBDE08` 
 
 On the headset the trigger is fire. A trigger pull off the picture or the grip is reload. The lower face button is A, the upper face button is the next weapon, and a click of the stick is pause. The game takes B as OK in its menus, so the trigger is also OK there. This mapping is not tested on a headset yet.
 
+On the headset the shot does not go through the pointer. It goes along the ray of the controller (see "The shot along the ray of the controller"). The pointer still places the reticle, and the menus still read it. A trigger pull with the pointer off the picture is still a reload.
+
 The game draws its reticle at 1.25 times the pointer in x and 1.67 times in y, as `RBUE08` does. The pointer of the VR controller thus needs no other scale.
 
 ## The headset view
@@ -590,7 +592,65 @@ The game draws its reticle at 1.25 times the pointer in x and 1.67 times in y, a
 
 Checked in the preview on 15 November 2026: the title screen, the profile screen and the movie are on the flat screen. The chapter is in stereo. With the head turned 25 degrees the HUD and the subtitles stay with the head, and the reticle stays with the world.
 
-Not done for the headset: the shot follows the pointer of the game and not the ray of the controller. The hooks of `game/xr_shot.cpp` name `RBUE08` functions. Nothing is moved to a later pointer (`late_aim`).
+Nothing is moved to a later pointer (`late_aim`).
+
+### The shot along the ray of the controller
+
+On a flat screen the game aims from the camera through the pointer. In the headset the hand is not at the camera. The line from the camera through the pointer then passes beside the thing that the laser of the controller touches. With a tracked ray present, the port moves the aim of the game to that ray, as it does for `RBUE08`. A tracked ray is the ray from the muzzle of the VR controller, in the space of the game camera (`runtime/tracked_ray.h`).
+
+The functions of `SBDE08` (the constants are in `common/title.h`):
+
+- 800B8C10 fires a weapon. For each pellet it turns the aim line by a random angle and calls 800B6AE4, which takes a bullet from a pool.
+- 800B4E30 is the bullet initializer. A bullet of a player starts at the position of the camera (`+0xD8`) and holds its direction at `+0xE4`. Its trail starts at `+0x54`, which is the origin plus the offset at `+0xF0`.
+- 800B5170 moves each bullet in each frame and tests the step with the segment query 800B1EB0.
+- 800B151C is the player update. It unprojects the pointer (802974F4) and calls the segment query from the camera to that far point.
+- The result goes to the aim data of the player, 988 bytes at 807507A0. The hit point is at `+0x3BC`, the far point at `+0x3C8` and the object under the pointer at `+0x390`.
+- 800B2400 gives the aim data to the weapon, to the item pick-up and to the enemies.
+- 800C12E8 is the item pick-up. It calls the segment query once more, from the camera to the hit point.
+- The camera in use is one of the 32 cameras of the camera system. The pointer to the system is at 807369FC. The index of the camera is the byte at `+0xF4` of the system. The cameras have 268 bytes each from `+0xF8`. A camera starts with its view matrix (804C7FD8), and its position is at `+0x74`.
+
+A trace build with `UC_TRACE_NEW` listed the functions that ran first at two presses of B. Their callers and callees came from the disassembly. The camera was read from the running game: the third row of its matrix is the line from the target of the camera to its position.
+
+The two hooks are in `game/xr_shot.cpp`. `uc::dc_xr_scope` (`game/xr_shot.h`) puts them at the entries 800B1EB0 and 800B4E30 of the translated game:
+
+- At the segment query of the pointer (return address 800B1718), the start becomes the origin of the ray. The far point becomes the point on the ray at the same distance. The hit point, the object under the pointer, the pick-up and the prompts then follow the ray.
+- At the segment query of the item pick-up (return address 800C1418), the start becomes the origin of the ray.
+- After the bullet initializer (return address 800B6B88, origin argument 0), the bullet starts at the origin of the ray and flies along the ray. The trail offset is 0, so the trail starts at the muzzle. A pellet keeps its angle to the aim line of the game, and that angle is now around the ray.
+
+Without a tracked ray the hooks change nothing. That is the case for the PC with the mouse, for the `bot` step and for `scripts/drive.py`. `UC_XR_TEST_SHOT=ox,oy,oz,dx,dy,dz` gives a fixed ray for a test, and `UC_XR_SHOT_LOG=1` logs each changed query and each changed bullet. The hooks do nothing while the view matrix of the camera is not up to date. The log names that case, and no run showed it.
+
+Checked on the PC on 17 November 2026 in the boss fight of `s10c8`. Each run fired the handgun 15 times at fixed retraces and read the health of the boss after each shot. The boss starts with 1600 and moves, so a part of the shots misses. The first six shots fall in its entrance, where it takes no damage.
+
+| Run | Pointer | Test ray | Health after the 15 shots | Shots that took health |
+|---|---|---|---|---|
+| A | On the boss | None | 1568 | 6 |
+| A again | On the boss | None | 1584 | 4 |
+| A with the build of 15 November, which has no hooks | On the boss | None | 1580 | 5 |
+| B | On the wall to the upper right of the boss | None | 1600 | 0 |
+| C | As B | From the camera through the pointer place of A | 1568 | 6 |
+| D | As A | From the camera through the pointer place of B | 1600 | 0 |
+| E | As B | From 3 units to the right of the camera and 2 units below it, across the line of A at 24 units | 1568 | 6 |
+
+So the shot hits where the ray goes and not where the pointer is. In run E the log shows each bullet on the ray, 3.6 units from the camera.
+
+Two more runs stopped the game time at the same retrace (`UC_DC_FREEZE_FILE`) and read the hit point and the camera matrix. Without a ray the hit point was on the line from the camera through the pointer, 0.000 units beside it. With the ray of run E the hit point was 0.0000 units beside the ray and 1.30 units beside the line of the pointer. On the screen that is 53 pixels from the pointer, at 640 x 480.
+
+Without a ray the step `bot:420,2` ran three times in the same fight. With the build of 15 November the boss lost 166 of its health. With the new build it lost 178 and 168. With `UC_XR_SHOT_LOG=1` the runs without a ray logged no changed query and no changed bullet.
+
+The unit test `tests/test_xr_shot.cpp` has the cases of `SBDE08` in a build of that game. It passes in that build and in a build of `RBUE08`.
+
+The reticle. The game draws its reticle at the pointer, in 2D, and not at the hit point. While the game aims at an enemy, the ring of the reticle is red. At other times it is gray. On the headset the pointer is the place where the ray of the controller meets the scene, seen from the game camera (`StereoScene::aim`). The renderer draws the marked reticle at that depth. The reticle is then on the ray, and the shot goes along the same ray. This path was not run for `SBDE08`: the PC has no controller, and the headset was in use.
+
+The stereo preview has no controller. It draws the reticle at the pointer of the game, on a plane 30 units ahead (3 m). One preview run used the ray of run E and put the pointer where that ray crosses the plane. At 8 of 9 shots the frame agreed with the health. Either the reticle was on the boss in both eyes with a red ring, and the shot took health. Or the reticle was on the wall with a gray ring, and the shot took none. So when the pointer comes from the ray, the reticle of the preview sits on the hit point. With any other pointer the preview shows the reticle at the pointer, and the shot still follows the ray. A preview that takes its pointer from `UC_XR_TEST_SHOT` is not written. That change is in `renderer/vulkan_renderer.cpp` and in the input of the PC build.
+
+Open:
+
+- The hooks did not run on a headset. The scale of the tracked ray (game units for each meter) was not checked for this game.
+- The hook of the item pick-up has its unit test. No run on the PC picked an item up with a test ray.
+- One enemy class (state function 8021291C, test in 80212C44) makes its own test of the pointer. It unprojects the pointer and marks the parts of the enemy that a player aims at. It still uses the pointer.
+- The function 80059C04 tests the line of sight from the camera to the object under the pointer. It was not changed.
+- The second player uses the same code with player index 1. It was not run.
+- A grenade and the knife were not looked at. Each bullet of a weapon goes through the bullet initializer.
 
 ## On the headset
 
