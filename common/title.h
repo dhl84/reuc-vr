@@ -171,6 +171,17 @@ inline constexpr uint32_t kDcItemKinds = 18, kDcItemRocketLauncher = 11, kDcRock
 // The last boss of "Game of Oblivion" needs the linear launcher (item kind 13) in the same way ("Use the Launcher!"). The aid gives
 // it in slot kDcLinearSlot (Down).
 inline constexpr uint32_t kDcItemLinearLauncher = 13, kDcLinearSlot = 2;
+// The game opens the sixth chapter of "Operation Javier" at the result of the fifth one (8008F3A8 to 8008F3E8) when two things
+// are true. The chapter was cleared at difficulty 2 or above (bits 0xF0 of the chapter flags, 800CF398). The byte at +12 of the
+// ending block is 1. The ending block is at +0xCC of the static object 80733B68 (getter 80047780), and the save keeps a copy at
+// +0x2BF0 of the game data (800CECEC). Its word at +8 counts the times that Manuela burns the last boss (80226574). When the boss
+// dies, the byte is 1 if the count is at most a number of the boss data, else 0 (802223F0). The bot needs more than 40 burns.
+// The test aid UC_DC_BLOOD=1 (game/uc_main.cpp) holds the count at 0.
+inline constexpr uint32_t kDcBurnCount = 0x80733B68 + 0xCC + 8;
+// The last boss (vtable 806E7798) dies when a shot hits its head (collision 18) while flag 4 of its flag word at +0x7FC is set
+// (8022230C). The flag is set for 4 seconds (802262A8, the timer is the float at +0x668), and then Manuela burns the boss once.
+// UC_DC_BLOOD=1 also holds that timer at 0 while the flag is set.
+inline constexpr uint32_t kDcLastBossVtable = 0x806E7798, kDcLastBossFlags = 0x7FC, kDcLastBossTimer = 0x668;
 // The post-processing effects of the game are objects of one base class (docs/darkside-port.md, "The post-processing chain"). The byte
 // at +2 of an effect is its switch: the draw function of the base class (802D8D44) returns at once when it is 0, and the virtual
 // functions 802D8E60 and 802D8E78 write 1 and 0. The word at +4 is the vtable. The manager of the effects is the static object at

@@ -589,6 +589,29 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 }
             }
         }
+        // UC_DC_BLOOD=1 (test aid, off by default): the count of the times that Manuela burns the last boss of "Operation Javier" stays
+        // 0 (common/title.h kDcBurnCount). The fifth chapter then ends with the ending that opens the sixth chapter.
+        static const bool blood = [] { const char* v = std::getenv("UC_DC_BLOOD"); return v && v[0] == '1'; }();
+        if (blood) {
+            ppc::Ctx& c = sched.irq_ctx();
+            if (ppc::rd32(c, uc::title::kDcBurnCount)) {
+                static bool said = false;
+                if (!said) { said = true; std::fprintf(stderr, "[dc-blood] UC_DC_BLOOD=1: the count of Manuela's burns stays 0\n"); }
+                ppc::wr32(c, uc::title::kDcBurnCount, 0);
+            }
+            // The boss dies from one hit on its head in a time of 4 seconds (flag 4 of its flag word). The aid holds the timer of
+            // that time at 0, so the time does not end before the bot hits the head.
+            for (uint32_t index = 0; index < 300; ++index) {
+                const uint32_t entry = uc::title::kDcObjectTable + index * 8, object = ppc::rd32(c, entry + 4);
+                if (!ppc::rd32(c, entry) || (object & 3) || object < 0x80004000 || object >= 0x81800000) continue;
+                if (ppc::rd32(c, object + 0x1C) != uc::title::kDcLastBossVtable) continue;
+                if ((ppc::rd32(c, object + uc::title::kDcLastBossFlags) & 0x10) && ppc::rd32(c, object + uc::title::kDcLastBossTimer)) {
+                    static bool held = false;
+                    if (!held) { held = true; std::fprintf(stderr, "[dc-blood] the time for the last hit on the boss stays open (boss object %08X)\n", object); }
+                    ppc::wr32(c, object + uc::title::kDcLastBossTimer, 0);
+                }
+            }
+        }
         // UC_DC_FREEZE_FILE=<file> (test aid): while the switch file is on (uc::switch_file_on), the eight time scales of the game's clock
         // (common/title.h kDcClock) are 0. The game then steps no time: the camera and the models stand still, and the game still draws
         // each frame. Two settings of the renderer can be compared on the same picture. The files are looked at each 30 retraces.
