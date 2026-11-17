@@ -765,6 +765,35 @@ How the cause was found:
 
 If a headset run is slow, record such a profile first. Judge the frame rate from a long session, and compare the same moments of the game.
 
+Scenes with many draws, 17 November 2026. With the app 0.0.23 the start of `s10c5` still ran at 50 to 54 fps for eight minutes. A frame has about 1,950 draws there, in 17 packets. The GPU was 65 % busy, and the render thread took 12 ms a frame. So neither was the limit.
+
+A frame goes through three threads. The game thread runs the translated code of the game and writes its GX commands into a queue (`gx::CommandQueue`). The builder thread (`gx-builder`) makes the draws of a packet from the commands. The render thread records the packets for Vulkan. At the end of its frame the game thread asks for the draw-done. When the builder sealed the packet of the frame, the game thread goes on.
+
+A profile of the game thread showed where its frame of 19.7 ms went:
+
+- 8 ms were the code of the game.
+- 6.7 ms were the wait for the builder (`gx::CommandQueue::wait_until`). The builder starts with the first draw of the frame and needs about 6 microseconds for a draw.
+- 2.5 ms were the sleep of a late frame (`kTimedYieldMs`).
+- 3 ms went to the other threads of the game.
+
+The game thread kept the baton during its wait for the builder. The baton is the right to run the code of the game, and one thread holds it at a time. So no other thread of the game ran in that time, and the late frame then slept for them.
+
+The builder now posts the draw-done itself after it sealed the packet (`kDrawDoneFromBuilder` in `common/title.h`, app 0.0.25). The game thread waits for it in `GXWaitDrawDone` without the baton, as on the console. The scheduler counts how long a thread was blocked (`Sched::take_blocked_ticks`). If the game thread was blocked for 2 ms or more in a frame, a late frame does not sleep. `UC_DRAW_DONE_AT_BUILD=1` gives the old way, and `RBUE08` keeps the old way.
+
+The table gives the seconds 60 to 480 after the script of `s10c5` opened. Both runs had `UC_DC_GOD=1` and the step `bot` with 6 retraces.
+
+| App | Mean fps | Median fps | Seconds at 60 fps or more | Baton time of the game thread a frame |
+|---|---|---|---|---|
+| 0.0.23 | 51.7 | 53 | 2 % | 15.8 ms |
+| 0.0.27 | 66.1 | 70 | 81 % | 11.5 ms |
+
+After the change the GPU limits most of that scene. At the render scale 2.0 it ran at 59.5 fps with 15.8 ms of GPU time a frame. The automatic render scale went to 1.5, and the scene then ran at 69 fps. In one minute of the scene the code of the game itself needs 16 ms a frame (15 million guest cycles). The frame rate falls to 52 fps there.
+
+Two traps of these measurements:
+
+- `UC_GPU_PACKETS=1` makes the render thread about 50 % slower in such a scene (18 ms a frame against 12 ms). It computes the screen box of each draw for its statistics. Do not read the time of the render thread from a run with it.
+- The addresses of the installed `libmain.so` can differ from those of a later build. Keep the `libmain.so` of the build folder for each app that runs on the headset. Before you use `llvm-addr2line`, compare the address of one function in both files with `llvm-nm`.
+
 The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
 Not done on the headset: play by a person with the controllers, and the sound.
