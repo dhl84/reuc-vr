@@ -813,6 +813,20 @@ The automatic render scale (`uc::AutoScale` in `renderer/auto_scale.h`, app 0.0.
 - A change of the scale costs one frame of about 50 ms.
 - `UC_AUTO_SCALE=0` turns it off. `tests/test_auto_scale.cpp` runs the rule on recorded seconds.
 
+The long run with the app 0.0.31, 17 November 2026. The app has all changes of this section and the automatic render scale. The run had `UC_DC_GOD=1` and `bot:60000,6`, as the runs above. It played for two hours without a crash. Then the PC ran short of memory and stopped the script that drives the run, in the seventh chapter. The eighth chapter did not run.
+
+| Chapter | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
+|---|---|---|---|---|
+| `s30c1` | 1,467 | 71.4 | 98 % | 50 fps |
+| `s10c1` | 769 | 67.4 | 81 % | 39 fps |
+| `s10c2` | 615 | 72.2 | 100 % | 63 fps |
+| `s10c3` | 1,185 | 71.0 | 100 % | 55 fps |
+| `s10c4` | 943 | 71.9 | 100 % | 63 fps |
+| `s10c5` | 1,566 | 70.5 | 96 % | 37 fps |
+| `s10c6`, its first 450 s | 450 | 69.6 | 99 % | 48 fps |
+
+In `s10c1` the slow seconds are in the minutes with 1,000 to 1,200 draws a frame. Those minutes ran at 62 to 67 fps. No profile of them was recorded.
+
 The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
 Not done on the headset: play by a person with the controllers, the shot along the ray of the controller, and the sound. The remote play has no tracked ray, so its shots still follow the pointer.
