@@ -56,7 +56,34 @@ static void space_warp_depth_range() {
     const auto back=warp_depth_range(lens.data());
     CHECK(back && std::abs(back->near_plane-1.f)<1e-4f && std::abs(back->far_plane-raised->far_plane)<.05f && lens[0]==p[0] && lens[5]==p[5] && lens[11]==-1);
 }
+// The lens of the aim (StereoScene::observe_aim): the projection of most world draws of a frame. Before a frame it is the screen lens.
+// The pointer of a world aim goes through it, and the lens of the screen for the menus and the HUD stays.
+static void aim_lens_follows_world_draws() {
+    xr::StereoSettings settings; settings.scale=10;
+    xr::StereoScene scene(settings);
+    std::array<xr::StereoPose,2> eyes;
+    eyes[0].position={-.032f,0,0}; eyes[1].position={.032f,0,0};
+    eyes[0].tangents={1.3f,.8f,1.4f,.9f}; eyes[1].tangents={.8f,1.3f,1.4f,.9f};
+    scene.publish(eyes);
+    scene.set_screen_lens({.974f,1.732f});
+    CHECK(scene.aim_lens()[0]==.974f && scene.aim_lens()[1]==1.732f);
+    // a controller 0.5 m to the right and 0.25 m up that points straight ahead: its hit on the plane 10 m away has the tangents 0.05 and 0.025
+    xr::StereoPose controller; controller.position={.5f,.25f,0}; controller.orientation={0,0,0,1};
+    xr::StereoRay ray;
+    CHECK(scene.aim(controller,1280,720,false,10.f,ray) && std::abs(ray.px-640*(1+.05f*.974f))<.01f && std::abs(ray.py-360*(1-.025f*1.732f))<.01f);
+    xr::Matrix wide{}; wide[0]=.6f; wide[5]=.711f; wide[10]=-1; wide[11]=-1; wide[14]=-.2f;
+    xr::Matrix other=wide; other[0]=1.5f; other[5]=1.5f;
+    scene.observe_aim(other);
+    for (int i=0;i<3;++i) scene.observe_aim(wide);
+    scene.finish_frame();
+    CHECK(scene.aim_lens()[0]==.6f && scene.aim_lens()[1]==.711f);
+    CHECK(scene.screen_lens()[0]==.974f && scene.screen_lens()[1]==1.732f);
+    CHECK(scene.aim(controller,1280,720,false,10.f,ray) && std::abs(ray.px-640*(1+.05f*.6f))<.01f && std::abs(ray.py-360*(1-.025f*.711f))<.01f);
+    scene.finish_frame();   // a frame without a world draw keeps the lens
+    CHECK(scene.aim_lens()[0]==.6f && scene.aim_lens()[1]==.711f);
+}
 int main() {
+    aim_lens_follows_world_draws();
     world_projection_keeps_eye_translation(.1f);
     world_projection_keeps_eye_translation(1e-9f);
     space_warp_depth_range();

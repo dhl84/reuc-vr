@@ -84,6 +84,7 @@ public:
     XrSessionState session_state() const { return session_state_; }
     // The game's projection of a perspective draw, every frame (HOTD4's lens tally: the screen plane matches the game's field of view).
     void observe(const gx::Projection& projection);
+    void observe_aim(const gx::Projection& projection);   // each world draw of a game without a lens for observe() (StereoScene::observe_aim)
     void aim_draw(const gx::DrawPacket& draw,const std::array<float,6>* box) {
         if (!input_finished_) { aim_world_=true; aim_geometry_.draw(draw,box); }
     }

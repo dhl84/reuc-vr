@@ -35,6 +35,14 @@ inline constexpr uint32_t kTimedYieldMs = 2;
 // other threads of the game run in that time. false: the game thread keeps the baton and waits for the builder inside the call.
 // A frame of this game has up to 2,000 draws, and the builder then needs 7 ms more than the game thread (Quest 3).
 inline constexpr bool kDrawDoneFromBuilder = true;
+// The headset takes the lens of the aim from the world draws of each frame (StereoScene::observe_aim). The frames of this game have
+// no scene phase, so the renderer never passes a lens to StereoScene::observe: the pointer and the reticle went through the start
+// lens of 60 degrees, and the camera of a chapter has 55 degrees.
+inline constexpr bool kAimLensFromWorldDraws = true;
+// A perspective draw of a packet with a small copy keeps the camera of the game only when its own viewport is small too
+// (VulkanRenderer stereo_facts). The headset drew the see-through draws of the world with the camera of the game before: a second
+// picture of them at a wrong place, when the head was turned.
+inline constexpr bool kSmallCopyByViewport = true;
 // The game draws its shadow map into the top left 512x480 pixels of the frame buffer and copies it from there (docs/darkside-port.md,
 // "Shadows"). The Vulkan renderer draws a packet with a copy of exactly this source at one pixel for each guest pixel, and not at the
 // scale of its frame buffer: the picture is a texture of that size for the game, not a part of what the player sees. On a Quest 3
@@ -234,6 +242,8 @@ inline constexpr uint32_t kTestPadButtons = 0x1C10;   // A, B, plus, minus
 inline constexpr uint32_t kButtonWave = 0;
 inline constexpr uint32_t kTimedYieldMs = 0;
 inline constexpr bool kDrawDoneFromBuilder = false;
+inline constexpr bool kAimLensFromWorldDraws = false;
+inline constexpr bool kSmallCopyByViewport = false;
 inline constexpr uint32_t kNativeCopyWidth = 0, kNativeCopyHeight = 0;
 inline constexpr bool kDropDeadCopies = false;
 inline constexpr bool kCornerChainProxy = false;

@@ -10,7 +10,9 @@
 #include "gx_vertices.h"
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <optional>
+#include <string>
 
 namespace gx {
 // Coordinate `id`: s / q = s[0] * x / w + s[1] and t / q = t[0] * y / w + t[1], with (x, y, w) the clip position.
@@ -76,5 +78,53 @@ inline std::optional<ScreenLookup> screen_lookup(const DrawPacket& draw) {
         return found;
     }
     return std::nullopt;
+}
+// Diagnostics (UC_LOOKUP_LOG): why screen_lookup() takes or leaves each coordinate of a draw that reads a copy of the frame buffer.
+inline std::string screen_lookup_report(const DrawPacket& draw) {
+    using namespace screen_lookup_detail;
+    const auto& t=*draw.transforms; const auto& u=*draw.uniforms;
+    char text[512]; std::string out;
+    std::snprintf(text,sizeof text,"projection %.3f x %.3f%s%s%s",t.projection[0][0],t.projection[1][1],t.projection[3][3]!=0 ? ", not perspective" : "",
+                  draw.state->descriptors[0]!=Mode::none ? ", indexed matrices" : "",draw.texture_bank ? ", texture bank" : "");
+    out=text;
+    if (t.current>61) return out+", row out of range";
+    const auto row=[&](int k) {
+        Row r{0,0,0,t.projection[k][3]};
+        for (int i=0;i<3;++i) r=add(r,scaled(t.position_rows[t.current+i],t.projection[k][i]));
+        return r;
+    };
+    const Row clip_x=row(0),clip_y=row(1),clip_w=row(3);
+    for (uint32_t stage=0;stage<draw.material.stages && stage<16;++stage) {
+        const uint32_t order=draw.material.stage[stage].order;
+        if (!(order&64)) continue;
+        const uint32_t map=order&7,id=(order>>3)&7;
+        const auto& texture=map ? draw.texture_maps[map-1] : draw.texture;
+        if (!texture || !texture->gpu_only) continue;
+        const uint32_t gen=u.tex_gens[id];
+        std::snprintf(text,sizeof text,"; stage %u map %u coordinate %u gen %08X (type %u source %u, 3 rows %d, input %s) post %08X",stage,map,id,gen,(gen>>4)&7,(gen>>7)&31,int((gen&2)!=0),
+                      (gen&4) ? "ABC1" : "AB11",unsigned(u.tex_posts[id]));
+        out+=text;
+        if (((gen>>7)&31)!=0 || ((gen>>4)&7)!=0 || !(gen&2) || (u.tex_posts[id]&256)) { out+=" not a regular 3-row texgen from the position"; continue; }
+        Row pre[3];
+        for (int i=0;i<3;++i) {
+            const auto& r=u.tex_rows[id*3+i];
+            pre[i]=(gen&4) ? Row{r[0],r[1],r[2],r[3]} : Row{r[0],r[1],0,double(r[2])+r[3]};
+        }
+        Row rows[3];
+        for (int j=0;j<3;++j) {
+            const auto& q=u.post_rows[id*3+j];
+            rows[j]={0,0,0,q[3]};
+            for (int i=0;i<3;++i) for (int c=0;c<4;++c) rows[j][c]+=q[i]*pre[i][c];
+        }
+        const double ww=dot(clip_w,clip_w),e=ww>0 ? dot(rows[2],clip_w)/ww : 0;
+        Row rest; for (int c=0;c<4;++c) rest[c]=rows[2][c]-e*clip_w[c];
+        std::array<double,2> s{},v{};
+        const bool fit_s=fit(rows[0],clip_x,clip_w,s),fit_t=fit(rows[1],clip_y,clip_w,v);
+        std::snprintf(text,sizeof text," q = %.4g w (rest %.3g of %.3g), s fit %d (%.4g x + %.4g w), t fit %d (%.4g y + %.4g w); rows s %.4g,%.4g,%.4g,%.4g t %.4g,%.4g,%.4g,%.4g q %.4g,%.4g,%.4g,%.4g; clip x %.4g,%.4g,%.4g,%.4g y %.4g,%.4g,%.4g,%.4g w %.4g,%.4g,%.4g,%.4g",
+                      e,dot(rest,rest),dot(rows[2],rows[2]),int(fit_s),s[0],s[1],int(fit_t),v[0],v[1],rows[0][0],rows[0][1],rows[0][2],rows[0][3],rows[1][0],rows[1][1],rows[1][2],rows[1][3],
+                      rows[2][0],rows[2][1],rows[2][2],rows[2][3],clip_x[0],clip_x[1],clip_x[2],clip_x[3],clip_y[0],clip_y[1],clip_y[2],clip_y[3],clip_w[0],clip_w[1],clip_w[2],clip_w[3]);
+        out+=text;
+    }
+    return out;
 }
 }

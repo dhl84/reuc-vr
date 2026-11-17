@@ -43,8 +43,16 @@ typedef struct {
  * high foveation visibly blurred the 3D view. Native removes both resizes; lower
  * render scales remain explicit choices. Version 12 enables medium foveation. */
 /* Version 13: high foveation and no screen-pass FXAA on the Quest (GPU time; both on the Display page). */
+/* Version 15, The Darkside Chronicles: low foveation. High foveation shades the view beyond 36 degrees in blocks of 4x4 pixels (63 % of
+ * an eye image), and a person saw that as flicker of the textures in the first play (17 November 2026). Low foveation keeps 1x1 to 35
+ * degrees and 2x2 to 50 degrees. In the heavy part of the first chapter it cost 3.6 fps at the fixed render scale 2.0 (66.3 against
+ * 69.9 fps). */
 #if defined(__ANDROID__)
+#ifdef UC_TITLE_DC
+#define LG_XR_DEFAULT_FOVEATION 1
+#else
 #define LG_XR_DEFAULT_FOVEATION 3
+#endif
 #define LG_XR_DEFAULT_FXAA 0
 #else
 #define LG_XR_DEFAULT_FXAA 1
@@ -84,7 +92,7 @@ typedef struct {
 #else
 #define LG_XR_DEFAULT_SHOW_GUN 1
 #endif
-#define LG_XR_SETTINGS_VERSION 14
+#define LG_XR_SETTINGS_VERSION 15
 #define LG_XR_SETTINGS_DEFAULT {1.0f,3.0f,15.0f,LG_XR_DEFAULT_HEIGHT,LG_XR_DEFAULT_WIDTH,LG_XR_DEFAULT_REFRESH,0,LASER_ON,1,0,1,LG_XR_DEFAULT_SHOW_GUN,0,0,1,LG_XR_DEFAULT_FOVEATION,LG_XR_SETTINGS_VERSION,LG_XR_DEFAULT_RENDER_SCALE,LG_XR_DEFAULT_FXAA,0,1,0,1,1,0}
 void xr_settings_load(LgXrSettings *settings);
 void xr_settings_set(LgXrSettings *settings,const char *key,const char *value);

@@ -50,6 +50,7 @@ void xr_check(XrResult result, const char* what) {
 }
 
 namespace {
+std::array<float,3> test_head_position{}; std::array<float,4> test_head_orientation{0,0,0,1};   // the head of the frame, for UC_VR_TEST_AIM=head:
 xr::ControllerSettings controller_settings(const LgXrSettings& s) {
     // HOTD4's controller_settings(): its profile's gun (TP9), aim on the 15 m plane, the panel's choices.
     xr::ControllerSettings result{XrCompositor::kAimWidth, XrCompositor::kAimHeight, bool(s.dual), bool(s.auto_coins), bool(s.left_handed), false, s.aim};
@@ -613,6 +614,8 @@ bool XrCompositor::begin_frame() {
         std::fputc('\n', stderr);
     }
     scene_.publish(eyes);
+    for (unsigned i=0;i<3;++i) test_head_position[i]=(eyes[0].position[i]+eyes[1].position[i])/2;   // UC_VR_TEST_AIM=head:
+    for (unsigned i=0;i<4;++i) test_head_orientation[i]=eyes[0].orientation[i];
     controller_frame(true);
     XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     xr_check(xrAcquireSwapchainImage(swapchain_, &acquire, &image_), "acquire OpenXR eye array"); acquired_ = true;
@@ -640,17 +643,59 @@ void XrCompositor::controller_frame(bool tracked) {
     sample.menu = input.menu;
     // Fixed ray for a reproducible scene-geometry check. The harness still
     // owns game input; this only replaces the traced controller pose.
-    static const auto test_aim=[]() -> std::optional<xr::StereoPose> {
+    // UC_VR_TEST_AIM=head:x,y,z,yaw,pitch[,sweep,period]: the pose follows the head. x,y,z: metres to the right, up and back of the point
+    // between the eyes. yaw, pitch: degrees to the right and up of the head's forward axis. sweep, period: the yaw swings by +-sweep
+    // degrees and the pitch by +-sweep/2, with periods of `period` and `period`/1.618 seconds (a path over the whole view).
+    // UC_VR_TEST_AIM=space:...: the same values, from the origin and the forward axis of the play space (the forward axis of the game
+    // camera). Use it when the headset lies on a desk and looks up or down.
+    struct TestAim { bool head=false,space=false; xr::StereoPose pose; float yaw=0,pitch=0,sweep=0,period=0; };
+    static const auto test_aim=[]() -> std::optional<TestAim> {
         const char* value=std::getenv("UC_VR_TEST_AIM"); if (!value) return std::nullopt;
-        xr::StereoPose pose; auto& p=pose.position; auto& q=pose.orientation;
+        TestAim aim; auto& pose=aim.pose; auto& p=pose.position; auto& q=pose.orientation;
+        if (!std::strncmp(value,"head:",5) || !std::strncmp(value,"space:",6)) {
+            aim.space=*value=='s';
+            if (std::sscanf(value+(aim.space ? 6 : 5),"%f,%f,%f,%f,%f,%f,%f",&p[0],&p[1],&p[2],&aim.yaw,&aim.pitch,&aim.sweep,&aim.period)<5)
+                throw std::runtime_error("UC_VR_TEST_AIM=head: needs x,y,z,yaw,pitch");
+            for (float v:{p[0],p[1],p[2],aim.yaw,aim.pitch,aim.sweep,aim.period}) if (!std::isfinite(v)) throw std::runtime_error("Invalid UC_VR_TEST_AIM=head: value");
+            aim.head=true;
+            return aim;
+        }
         if (std::sscanf(value,"%f,%f,%f,%f,%f,%f,%f",&p[0],&p[1],&p[2],&q[0],&q[1],&q[2],&q[3])!=7)
             throw std::runtime_error("UC_VR_TEST_AIM needs position xyz and quaternion xyzw");
         float norm=0; for (float v:q) norm+=v*v;
         if (!std::isfinite(norm) || std::abs(norm-1.f)>.001f) throw std::runtime_error("Invalid UC_VR_TEST_AIM quaternion");
         for (float v:p) if (!std::isfinite(v)) throw std::runtime_error("Invalid UC_VR_TEST_AIM position");
-        return pose;
+        return aim;
     }();
-    if (test_aim) { sample.pose[1]=*test_aim; sample.valid[1]=1; }
+    if (test_aim) {
+        auto pose=test_aim->pose;
+        if (test_aim->head) {
+            float yaw=test_aim->yaw,pitch=test_aim->pitch;
+            if (test_aim->sweep!=0 && test_aim->period>0) {
+                const double t=double(frame_.predictedDisplayTime%3600000000000ll)/1e9*6.283185307/test_aim->period;
+                yaw+=test_aim->sweep*float(std::sin(t)); pitch+=.5f*test_aim->sweep*float(std::sin(t*1.618));
+            }
+            // OpenXR: x right, y up, -z forward. A turn to the right is a negative turn about y, a turn up is a positive turn about x.
+            const float hy=-yaw*.00872664626f,hp=pitch*.00872664626f;
+            const std::array<float,4> turn_y{0,std::sin(hy),0,std::cos(hy)},turn_x{std::sin(hp),0,0,std::cos(hp)};
+            const auto multiply=[](const std::array<float,4>& a,const std::array<float,4>& b) {
+                return std::array<float,4>{a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],
+                                           a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]};
+            };
+            const std::array<float,4> h=test_aim->space ? std::array<float,4>{0,0,0,1} : test_head_orientation;
+            if (test_aim->space) test_head_position={};
+            const auto q=multiply(h,multiply(turn_y,turn_x));
+            // v' = v + 2 w (u x v) + 2 u x (u x v), with the head's quaternion (u, w)
+            const std::array<float,3> v{test_aim->pose.position[0],test_aim->pose.position[1],test_aim->pose.position[2]},u{h[0],h[1],h[2]};
+            const std::array<float,3> c{u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};
+            const std::array<float,3> d{u[1]*c[2]-u[2]*c[1],u[2]*c[0]-u[0]*c[2],u[0]*c[1]-u[1]*c[0]};
+            for (unsigned i=0;i<3;++i) pose.position[i]=test_head_position[i]+v[i]+2*h[3]*c[i]+2*d[i];
+            for (unsigned i=0;i<4;++i) pose.orientation[i]=q[i];
+        }
+        sample.pose[1]=pose; sample.valid[1]=1;
+        // The real controllers must not take part: one that lies on its trigger makes its hand the gun hand, and that hand has no pose.
+        sample.valid[0]=0; sample.buttons={}; sample.menu={};
+    }
     controller_sample_=sample; input_focused_=focused; input_finished_=false; aim_world_=false;
     aim_geometry_.reset();
     if (focused && (controller_aim_enabled_ || test_aim)) for (unsigned h=0;h<2;++h) if (sample.valid[h])
@@ -675,6 +720,8 @@ void XrCompositor::finish_input() {
     if (log_aim && ++aim_frames%30==0) {
         const auto& ray=controls_.aims().ray[0];
         std::fprintf(stderr,"[xr-aim] world %d depth %.4f reach %.4f pointer %d,%d enabled %d\n",int(aim_world_),depth,ray.reach,ray.x,ray.y,int(controller_aim_enabled_));
+        std::fprintf(stderr,"[xr-aim] focused %d tracking %d valid %d,%d ray valid %d on the picture %d direction %.3f,%.3f,%.3f aim lens tan %.3f,%.3f\n",int(input_focused_),int(scene_.tracking_valid()),
+                     int(sample.valid[0]),int(sample.valid[1]),int(controls_.aims().valid[0]),int(ray.on_screen),ray.direction[0],ray.direction[1],ray.direction[2],1/scene_.aim_lens()[0],1/scene_.aim_lens()[1]);
     }
     if (effects & XP_SAVE) xr_settings_save(&settings);
     if (effects & XP_RATE_CHANGED) request_refresh(float(settings.refresh));
@@ -726,6 +773,10 @@ std::optional<std::array<float,2>> XrCompositor::aim_pointer() const {
 
 void XrCompositor::observe(const gx::Projection& projection) {
     scene_.observe(gl_from_vulkan(projection), LG_STEREO_WORLD);
+    lens_seen_ = true;
+}
+void XrCompositor::observe_aim(const gx::Projection& projection) {
+    scene_.observe_aim(gl_from_vulkan(projection));
     lens_seen_ = true;
 }
 

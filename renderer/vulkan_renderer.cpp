@@ -38,6 +38,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -217,6 +218,14 @@ void stereo_eye_block(const uc::xr::Matrices& matrices, float* block) {
         double g[4][4];   // M * inverse(C): inverse(C) maps Vulkan clip back to GL (y'=-y, z'=2z-w)
         for(int r=0;r<4;++r) { g[r][0]=gl(r,0); g[r][1]=-gl(r,1); g[r][2]=2*gl(r,2); g[r][3]=gl(r,3)-gl(r,2); }
         for(int c=0;c<4;++c) { block[eye*16+0*4+c]=float(g[0][c]); block[eye*16+1*4+c]=float(-g[1][c]); block[eye*16+2*4+c]=float(.5*(g[2][c]+g[3][c])); block[eye*16+3*4+c]=float(g[3][c]); }
+    }
+}
+// A 2D draw made smaller about the point (cx, cy) of its clip space (Vulkan NDC, w = 1), inside its eye block: B' = B * A with
+// A: x' = sx * x + cx * (1 - sx) * w, y' = sy * y + cy * (1 - sy) * w.
+void stereo_block_scale_about(float* block,float cx,float cy,float sx,float sy) {
+    for(int eye=0;eye<2;++eye) for(int r=0;r<4;++r) {
+        float* row=block+eye*16+r*4;
+        row[3]+=row[0]*cx*(1-sx)+row[1]*cy*(1-sy); row[0]*=sx; row[1]*=sy;
     }
 }
 VkShaderModule shader(VkDevice device, const std::filesystem::path& path) {
@@ -3512,6 +3521,27 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             }
             if (vectors) tracker_.record(key,draw.transforms.block(),summary.draws[d].z_write);
             if (summary.draws[d].perspective) scene_projection_=draw.transforms->projection;
+            // UC_PROJ_LOG=1 (diagnostics): the perspective projections of a frame (x and y scale, draws, depth-writing draws, a call site
+            // and the first draw's place), printed when the list of scales differs from the list of the frame before. At most 400 lines.
+            static const bool projection_log=std::getenv("UC_PROJ_LOG")!=nullptr;
+            if (projection_log && summary.draws[d].perspective) {
+                struct Entry { uint32_t draws=0,depth_writes=0,callsite=0,order=0; };
+                static std::map<std::pair<long,long>,Entry> now; static std::vector<std::pair<long,long>> printed; static uint64_t frame=~0ull; static unsigned lines=0,order=0;
+                if (frame!=frame_index_) {
+                    std::vector<std::pair<long,long>> keys; for (const auto& [key,entry]:now) keys.push_back(key);
+                    if (!keys.empty() && keys!=printed && lines<400) {
+                        for (const auto& [key,entry]:now) { ++lines;
+                            std::fprintf(stderr,"[proj] frame %llu: scale %.3f x %.3f (tan %.3f x %.3f): %u draws, %u write depth, call site %08X, first at place %u of the list\n",(unsigned long long)frame,
+                                         key.first/1000.0,key.second/1000.0,1000.0/key.first,1000.0/std::abs(key.second),entry.draws,entry.depth_writes,entry.callsite,entry.order); }
+                        printed=keys;
+                    }
+                    now.clear(); frame=frame_index_; order=0;
+                }
+                const auto& p=draw.transforms->projection;
+                auto& entry=now[{std::lround(p[0][0]*1000),std::lround(p[1][1]*1000)}];
+                if (!entry.draws) { entry.callsite=draw.callsite; entry.order=order; }
+                ++entry.draws; entry.depth_writes+=summary.draws[d].z_write; ++order;
+            }
             if (summary.draws[d].perspective && summary.draws[d].z_write && !frame_projection_) {   // the world's projection: the first depth-writing perspective draw (the weapon comes later with its own)
                 frame_projection_=draw.transforms->projection;
 #ifdef UC_OPENXR
@@ -4186,7 +4216,11 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         // copies are per eye: the scene's packets (copied whole, 640x360, or at half size, 320x180) are eye renders. Only a small
         // perspective copy (a render-to-texture picture) keeps the game's camera; 2D passes over copies (the game's own post chain)
         // keep identity in each eye.
-        const bool small_copy=copy_target && packet.texture_copy->source[2]<300;
+        // SBDE08 (title.h kSmallCopyByViewport): the packet with the see-through draws of the world (about 200 draws) ends with a quad
+        // that draws the picture small into a corner, and its copy takes that corner (160x85). Those draws are the world, with the
+        // viewport of the whole picture. Only a draw with a small viewport of its own belongs to a small picture.
+        const bool small_view=!uc::title::kSmallCopyByViewport || std::abs(draw.state->viewport.value_or(std::array<float,6>{0,0,640,480,0,1})[2])<300;
+        const bool small_copy=copy_target && packet.texture_copy->source[2]<300 && small_view;
         facts.offscreen=copy_target && !packet.present && (!facts.perspective || small_copy);
         facts.multiview=1;
         return facts;
@@ -4831,6 +4865,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                     !draw.reticle && !draw.late_aim && !draw.wake && !draw.layer && (info.key[68]&16))
                     xr_->aim_draw(draw,info.box);
 #endif
+                // The lens of the aim (title.h kAimLensFromWorldDraws): each world draw of the eyes' picture counts for its projection.
+                if (uc::title::kAimLensFromWorldDraws && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen && target.color==efb_) {
+#ifdef UC_OPENXR
+                    if (xr_) xr_->observe_aim(draw.transforms->projection);
+#endif
+                    if (preview_) { preview_->observe_aim(gl_from_vulkan(draw.transforms->projection)); preview_lens_seen_=true; }
+                }
                 if (post_dump) {   // UC_POST_DUMP: every draw's stereo class and blend (the HUD layer's question: which draws are separable)
                     const auto b=gx::draw_bounds_ndc(draw);
                     std::fprintf(stderr,"[post-class] draw %zu kind %d persp %d blend %u src %u dst %u logic %u cw %d aw %d depth %02X box %.2f,%.2f..%.2f,%.2f callsite %08X reticle %d layer %d idx %u\n",d,kind,int(facts.perspective),
@@ -4842,6 +4883,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 stereo_eye_block(matrices,block);
                 static const bool probe_mono=std::getenv("UC_PROBE_MONO")!=nullptr;   // diagnostics: both eyes see the game's own clip space (no reprojection)
                 if (probe_mono) for(int eye=0;eye<2;++eye) for(int r=0;r<4;++r) for(int c=0;c<4;++c) block[eye*16+r*4+c]=r==c ? 1.f : 0.f;
+                // The 2D reticle goes through the lens of the aim (title.h kAimLensFromWorldDraws). That lens is the wide view of the
+                // game (wide_view.h vr_fov_scale), so the reticle keeps its place and loses its size: it gets the size back here.
+                if (uc::title::kAimLensFromWorldDraws && kind==xr::LG_STEREO_HUD_AIM && draw.transforms->projection[3][3]!=0) {
+                    const float wide=std::max(1.f,gx::vr_fov_scale().load(std::memory_order_relaxed)),wide_y_set=gx::vr_fov_scale_y().load(std::memory_order_relaxed);
+                    const float wide_y=wide_y_set>0 ? std::max(1.f,wide_y_set) : wide;
+                    if (wide>1 || wide_y>1) if (const auto center=gx::draw_center_ndc(draw)) stereo_block_scale_about(block,(*center)[0],(*center)[1],1/wide,1/wide_y);
+                }
                 push.motion=uint32_t(d);
                 // Culling (vr_cull.h): a world draw that neither eye sees is not drawn. Only perspective world draws of the visible scene
                 // (not offscreen copies the game reads, not HUD, reticle or late-aimed quads); a cached mesh drawn with one matrix is
@@ -4913,7 +4961,22 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 // A coordinate that looks a copy of the picture up at the pixel's own place (screen_lookup.h): the place in this eye's
                 // picture. UC_VR_NO_SCREEN_LOOKUP=1 keeps the coordinate of the game.
                 static const bool no_lookup=std::getenv("UC_VR_NO_SCREEN_LOOKUP")!=nullptr;
-                if (xform_ && !no_lookup) if (const auto lookup=gx::screen_lookup(draw)) {
+                // UC_LOOKUP_LOG=1 (diagnostics): each call site whose draw reads a copy of the frame buffer, once, with what screen_lookup() found.
+                static const bool lookup_log=std::getenv("UC_LOOKUP_LOG")!=nullptr;
+                if (lookup_log && stereo_facts(d).texture_view) {
+                    static std::unordered_set<uint64_t> seen;
+                    const bool found=bool(gx::screen_lookup(draw));
+                    if (seen.size()<200 && seen.insert(uint64_t(draw.callsite)<<8|uint64_t(stereo_kind)<<1|uint64_t(found)).second)
+                        std::fprintf(stderr,"[lookup] frame %llu call site %08X kind %d xform %d found %d: %s\n",(unsigned long long)frame_index_,draw.callsite,stereo_kind,int(xform_),int(found),gx::screen_lookup_report(draw).c_str());
+                }
+                if (xform_ && !no_lookup) if (auto lookup=gx::screen_lookup(draw)) {
+                    // The wide view (wide_view.h vr_fov_scale): the game makes this coordinate with the view of its own picture (SBDE08:
+                    // 0.5 * 0.974 for 60 degrees at 16:9), and the projection of the draw is wider by the two factors. The scale of
+                    // the coordinate over the clip position then holds the factors (0.9 and 1.35 for 1.8 and 2.7): they come out.
+                    const float wide=std::max(1.f,gx::vr_fov_scale().load(std::memory_order_relaxed)),wide_y_set=gx::vr_fov_scale_y().load(std::memory_order_relaxed);
+                    const float wide_y=wide_y_set>0 ? std::max(1.f,wide_y_set) : wide;
+                    if ((wide>1 || wide_y>1) && lookup->s[1]!=0 && lookup->t[1]!=0 && std::abs(std::abs(lookup->s[0]/lookup->s[1])-wide)<.03f*wide &&
+                        std::abs(std::abs(lookup->t[0]/lookup->t[1])-wide_y)<.03f*wide_y) { lookup->s[0]/=wide; lookup->t[0]/=wide_y; }
                     block[32]=lookup->s[0]; block[33]=lookup->s[1]; block[34]=float(lookup->id); block[35]=1;
                     block[36]=lookup->t[0]; block[37]=lookup->t[1];
                     screen_lookup_draw=true;

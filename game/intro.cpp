@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <set>
+#include <tuple>
 #include <stdexcept>
 
 namespace {
@@ -50,6 +53,7 @@ void hle_MTXPerspective(ppc::Ctx& c) {
         const auto factors=gx::view_factors();
         const float kx=factors.x,ky=factors.y;
         float aspect=float(c.f[2]),fov=float(c.f[1]);
+        const float aspect_in=aspect,fov_in=fov;
         if((kx<1.f || ky<1.f) && std::isfinite(aspect) && aspect>0 && std::isfinite(fov) && fov>0 && fov<180) {   // at 16:9 the arguments are not touched at all
             if(kx<1.f) aspect/=kx;
             if(ky<1.f) {   // the vertical tangent grows by 1 / k_y; the horizontal one stays: cot' = cot * k_y, aspect' = aspect * k_y
@@ -70,6 +74,13 @@ void hle_MTXPerspective(ppc::Ctx& c) {
             const double tangent=std::tan(double(fov)*3.14159265358979323846/360.0)*std::max(1.f,vr_y);
             c.f[1]=std::min(170.0,std::atan(tangent)*360.0/3.14159265358979323846);
             c.f[2]=aspect*std::max(1.f,vr)/std::max(1.f,vr_y);
+        }
+        // UC_PROJ_LOG=1 (diagnostics): each caller of MTXPerspective with its field of view and aspect, once for each new value.
+        static const bool projection_log=std::getenv("UC_PROJ_LOG")!=nullptr;
+        if(projection_log) {
+            static std::set<std::tuple<uint32_t,long,long>> seen;
+            if(seen.size()<200 && seen.insert({c.lr,std::lround(fov_in*100),std::lround(aspect_in*1000)}).second)
+                std::fprintf(stderr,"[proj] MTXPerspective caller %08X: fovy %.3f aspect %.4f -> fovy %.3f aspect %.4f, near %.3f far %.1f\n",c.lr,fov_in,aspect_in,float(c.f[1]),float(c.f[2]),float(c.f[3]),float(c.f[4]));
         }
     }
     uc::call_indirect(c,UC_ADDR(0x80265468));   // SBDE08: 80383B94 (project/dc/dc.cfg)

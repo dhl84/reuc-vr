@@ -73,7 +73,7 @@ bool StereoScene::aim(const StereoPose &controller,int width,int height,bool on_
         for(unsigned i=0;i<3;++i)d[i]=o[i]+t*d[i];o={0,0,0};
     }
     float x,y,reach;
-    if(!lg_stereo_ray_to_plane(o.data(),d.data(),lens_.data(),settings_.screen*settings_.scale,width,height,&x,&y,&reach) ||
+    if(!lg_stereo_ray_to_plane(o.data(),d.data(),(on_hud ? lens_ : aim_lens()).data(),settings_.screen*settings_.scale,width,height,&x,&y,&reach) ||
        !std::isfinite(x)||!std::isfinite(y))return false;
     ray.on_screen=x>=0&&y>=0&&x<width&&y<height;ray.px=x;ray.py=y;
     if(!ray.on_screen&&on_hud)return false;   // menus keep HOTD4's screen: off it the trigger is not a press there
@@ -111,7 +111,7 @@ const Matrices &StereoScene::transforms(const Matrix &p,int kind)
         // HUD_AIM: HOTD4's world-locked screen of the game's lens (the reticle stays over what it marks).
         const float *hud_view=kind==LG_STEREO_HUD_AIM ? view_[eye].data() : fitted ? head_view_[eye].data() : hud_view_[eye].data();
         const float distance=kind==LG_STEREO_HUD_AIM && aim_depth_>0 ? aim_depth_ : settings_.screen;
-        LgStereoProjection policy{view_[eye].data(),hud_view,tangents_[eye].data(),(fitted ? fit_lens : lens_).data(),distance*settings_.scale};
+        LgStereoProjection policy{view_[eye].data(),hud_view,tangents_[eye].data(),(fitted ? fit_lens : kind==LG_STEREO_HUD_AIM ? aim_lens() : lens_).data(),distance*settings_.scale};
         Matrix effective;
         // HUD maps guest clip space straight onto its screen plane. It is
         // independent of the original lens, so needs one transform per frame.
@@ -131,8 +131,17 @@ void StereoScene::observe(const Matrix &p,int kind)
     for(auto &l:tally_)if(l.draws && std::fabs(l.projection[0]-p[0])<.002f && std::fabs(l.projection[5]-p[5])<.002f) {++l.draws;return;}
     for(auto &l:tally_)if(!l.draws) {l.projection=p;l.draws=1;return;}
 }
+void StereoScene::observe_aim(const Matrix &p)
+{
+    if(!world_camera(p))return;
+    for(auto &l:aim_tally_)if(l.draws && std::fabs(l.x-p[0])<.002f && std::fabs(l.y-p[5])<.002f) {++l.draws;return;}
+    for(auto &l:aim_tally_)if(!l.draws) {l.x=p[0];l.y=p[5];l.draws=1;return;}
+}
 void StereoScene::finish_frame()
 {
+    const auto aim=std::max_element(aim_tally_.begin(),aim_tally_.end(),[](const auto &a,const auto &b){return a.draws<b.draws;});
+    if(aim->draws && aim->x>.05f && aim->x<settings_.zoom_lens) {aim_lens_={aim->x,aim->y};have_aim_lens_=true;}
+    for(auto &l:aim_tally_)l.draws=0;
     const auto best=std::max_element(tally_.begin(),tally_.end(),[](const auto &a,const auto &b){return a.draws<b.draws;});
     if(best->draws && best->projection[0]>.3f && best->projection[0]<settings_.zoom_lens) lens_={best->projection[0],best->projection[5]};
     for(auto &l:tally_)l.draws=0;

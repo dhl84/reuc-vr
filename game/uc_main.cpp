@@ -677,7 +677,10 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     const auto pacing_with_warp=[&options](std::optional<uint32_t> limit,uint32_t hz) { return uc::pacing_with_space_warp(limit,hz,options.game_hz,options.unlock_60fps); };
     // The headset (Quest): one OpenXR instance for the process; every renderer (restart_renderer) draws into it.
     const std::unique_ptr<uc::XrCompositor> xr=options.headless ? nullptr : uc::make_android_xr();
-    if(xr) xr->set_controller_aim_enabled(!controlled);
+    // UC_XR_TEST_FEED=<file> (test aid, with UC_VR_TEST_AIM): while that file exists, the pose of the controller aims the game although
+    // the harness is connected. The harness then sends its buttons on the host path only (the step wii:B), which leaves the pointer alone.
+    const char* const xr_test_feed=controlled ? std::getenv("UC_XR_TEST_FEED") : nullptr;
+    if(xr) xr->set_controller_aim_enabled(!controlled || xr_test_feed);
     if(xr) std::fprintf(stderr,"[xr] headset output on\n");
     // Space warp (the Display page): the game steps on a timer at half the display rate, which the runtime then paces; off, the frame limit
     // chooses the step again (pacing_with_warp). The render thread calls this.
@@ -1509,7 +1512,13 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 if(gamepad) gamepad->update(input,!host_keys.menu_open && !host_keys.paused && (SDL_GetWindowFlags(window.get())&SDL_WINDOW_INPUT_FOCUS)!=0);
                 renderer.set_menu_context(input.current_context()!=uc::InputContext::gameplay && input.current_context()!=uc::InputContext::qte);   // the VR HUD (preview or headset)
 #ifdef UC_OPENXR
-                if(xr && !controlled) uc::feed_xr_input(*xr,input);   // the headset controllers as the game's Wii Remote (not while the harness drives input: its pointer would be overridden)
+                static uint32_t feed_poll=0; static bool feed_on=false;
+                if(xr && xr_test_feed && feed_poll++%30==0) {
+                    std::error_code error; const bool on=std::filesystem::exists(xr_test_feed,error);
+                    if(on!=feed_on) std::fprintf(stderr,"[xr] UC_XR_TEST_FEED: the controller pose %s\n",on ? "aims the game" : "no longer aims the game");
+                    feed_on=on;
+                }
+                if(xr && (!controlled || feed_on)) uc::feed_xr_input(*xr,input);   // the headset controllers as the game's Wii Remote (not while the harness drives input: its pointer would be overridden)
                 else if(xr) input.host_xr_ray_lost();   // the harness aims with its pointer: a ray from before it took over must not aim its shots
 #endif
                 if(wiimote) {

@@ -219,6 +219,15 @@ DcPickScope::DcPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions
                 const float cosine=std::clamp(dot(d,direction)/length,-1.f,1.f);
                 std::fprintf(stderr,"[xr-pick] game line %.5f,%.5f,%.5f ray %.5f,%.5f,%.5f angle %.3f degrees, eye to ray origin %.4f units\n",d[0]/length,d[1]/length,d[2]/length,
                              direction[0],direction[1],direction[2],std::acos(cosine)*57.29578f,std::sqrt(dot(sub(origin,eye),sub(origin,eye))));
+                // The pointer is the place of the ray's scene hit in the picture of the game, so the two lines must meet there: the
+                // gap between the lines at their nearest points, and how far along the ray that is. Parallel lines: no line printed.
+                const V w=sub(eye,origin);
+                const float a=dot(d,d),b=dot(d,direction),e=dot(direction,direction),f=dot(d,w),g=dot(direction,w),denominator=a*e-b*b;
+                if(denominator>1e-6f*a*e) {
+                    const float s=(b*g-e*f)/denominator,t=(a*g-b*f)/denominator;
+                    V gap;for(unsigned i=0;i<3;++i)gap[i]=w[i]+s*d[i]-t*direction[i];
+                    std::fprintf(stderr,"[xr-pick] lines nearest: gap %.3f units, %.2f units along the ray, %.2f units from the eye\n",std::sqrt(dot(gap,gap)),t,s*length);
+                }
             }
             V far;for(unsigned i=0;i<3;++i)far[i]=origin[i]+direction[i]*length;
             write(c,c.r[6],far);write(c,aim+title::kDcAimFar,far);   // +0x3C8: the far point without the hit, a copy of the end

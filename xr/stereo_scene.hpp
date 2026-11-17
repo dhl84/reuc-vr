@@ -59,6 +59,10 @@ public:
     bool zoomed(const Matrix &projection) const;
     const Matrices &transforms(const Matrix &projection,int draw_class);
     void observe(const Matrix &projection,int draw_class);
+    // The lens of the aim: the projection that most world draws of a frame use. The pointer of the game and its 2D reticle go through
+    // that lens. Call it for each world draw of a game that gives no lens to observe() (SBDE08); without a call the screen lens is used.
+    void observe_aim(const Matrix &projection);
+    const std::array<float,2> &aim_lens() const { return have_aim_lens_ ? aim_lens_ : lens_; }
     void finish_frame();
     size_t transform_builds() const { return builds_; }
     const std::array<float,2> &screen_lens() const { return lens_; }
@@ -81,6 +85,10 @@ private:
     size_t last_=0,builds_=0;
     struct Lens {Matrix projection{};unsigned draws=0;};
     std::array<Lens,4> tally_{};
+    struct AimLens {float x=0,y=0;unsigned draws=0;};
+    std::array<AimLens,8> aim_tally_{};
+    std::array<float,2> aim_lens_{};
+    bool have_aim_lens_=false;
     float longest_=0;
     float aim_depth_=0;
     unsigned zoom_frames_=0;
