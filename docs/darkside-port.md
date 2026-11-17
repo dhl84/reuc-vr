@@ -670,8 +670,78 @@ What was found:
 - The water read the wrong part of the picture. The water is a draw of the world (call site 804AD87C) with a half-size copy of the picture as texture 0. Its texgen takes the position through the game camera to the screen. So the coordinate is the place of the pixel in the picture of that one camera. In the headset the copy holds the picture of an eye. The water then showed parts of the scene that lie beside it, each eye had other parts, and they moved with the head. A second call site (8049CF24) does the same in the streets.
 - The fix is `gx::screen_lookup` (`renderer/screen_lookup.h`). It finds such a texgen from the matrices of the draw: its three rows are multiples of the x, y and w rows of the clip transform of the camera. The vertex stage of the headset then makes that coordinate from the clip position of the eye (`StereoBlock::lookup` in `smoke.slang`). `UC_VR_NO_SCREEN_LOOKUP=1` keeps the coordinate of the game. In the preview the water is the same in both eyes with it, also with the head turned 35 degrees.
 - The wide view of the game was off. `MTXPerspective` (`game/intro.cpp`) widens the view of the game so that it draws what the eyes see. For `SBDE08` it was off, because its body went on at an `RBUE08` address. It is on now (the entry 80383B94 in `project/dc/dc.cfg`). The first chapter has 6 % more draws a frame with it in the preview.
-- The coarse shading is visible. At the render scale 2.0 the headset shades 63 % of an eye image in blocks of 4x4 pixels (foveation level 3). The automatic render scale goes down to 1.5. In the preview the edges are steps and the textures are blocks with these values. This is the likely cause of the texture flicker. The values were set for the frame rate before a person looked at the picture. They are not changed yet: the cost of a finer setting is not measured on the headset.
-- The aim is not found. The world scale is right: a person of this game is 18.5 units tall, and the headset takes 10 units for a metre. On the PC a shot along a test ray lands where the ray points, also while the camera moves. `UC_DC_RAY_SHOT=0` turns the shot hooks off for a comparison on the headset.
+- The coarse shading is visible. At the render scale 2.0 the headset shades 63 % of an eye image in blocks of 4x4 pixels (foveation level 3). The automatic render scale goes down to 1.5. In the preview the edges are steps and the textures are blocks with these values. This is one likely cause of the texture flicker. The section "The see-through draws of the world" gives a second cause. The values were set for the frame rate before a person looked at the picture. The section "The finer picture" gives the new default.
+- The aim fault was not found on the PC. The sections "The lens of the aim" and "The aim test on the headset" give the cause and the test without a person. The world scale is right: a person of this game is 18.5 units tall, and the headset takes 10 units for a metre. On the PC a shot along a test ray lands where the ray points, also while the camera moves. `UC_DC_RAY_SHOT=0` turns the shot hooks off for a comparison on the headset.
+
+### The see-through draws of the world
+
+The game draws the see-through things of the world in a packet of their own: dust, smoke, leaves, decals. The packet of a street has about 200 such draws. Its last draw is a 2D quad that draws the picture small into a corner of the frame buffer. The copy of the packet takes that corner (160x85).
+
+The headset renderer has a rule for a small picture that the game renders for a texture: its draws keep the camera of the game. The rule looked at the size of the copy only. So all draws of that packet kept the camera of the game, and each eye showed them at the place of that camera. With the head straight they were near their right place, without depth. With the head turned they were a second picture of roofs, fences and people at a wrong place. This is the pop-in of the first play and a part of its flicker.
+
+The rule now also looks at the viewport of the draw (`title::kSmallCopyByViewport`, `stereo_facts` in `renderer/vulkan_renderer.cpp`). A draw with the viewport of the whole picture is a draw of the world.
+
+Some of those draws read a copy of the picture at the place of the pixel (call site 8049CF24), and `gx::screen_lookup` finds them now. With the wide view the scale of that coordinate was wrong. The game makes the coordinate with the view of its own picture, and the projection of the draw is 1.8 and 2.7 times wider. The fit gave the scales 0.9 and 1.35, and the right scale is 0.5. When the scale holds the two factors, the renderer takes them out. Without that the lower part of the picture was stripes.
+
+How to see the fault on the PC: run the stereo preview with `UC_VR_PITCH=35` (`pc_ghost.sh`). With the head straight the preview shows nothing wrong. The headset on the desk looks 35 to 40 degrees up, so its stills showed the second picture. Test each change of the headset view with a turned head.
+
+### The lens of the aim
+
+The headset code takes the hit of the controller ray to the pointer of the game through a lens. The lens is the pair of view tangents of the game camera. The 2D reticle of the game comes back through the same lens. For `RBUE08` the renderer reads the lens from the first draw of the scene phase. The frames of `SBDE08` have no scene phase, so the lens stayed at its start value: 60 degrees at 16:9.
+
+The camera of a chapter has 55 degrees. `MTXPerspective` has one caller (804C80E4), with 60 degrees in the menus, 55 degrees in a chapter and 40 degrees for one more camera. So in the app 0.0.31 the reticle was 11 % nearer to the middle than the laser dot. That is 2 degrees at 20 degrees from the middle. In the apps 0.0.33 to 0.0.36 the wide view also made the pointer of the game wrong by the factors 1.8 and 2.7.
+
+Now each world draw of the eyes counts for its projection (`StereoScene::observe_aim`, `title::kAimLensFromWorldDraws`). The projection of most draws of a frame is the lens of the aim. The pointer (`StereoScene::aim`) and the reticle draws (`LG_STEREO_HUD_AIM`) use it. The lens of the screen for the menus and the HUD stays as it was.
+
+The lens of the aim is the wide view. A 2D reticle keeps its place there and becomes 1.8 and 2.7 times too large. The renderer makes it smaller about its centre by the two factors (`stereo_block_scale_about`).
+
+### The aim test on the headset
+
+`quest_aim.sh NAME "space:0.2,-0.2,-0.3,0,0,25,20"` tests the aim without a person. It needs the app 0.0.36 or later. The parts:
+
+- `UC_VR_TEST_AIM=space:x,y,z,yaw,pitch,sweep,period` is a controller pose in the play space: a place in metres and a direction in degrees. The direction swings by the sweep, so the ray goes over the view. The form `head:` follows the head. The real controllers take no part: one that lies on its trigger makes its hand the gun hand.
+- `UC_XR_TEST_FEED=<file>`: while that file exists, the pose aims the game although the test driver is connected. The test driver pulls the trigger with the step `wii:B`, which leaves the pointer alone.
+- `UC_XR_SHOT_LOG=1` prints the line `[xr-pick] lines nearest` for each frame. It gives the gap between the aim line of the game and the controller ray. The aim line goes from the camera to the pointer, where the reticle is. The shot goes along the ray. The two lines must meet at the hit of the ray.
+- `aim_gap.py` and `aim_fit.py` (`q3\build\darkside`) read the log. `aim_fit.py` finds the view tangents that the game uses for its pointer.
+
+| App | Lens of the headset code | Tangents of the game pointer | Gap of the two lines from the camera | Angle of the lines at far hits |
+|---|---|---|---|---|
+| 0.0.36 | 1.026 x 0.578 | 1.68 x 1.40 | median 10.9 degrees | median 16.0 degrees |
+| 0.0.37 | 1.667 x 1.409 | 1.66 x 1.40 | median 0.04 degrees, 90 % below 0.08 degrees | median 0.1 degrees |
+
+In the app 0.0.37 the two lines meet within 2 cm at a hit 11 to 13 metres away. The test does not show where the 2D reticle is in the picture of an eye, and no person held the controllers yet.
+
+### The finer picture
+
+Foveation is coarser shading away from the middle of the view. Level 3 shades each pixel to 25 degrees from the middle, blocks of 2x2 pixels to 36 degrees, and blocks of 4x4 pixels beyond. Level 1 has these limits at 35 and 50 degrees. Blocks of 4x4 then cover 16 % of an eye image at the render scale 2.0, and not 63 %.
+
+From the app 0.0.34 the default of `SBDE08` on the headset is level 1 (`LG_XR_DEFAULT_FOVEATION` in `xr/xr_settings.h`). The settings version 15 moves a saved `foveation high` to that default once. A later choice on the Display page stays. The automatic render scale keeps its three levels (2.0, 1.75 and 1.5).
+
+The numbers are from the first chapter on the headset with the bot. They start at second 20 of the chapter (`quest_look.sh`, `span_fps.py`):
+
+| Foveation | Render scale | Mean fps | Seconds at 60 fps or more | Lowest second |
+|---|---|---|---|---|
+| Level 3, the old default | automatic | 69.9 | 99 % | 58 fps |
+| Off | 2.0 | 57.9 | 54 % | 46 fps |
+| Level 1 | 2.0 | 66.3 | 84 % | 52 fps |
+| Level 1, the new default | automatic | 69.2 | 99 % | 56 fps |
+| Level 1, the app 0.0.37 | automatic | 68.0 | 93 % | 55 fps |
+
+With the automatic render scale the chapter went from 2.0 to 1.75 and to 1.5 in each run, and it stayed at 1.5. The app 0.0.37 draws the see-through draws of the world for each eye, which costs about 1 fps. Its run had no crash.
+
+In the stills of the headset screen the wires and the edges of the roofs are steps of four pixels with level 3. With level 1 they are smooth in most of the view.
+
+In the stills of the app 0.0.37 each person and each house is there once, also with the head 35 to 40 degrees up. A person did not look at the new default yet. Only a person can say that the flicker is gone.
+
+### The wide view and the bot
+
+With the wide view the pointer of the game covers 1.8 times the angle across and 2.7 times the angle down. The items of a menu that is a 3D scene are then nearer to the middle of the pointer range. Divide an old bot position by 1.8 and by 2.7. Leon on the character screen was at `aim:-0.27,-0.2`. He is at `aim:-0.15,-0.074` now. The 2D menus keep their positions. The pieces of `quest_chapter.sh` still have the old positions.
+
+### Two states of the headset that look like faults of the app
+
+- The pictures of the headset screen have no blue. On 17 November 2026 the stills of five runs had no blue at all (20:34 to 20:41 and 21:24 to 21:29). A system dialog in such a still had no blue too, so the app is not the cause. At that time the home program of the headset (Meta Horizon Shell) did not respond. After `adb shell am force-stop com.oculus.vrshell` the home program started again and the blue was back.
+- The app does not start. While the home program does not respond, `am start -W` does not return and the app has no process. The same command helps.
+- A controller that lies on the desk can hold a button down. On 17 November 2026 the left controller held its trigger, so the left hand was the gun hand in each test without a person.
 
 ## On the headset
 
