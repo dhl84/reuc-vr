@@ -42,7 +42,20 @@ static void extent_of_a_wider_eye() {   // the eye's clip space halves x: the ey
     const auto e=eye_extent(wide);
     CHECK(std::abs(e[0]-2)<1e-5f && std::abs(e[1]-1)<1e-5f);
 }
+static void points_in_parts_give_the_same_answer() {   // ClipOutside: the points of one draw in parts
+    const std::array<float,4> right[]={{1.5f,0,0.5f,1},{3,-2,0.5f,1},{2,1,0.5f,1}};
+    ClipOutside beyond;
+    CHECK(beyond.add(kIdentity,right,1) && beyond.add(kIdentity,right+1,2) && beyond.outside());
+    const std::array<float,4> across[]={{-3,5,0.5f,1},{3,5,0.5f,1},{0,-5,0.5f,1},{9,9,0.5f,1}};
+    ClipOutside seen;
+    CHECK(seen.add(kIdentity,across,2));    // left, right and bottom have a point inside them: only the top is still open
+    CHECK(!seen.add(kIdentity,across+2,1)); // every side plane has a point inside it: the caller stops here
+    CHECK(!seen.outside() && !clip_outside(kIdentity,across,4));
+    ClipOutside none;
+    CHECK(none.add(kIdentity,nullptr,0) && !none.outside());   // no points: never outside
+}
 int main() {
+    points_in_parts_give_the_same_answer();
     points_inside_are_kept(); points_beyond_one_side_are_culled(); a_hull_across_the_view_is_kept(); points_on_the_edge_are_kept();
     behind_the_eye_counts_as_beyond(); no_points_are_never_culled(); the_eye_transform_is_applied(); extent_of_the_same_view_is_one(); extent_of_a_wider_eye();
     return 0;

@@ -9,19 +9,30 @@
 
 namespace uc {
 // rows: the eye's 4x4 transform from the game's clip space, row-major (the shader's eye block). points: game clip-space points (x, y, z, w).
-inline bool clip_outside(const float* rows, const std::array<float,4>* points, size_t count) {
-    bool left = true, right = true, bottom = true, top = true;
-    for (size_t i = 0; i < count && (left || right || bottom || top); ++i) {
-        const auto& p = points[i];
-        float c[4];
-        for (int r = 0; r < 4; ++r) c[r] = rows[r * 4] * p[0] + rows[r * 4 + 1] * p[1] + rows[r * 4 + 2] * p[2] + rows[r * 4 + 3] * p[3];
-        const float w = c[3] + (c[3] < 0 ? -c[3] : c[3]) * 0.01f + 1e-4f;   // the margin
-        if (c[0] >= -w) left = false;
-        if (c[0] <= w) right = false;
-        if (c[1] >= -w) bottom = false;
-        if (c[1] <= w) top = false;
+// The points of one draw may arrive in parts: add() returns false once the points so far reach inside every side plane. The draw is then
+// not outside, whatever its other points are, and the caller need not transform them.
+struct ClipOutside {
+    bool left = true, right = true, bottom = true, top = true, any = false;
+    bool add(const float* rows, const std::array<float,4>* points, size_t count) {
+        any = any || count;
+        for (size_t i = 0; i < count && (left || right || bottom || top); ++i) {
+            const auto& p = points[i];
+            float c[4];
+            for (int r = 0; r < 4; ++r) c[r] = rows[r * 4] * p[0] + rows[r * 4 + 1] * p[1] + rows[r * 4 + 2] * p[2] + rows[r * 4 + 3] * p[3];
+            const float w = c[3] + (c[3] < 0 ? -c[3] : c[3]) * 0.01f + 1e-4f;   // the margin
+            if (c[0] >= -w) left = false;
+            if (c[0] <= w) right = false;
+            if (c[1] >= -w) bottom = false;
+            if (c[1] <= w) top = false;
+        }
+        return left || right || bottom || top;
     }
-    return count && (left || right || bottom || top);
+    bool outside() const { return any && (left || right || bottom || top); }
+};
+inline bool clip_outside(const float* rows, const std::array<float,4>* points, size_t count) {
+    ClipOutside state;
+    state.add(rows, points, count);
+    return state.outside();
 }
 // How far an eye's view reaches in the game's clip space: the largest |x/w| and |y/w| of the eye's clip-volume corners at a few depths
 // (Vulkan z 0.999, 0.9999, 1: far from the eye, where its offset from the game's camera no longer matters), carried back through the inverse of rows. Below 1 the game's (widened) view

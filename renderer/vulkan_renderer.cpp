@@ -4852,14 +4852,25 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                         std::array<float,4> clip; for (int i=0;i<4;++i) { const auto& m=t.projection[i]; clip[i]=m[0]*view[0]+m[1]*view[1]+m[2]*view[2]+m[3]; }
                         return clip;
                     };
+                    // The points go to the test in parts of 16. A draw that an eye sees leaves the test after its first parts: most draws
+                    // are seen, and the transform of every vertex of every draw was a sixth of the render thread's own time (Quest 3,
+                    // 2,000 draws a frame).
                     std::vector<std::array<float,4>>& points=cull_points_; points.clear();
+                    uc::ClipOutside eyes[2]; bool open=true;   // open: each eye can still be outside
+                    const auto test=[&] { open=eyes[0].add(block,points.data(),points.size()) && eyes[1].add(block+16,points.data(),points.size()); points.clear(); };
                     if (info.box && !info.indexed) {
                         const auto& b=*info.box;
                         for (int corner=0;corner<8;++corner) points.push_back(to_clip({b[corner&1 ? 3 : 0],b[corner&2 ? 4 : 1],b[corner&4 ? 5 : 2]},info.current));
                     } else {
-                        for (const auto& vertex:draw.vertex_view()) { const uint32_t row=info.indexed ? vertex.position_matrix : info.current; if (row<=61) points.push_back(to_clip(vertex.position,row)); }
+                        for (const auto& vertex:draw.vertex_view()) {
+                            const uint32_t row=info.indexed ? vertex.position_matrix : info.current;
+                            if (row>61) continue;
+                            points.push_back(to_clip(vertex.position,row));
+                            if (points.size()==16) { test(); if (!open) break; }
+                        }
                     }
-                    if (uc::clip_outside(block,points.data(),points.size()) && uc::clip_outside(block+16,points.data(),points.size())) {
+                    if (open && !points.empty()) test();
+                    if (open && eyes[0].outside() && eyes[1].outside()) {
                         ++cull_draws; cull_indices+=info.index_count;
                         culled=true;
                     }
