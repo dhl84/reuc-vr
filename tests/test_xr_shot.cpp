@@ -1,6 +1,7 @@
 #include "check.h"
 #include "ppc_fixture.h"
 #include "xr_shot.h"
+#include "title.h"
 #include "native_input.h"
 #include "controller_input.hpp"
 #include "../renderer/aim_geometry.h"
@@ -122,8 +123,89 @@ static void hook_uses_the_consumed_controller_ray_only_for_player_shots() {
     {uc::XrShotScope hook(c);}
     near(get(c,object+80),{3,4,5});
 }
+#if defined(UC_TITLE_DC)
+// SBDE08 (common/title.h, kDcBulletInit): the same camera as above, as camera 1 of a camera system.
+constexpr uint32_t dc_bullet=0x80020000,dc_system=0x80200000,dc_start=0x80030000,dc_end=0x80030010;
+static uint32_t dc_setup(ppc::Ctx& c,unsigned player=0) {
+    using namespace uc::title;
+    ppc::wr32(c,kDcCameraManager+4,dc_system);ppc::wr8(c,dc_system+kDcCameraIndex,1);
+    const uint32_t view=dc_system+kDcCameraFirst+kDcCameraSize;
+    put(c,view,{0,0,1});ppc::wrf32(c,view+12,-5);
+    put(c,view+16,{0,1,0});ppc::wrf32(c,view+28,-4);
+    put(c,view+32,{-1,0,0});ppc::wrf32(c,view+44,3);
+    ppc::wr32(c,view+kDcCameraFlags,kDcCameraClean|1);
+    put(c,dc_bullet+kDcBulletOrigin,{3,4,5});put(c,dc_bullet+kDcBulletDirection,{1,0,0});
+    put(c,dc_bullet+kDcBulletOffset,{.1f,.2f,.3f});put(c,dc_bullet+kDcBulletStart,{3.1f,4.2f,5.3f});
+    put(c,kDcAim+player*kDcAimSize+kDcAimHit,{103,4,5});put(c,kDcAim+player*kDcAimSize+kDcAimFar,{103,4,5});
+    put(c,dc_start,{3,4,5});put(c,dc_end,{103,4,5});
+    return view;
+}
+static void dc_bullet_and_trail_start_at_the_ray() {
+    using namespace uc::title;
+    Fix f;dc_setup(f.c);
+    CHECK(uc::align_dc_bullet(f.c,dc_bullet,0,{{2,-1,-4},{0,.6f,-.8f}}));
+    near(get(f.c,dc_bullet+kDcBulletOrigin),{7,3,7});near(get(f.c,dc_bullet+kDcBulletDirection),{.8f,.6f,0});
+    near(get(f.c,dc_bullet+kDcBulletOffset),{});near(get(f.c,dc_bullet+kDcBulletStart),{7,3,7});
+    // The spread of a pellet stays around the ray.
+    dc_setup(f.c,1);put(f.c,dc_bullet+kDcBulletDirection,{.8f,.6f,0});
+    CHECK(uc::align_dc_bullet(f.c,dc_bullet,1,{{0,0,0},{0,0,1}}));
+    const auto pellet=get(f.c,dc_bullet+kDcBulletDirection);
+    CHECK(std::abs(dot(pellet,{-1,0,0})-.8f)<2e-5f && std::abs(dot(pellet,pellet)-1)<2e-5f);
+    // A stale matrix, a matrix that is no rotation, no direction, a bad address and a third player change nothing.
+    uint32_t view=dc_setup(f.c);ppc::wr32(f.c,view+kDcCameraFlags,1);
+    CHECK(!uc::align_dc_bullet(f.c,dc_bullet,0,{{0,0,0},{0,0,-1}}));
+    view=dc_setup(f.c);ppc::wrf32(f.c,view,2);
+    CHECK(!uc::align_dc_bullet(f.c,dc_bullet,0,{{0,0,0},{0,0,-1}}));
+    dc_setup(f.c);
+    CHECK(!uc::align_dc_bullet(f.c,dc_bullet,0,{{0,0,0},{0,0,0}}));
+    CHECK(!uc::align_dc_bullet(f.c,0xCC000000,0,{{0,0,0},{0,0,-1}}));
+    CHECK(!uc::align_dc_bullet(f.c,dc_bullet,2,{{0,0,0},{0,0,-1}}));
+    near(get(f.c,dc_bullet+kDcBulletOrigin),{3,4,5});near(get(f.c,dc_bullet+kDcBulletStart),{3.1f,4.2f,5.3f});
+}
+static void dc_hooks_use_the_ray_only_at_their_call_sites() {
+    using namespace uc::title;
+    Fix f;auto& c=f.c;uc::NativeInput input;input.focus(true);uc::input_hle_init(&input);
+    input.host_xr_pointer(0,0,uc::TrackedRay{{2,-1,-4},{0,0,-1}});input.consume();
+    // The bullet of a weapon (r4 = 0, from 800B6AE4), and a bullet with its own origin.
+    dc_setup(c);c.lr=kDcBulletInitReturn;c.r[3]=dc_bullet;c.r[4]=0;c.r[7]=0;
+    {uc::DcShotScope hook(c);}
+    near(get(c,dc_bullet+kDcBulletOrigin),{7,3,7});near(get(c,dc_bullet+kDcBulletDirection),{1,0,0});
+    dc_setup(c);c.r[4]=dc_start;
+    {uc::DcShotScope hook(c);}
+    near(get(c,dc_bullet+kDcBulletOrigin),{3,4,5});
+    dc_setup(c);c.lr=0x80000000;c.r[4]=0;
+    {uc::DcShotScope hook(c);}
+    near(get(c,dc_bullet+kDcBulletOrigin),{3,4,5});
+    // The query of the pointer: the start and the far point are on the ray while the query runs. The start comes back after it.
+    dc_setup(c);c.lr=kDcPointerQueryReturn;c.r[4]=0;c.r[5]=dc_start;c.r[6]=kDcAim+kDcAimHit;
+    {
+        uc::DcPickScope hook(c);
+        near(get(c,dc_start),{7,3,7});near(get(c,kDcAim+kDcAimHit),{107,3,7},1e-4f);near(get(c,kDcAim+kDcAimFar),{107,3,7},1e-4f);
+    }
+    near(get(c,dc_start),{3,4,5});
+    // The query of the item pick-up: only the start moves.
+    dc_setup(c);c.lr=kDcPickupQueryReturn;c.r[4]=0;c.r[5]=dc_start;c.r[6]=dc_end;
+    {
+        uc::DcPickScope hook(c);
+        near(get(c,dc_start),{7,3,7});near(get(c,dc_end),{103,4,5});near(get(c,kDcAim+kDcAimFar),{103,4,5});
+    }
+    near(get(c,dc_start),{3,4,5});
+    // Another caller of the query, and a run without a tracked ray.
+    c.lr=0x800B5344;
+    {uc::DcPickScope hook(c);near(get(c,dc_start),{3,4,5});}
+    uc::input_hle_init(nullptr);
+    c.lr=kDcPointerQueryReturn;c.r[6]=kDcAim+kDcAimHit;
+    {uc::DcPickScope hook(c);near(get(c,dc_start),{3,4,5});near(get(c,kDcAim+kDcAimHit),{103,4,5});}
+    c.lr=kDcBulletInitReturn;c.r[3]=dc_bullet;c.r[4]=0;c.r[7]=0;
+    {uc::DcShotScope hook(c);}
+    near(get(c,dc_bullet+kDcBulletOrigin),{3,4,5});
+}
+#endif
 int main() {
     hook_uses_the_consumed_controller_ray_only_for_player_shots();
     collision_and_trail_start_at_the_laser();spread_and_invalid_input();overlay_and_projectile_use_identical_rays();
     shots_leave_the_rendered_barrel_even_at_close_range();
+#if defined(UC_TITLE_DC)
+    dc_bullet_and_trail_start_at_the_ray();dc_hooks_use_the_ray_only_at_their_call_sites();
+#endif
 }
