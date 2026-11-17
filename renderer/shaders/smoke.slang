@@ -57,7 +57,9 @@ struct MotionBlock { float4 prevRows[4]; uint prevPalette; uint kind; uint2 unus
 // by draw class (xr/stereo_projection.c); projection.motion indexes it.
 // A uniform buffer bound at the draw's own block: the shader core holds it as constants. Read from a storage buffer, every vertex
 // fetched the same 128 bytes through memory (the Quest's scene pass: 23 -> 16 ms without that fetch).
-struct StereoBlock { float4 rows[2][4]; };
+// lookup (renderer/screen_lookup.h): a coordinate that looks a copy of the picture up at the pixel's own place is made from the clip
+// position of the eye. lookup[0] = (s scale, s offset, coordinate id, 1 when on), lookup[1] = (t scale, t offset, 0, 0).
+struct StereoBlock { float4 rows[2][4]; float4 lookup[2]; };
 [[vk::binding(5, 0)]] ConstantBuffer<StereoBlock> eyeBlock : register(b10);
 #else
 [[vk::binding(5, 0)]] StructuredBuffer<MotionBlock> motions : register(t10);
@@ -300,6 +302,14 @@ Output vertexMain(uint vertex : SV_VulkanVertexID, uint view : SV_ViewID) {   //
 #undef UC_XFORM_COORD
     at += 3 * countbits(mask);
 #endif
+#endif
+#ifndef UBER_MERGE
+    if (eyeBlock.lookup[0].w != 0.0) {   // the place of this vertex in the picture of this eye, times q = w
+        const float4 p = output.position;
+        const float3 stq = float3(eyeBlock.lookup[0].x * p.x + eyeBlock.lookup[0].y * p.w, eyeBlock.lookup[1].x * p.y + eyeBlock.lookup[1].y * p.w, p.w);
+        const uint lookupId = uint(eyeBlock.lookup[0].z);
+        [unroll] for (uint k = 0; k < 8; ++k) if (k == lookupId) output.texcoords[k] = stq;
+    }
 #endif
 #ifdef TEX_TABLE
     output.textureBase = xformAttributes[at];   // the draw's first texture-table entry (the pre-pass's last word)

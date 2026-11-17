@@ -12,6 +12,7 @@
 #include "late_aim.h"
 #include "texture_replacement.h"
 #include "post_effects.h"
+#include "screen_lookup.h"
 #include "texture_coordinates.h"
 #include "vulkan_renderer.h"
 #include "../common/title.h"
@@ -46,7 +47,7 @@ namespace {
 using CopyDimensions=std::array<std::array<uint32_t,2>,8>;
 constexpr size_t kTevWords=68, kCopyDimensionsOffset=sizeof(gx::DrawUniform)+kTevWords*sizeof(uint32_t);
 constexpr size_t kDrawUniformBytes=kCopyDimensionsOffset+sizeof(CopyDimensions);
-constexpr size_t kStereoBlockBytes=128;   // smoke.slang StereoBlock: two eyes x four rows
+constexpr size_t kStereoBlockBytes=160;   // smoke.slang StereoBlock: two eyes x four rows, then the two rows of the screen lookup
 const std::shared_ptr<const gx::TexturePixels>& draw_texture(const gx::DrawPacket& draw,size_t map) { return map ? draw.texture_maps[map-1] : draw.texture; }
 // The fragment shading rate of a draw whose textures are all magnified onto it, so that coarse shading only drops texels that are not
 // there. Two kinds, outside the scene:
@@ -209,6 +210,7 @@ void barrier(VkCommandBuffer command, VkImage image, VkImageLayout before, VkIma
 // The headset's eye block of a draw: both eyes' transforms (StereoScene, GL clip) as Vulkan clip to Vulkan clip, C * M * inverse(C),
 // C = (x, -y, (z+w)/2, w); rows for the shader (smoke.slang StereoBlock).
 void stereo_eye_block(const uc::xr::Matrices& matrices, float* block) {
+    for(int i=32;i<40;++i) block[i]=0;   // StereoBlock::lookup: off (screen_lookup.h)
     for(int eye=0;eye<2;++eye) {
         const float* m=matrices.view_projection[eye];
         const auto gl=[&](int r,int c){return double(m[c*4+r]);};
@@ -4149,8 +4151,9 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     static const long post_dump_every = std::getenv("UC_POST_DUMP") ? std::atol(std::getenv("UC_POST_DUMP")) : 0;
     static const uint64_t post_dump_serial = std::getenv("UC_CAPTURE_PASS_SERIAL") ? std::strtoull(std::getenv("UC_CAPTURE_PASS_SERIAL"),nullptr,10) : 0;
     static long post_dumps = 0;
+    static const long post_dump_from = std::getenv("UC_POST_DUMP_FROM") ? std::max(0L, std::atol(std::getenv("UC_POST_DUMP_FROM"))) : 0;   // the first frame of the dumps
     const bool post_dump = (post_dump_serial && packet.serial==post_dump_serial) ||
-        (post_dump_every > 0 && frame_index_ > 0 && frame_index_ % uint64_t(post_dump_every) == 0 && post_dumps < 12);
+        (post_dump_every > 0 && frame_index_ > 0 && frame_index_ >= uint64_t(post_dump_from) && frame_index_ % uint64_t(post_dump_every) == 0 && post_dumps < 12);
     if (post_dump) {
         std::fprintf(stderr, "[post-dump] frame %llu packet draws %zu scene_draws %zu present %d copy %s clear_after %d scene_phase %d upscale_here %d\n", (unsigned long long)frame_index_,
                      packet.draws.size(), scene_draws, int(packet.present), packet.texture_copy ? (std::to_string(packet.texture_copy->source[0]) + "," + std::to_string(packet.texture_copy->source[1]) + " " +
@@ -4235,7 +4238,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         if (!hud_draw.empty() && first_hud) {   // the layer's place in each eye: the HUD class's eye transform (the same for every HUD draw) at the HUD's depth
             const auto& draw=packet.draws[*first_hud]; const auto& info=gpu_draws[*first_hud];
             const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),LG_STEREO_HUD);
-            float block[32];
+            float block[40];
             stereo_eye_block(matrices,block);
             float z=.5f;   // the clip depth of the draw's first vertex (a 2D draw: w = 1)
             if (const auto vertices=draw.vertex_view(); !vertices.empty()) {
@@ -4772,6 +4775,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 }
             }
             bool culled=false;   // the headset: neither eye sees this draw
+            bool screen_lookup_draw=false;   // its eye block names a coordinate for the eye's own picture (screen_lookup.h): no ubershader run
             int stereo_kind=-1;   // the draw's stereo class (headset), for the shading rate below
             bool draw_offscreen=false;   // the class's offscreen fact: a perspective picture for a small copy or a 2D pass over copies
             if (layers_>1 && stereo_) {   // HOTD4's per-draw reprojection: both eyes' transforms of this draw into binding 5
@@ -4906,6 +4910,16 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
                 stereo_view_block(matrices,block);
                 push.effects|=kEffectStereoView;
+                // A coordinate that looks a copy of the picture up at the pixel's own place (screen_lookup.h): the place in this eye's
+                // picture. UC_VR_NO_SCREEN_LOOKUP=1 keeps the coordinate of the game.
+                static const bool no_lookup=std::getenv("UC_VR_NO_SCREEN_LOOKUP")!=nullptr;
+                if (xform_ && !no_lookup) if (const auto lookup=gx::screen_lookup(draw)) {
+                    block[32]=lookup->s[0]; block[33]=lookup->s[1]; block[34]=float(lookup->id); block[35]=1;
+                    block[36]=lookup->t[0]; block[37]=lookup->t[1];
+                    screen_lookup_draw=true;
+                    static uint64_t lookups=0;
+                    if (++lookups==1) std::fprintf(stderr,"[vr] screen lookup: a draw of the world reads a copy of the picture at the pixel's own place (call site %08X, coordinate %u). The headset makes that coordinate for each eye\n",draw.callsite,lookup->id);
+                }
 #ifdef UC_OPENXR
                 // Space warp: the world's triangles that write depth into the eyes' EFB go to the motion pass. The frame's first one fixes
                 // the eye rows and the depth planes the pass uses for all of them (its lens: the world's).
@@ -4964,7 +4978,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                     }
                     // The small-draw ubershader (uber_merge.h): a small draw may move onto the ubershader of its fixed-function state, but only to
                     // join a run it cannot join otherwise (below): a run of one draw, or of draws that join anyway, keeps its folded module.
-                    if (!second_alpha && uber_small_scene_ && !frag_dump_ && uber_merge_stages_ok(info.key)) {
+                    if (!second_alpha && !screen_lookup_draw && uber_small_scene_ && !frag_dump_ && uber_merge_stages_ok(info.key)) {
                         if (draw_pixels(d)>uber_max_pixels_) ++uber_big_;
                         else if (!(run.merge=uber_merge_pipeline(info.key))) ++uber_pending_;
                         else { run.pixels=draw_pixels(d); run.few[0]=uber_merge_pipeline(info.key,1); run.few[1]=uber_merge_pipeline(info.key,2); }
@@ -5133,9 +5147,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             {   // the draw's own eye transforms (a HUD draw's carried into the layer's plane, hud_layer_block)
                 float* target=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+d*stereo_stride_);
                 if (which==1) {
-                    float block[32];
+                    float block[40];
                     stereo_eye_block(stereo_->transforms(gl_from_vulkan(draw.transforms->projection),LG_STEREO_HUD),block);
                     hud_layer_block(layer.map,block,target);
+                    for(int i=32;i<40;++i) target[i]=0;   // no screen lookup
                 } else {
                     const auto facts=stereo_facts(d);
                     stereo_eye_block(stereo_->transforms(gl_from_vulkan(draw.transforms->projection),lg_stereo_classify_draw(&facts)),target);
