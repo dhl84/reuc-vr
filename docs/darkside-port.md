@@ -59,6 +59,7 @@ python -I tools/title_map.py --match <match dir> --manual project/dc/title_manua
 - `UC_SMALL_TEXTURES=0` turns the handling of small rewritten textures off (see "The render thread"): the texture cache keeps every version, and the renderer makes a GPU image for each. Use it to compare.
 - The step `trace:NAME,N[,EVERY]` of `scripts/drive.py` writes the screen box of every draw of N frames to a file. The boxes of the same draws over the retraces show how the camera and the models move. Two runs can be compared this way (the pictures of two runs are never taken at the same game time).
 - `UC_DC_GOD=1` keeps the health of the two players and of the partner full (see "Play-through"). It is a test aid and is off by default.
+- `UC_DC_WEAK=1` holds the health of every enemy at 1 or below. `UC_DC_ROCKET=1` gives the first player the rocket launcher and the linear launcher. Both are test aids and are off by default (see "The rest of the game").
 - The step `bot:N[,EVERY[,TEXT]]` of `scripts/drive.py` is the spray with one more press after each row of points: A at the right of the screen, the wave, Z, A in the middle, A+B, the wave, A at the left. It passes the quick-time prompts, reloads, takes a choice of ways and the prompt "Move". With TEXT, the step ends after the game log holds that text. An example is `chapterResult_us.arc`, which the game opens for the result screen of a chapter.
 - The step `live:NAME` takes its steps from a file while the game runs. Another program appends lines to the file. Use it for a screen that is not known yet: look at a frame, then send the next steps.
 - The step `watchptr:ADDR,OFFSET,SIZE,N[,TEXT...]` reads a pointer and watches the value behind it. It prints each change of the value with the retrace count. It also prints each new log line that holds one of the texts.
@@ -147,6 +148,109 @@ One run stopped with an error: the point draw in the sixth chapter of "Memories 
 
 - The log line `[save] call from 803C8934 failed: -105` comes at each save. `ISFS_CreateFile` answers "the file exists", and the game then writes the file. The save file loads in the next run.
 - With the game clock at speed 6 a chapter presents 75 to 235 frames for 360 retraces. At speed 1 the second chapter holds 30 frames for 60 retraces with 2.5 to 3 ms of render time for a frame.
+
+### The rest of the game
+
+On 16 November 2026 the Windows build was played on from the last boss of "Memories of a Lost City" (script `s10c8`). The first run started from a save of the headset at the checkpoint of that boss. The scripts of "Memories of a Lost City" are `s10c1` to `s10c8`. Those of "Game of Oblivion" are `s20c1` to `s20c7`. Those of "Operation Javier" are `s30c1` to `s30c7`.
+
+#### What the boss of `s10c8` needs
+
+The boss is the Tyrant on the platform of the train (class with the vtable 806E4398). The `bot` step took its health down again and again and never won.
+
+- The Tyrant has 16 states (`+0x5D0` of its object). Its function after a hit is 801D34EC. In the states up to 13 the function holds the health at 10 % of the largest health. In state 14 the health goes to 0 once, and the Tyrant gets half of its health back.
+- State 15 is the last one. When the health is 0 there, the Tyrant kneels and a voice line says "Leon, now!". For 2 seconds the byte `+0x685` is 1. A hit of the rocket launcher in that time kills the Tyrant (801D352C). After that time the Tyrant gets a quarter of its health back.
+- Outside that time the Tyrant takes no damage from a rocket in state 15 (801D35BC). It knocks the rocket away (801DA994).
+- Before state 15 Ada throws a rocket launcher ("Use this!"). It lies on the floor for about 2 seconds with the prompt "Pick Up". The player takes it with A while the pointer is on it. The `bot` step pressed A in the middle of the screen only once in 49 shots.
+- A weapon that the player picks up gets the first free one of the four weapon slots (800CDF98). The save has four full slots: the handgun, the submachine gun, the hand grenade and the bow gun. The launcher then gets no slot, and the +Control Pad cannot choose it.
+
+The kind of a hit is the weapon number of the item table at 806D7038: 0 is the handgun, 3 the magnum, 5 the rocket launcher and 7 the linear launcher. An enemy keeps the kind of its last hit at `+0x50C`.
+
+Checked: the states, the health and the byte `+0x685` were read from the running game with the step `probe`. The inventory was read before the pick-up. One run pressed A at the launcher every 5 retraces, and the four slots did not change. The inventory after that pick-up was not read.
+
+#### The test aids
+
+- `UC_DC_WEAK=1` holds the health of every enemy at 1 or below, so one hit takes it to 0. An enemy is an object whose class comes from the enemy base class: its vtable has the function 8005D408 at `+0x10`. The two partner classes are left out. The game still runs the phases of a boss. With this aid the Tyrant reaches its state 15 after 21000 retraces. Without it the state came after 36000 retraces.
+- `UC_DC_ROCKET=1` gives the first player two weapons while a chapter runs: the rocket launcher in the left weapon slot and the linear launcher in the lower slot. The weapons that were in those slots have no slot then. The game itself gives the rocket launcher at the result screen of `s10c8`.
+- Both aids are off by default. The constants are in `common/title.h`, and the code is in `game/uc_main.cpp`. The other game does not have them.
+- The fourth value of the `bot` step is a list of buttons, one for each row of 7 shots, for example `UP/LEFT/DOWN/-/-/-/-`. The bot presses the button after the row. Up is the handgun, Left the rocket launcher and Down the linear launcher.
+- Each pass of the `bot` step over its grid is moved by a part of the grid pitch. After 16 passes the bot has shot at every place in steps of 0.05.
+- The step `probe:NAME=ADDR,OFFSET,...,SIZE` names a value behind a chain of pointers. The `bot` step prints each change of it. The table of objects is at 80732B88. The Tyrant was entry 68, so `probe:hp=80732DAC,0x44C,0,4` is its health.
+
+This step wins the fight of `s10c8`: `bot:30000,2,chapterResult_us.arc,UP/LEFT/-/-/-/-/-` with `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1`. The handgun takes the health to 0, and a rocket hits in one of the next 2-second times. In the run with probes the Tyrant died 36000 retraces after the start of the run. A second run reached the result screen of the chapter.
+
+Three later places needed more than the health:
+
+- The puppet theatre of `s20c4` is one object of an enemy class (vtable 806E0800) with six puppets. When a shot kills the boy or the girl, the show starts again. A player shoots the knight, the bear and the two fish in the short times in which the show lets a shot hit them. With `UC_DC_WEAK=1` the boy and the girl keep their health, and the four other puppets have none.
+- The Tyrant in the plane of `s20c5` takes no damage in its last part. A rocket starts the scene with the missile (voice line "At this range!?"). The bot passed it with `UP/LEFT/-/-/-/-/-` in 140 shots. With the handgun alone it did not pass in 4 minutes.
+- The last boss of `s20c7` needs the linear launcher ("Use the Launcher!"). With the handgun and the rocket launcher the run stood there for 4 minutes. With `UP/LEFT/DOWN/-/-/-/-` the chapter ended.
+
+#### What ran
+
+The runs used `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1`, speed 4 to 6 and the `bot` step. The table names the runs without `UC_DC_WEAK`.
+
+| Script | Chapter | Result |
+|---|---|---|
+| `s10c8` | Memories of a Lost City, Chapter 8 | "RESULTS" from the checkpoint at the Tyrant: the Tyrant, the movie, the train with the last boss. Clear time 00:14:15. The game gave the rocket launcher. |
+| `s30c2` | Operation Javier, Chapter 2 | "RESULTS". Clear time 00:11:47, 73 enemies. |
+| `s20c1` | Game of Oblivion, Chapter 1 | "RESULTS". Clear time 00:11:16, 320 enemies. |
+| `s20c2` | Game of Oblivion, Chapter 2 | "RESULTS". Clear time 00:09:19, 88 enemies. |
+| `s20c3` | Game of Oblivion, Chapter 3 | "RESULTS" after the change for the EFB copy (see below). Clear time 00:22:45, 63 enemies. |
+| `s20c4` | Game of Oblivion, Chapter 4 | "RESULTS" after the puppet rule and the change for the palette. The chapter was played in parts from its checkpoints. Clear time 00:17:55. |
+| `s20c5` | Game of Oblivion, Chapter 5 | "RESULTS". The last part was played again from its checkpoint with the rocket launcher. Clear time 00:41:15. |
+| `s20c6` | Game of Oblivion, Chapter 6 | "RESULTS". Clear time 00:33:35, 65 enemies. |
+| `s20c7` | Game of Oblivion, Chapter 7 | "RESULTS". The last part was played again from its checkpoint with the linear launcher. Clear time 00:18:28, 409 enemies. |
+| `s30c3` | Operation Javier, Chapter 3 | "RESULTS". Clear time 00:12:42, 195 enemies. |
+| `s30c4` | Operation Javier, Chapter 4 | "RESULTS". The boss in the dam was played again from its checkpoint without `UC_DC_WEAK`. Clear time 00:16:15, 79 enemies. |
+| `s30c5` | Operation Javier, Chapter 5 | "RESULTS" without `UC_DC_WEAK`. Clear time 00:25:38, 2 enemies. |
+| `s00c1` | A chapter with Claire alone, which the game starts after `s30c5` | "RESULTS" without `UC_DC_WEAK`. Clear time 00:13:29, 79 enemies. After its result screens the game opened `s00c1` again. |
+
+After each chapter the game showed its result screens and the next weapon screen, and it wrote the save file. The log of each run was searched for "guest trap", "fatal", "unsupported", "exception" and "assert".
+
+#### Faults found and fixed
+
+- The last boss of `s10c8` calls five functions of one instruction through pointers (8022C0C0 and 8022C9E0 to 8022C9F0). Its constructor builds their addresses through its stack frame, so the analyzer did not find them. The game stopped with "indirect call or jump to an address that is not a known function entry". The dispatcher now runs such a function: `blr` returns, and a branch goes to its target (`runtime/dispatch.cpp`). The log names each address once. `tools/find_entries.py` now follows a `lis` value through the stack frame and lists the six entries. They are not in `project/dc/dc.cfg` yet: a new entry makes a new translation of the whole game.
+- In room R224 of `s20c3` the game binds a texture of 320x171 at an address where an EFB copy of 80x42 was before. The renderer stopped with "unsupported native EFB texture view". A texture that does not fit the older copy now comes from the guest's memory (`runtime/hle/gx.cpp`).
+- In room R213 of `s20c4` the game binds a `GX_TF_C8` texture of 64x64 with a texture object from `GXInitTexObj`, which has no palette. The decoder stopped with "GX palette index exceeds loaded palette". Such a texture now gets the palette that its texture map had before, as on the hardware (`kPaletteLenient` in `common/title.h`). `RBUE08` keeps its errors.
+
+#### The menus
+
+A save after a finished chapter is in the scratch folder of the run (`save_<script>_done`). These steps go from the title to the main menu of file 01: `aim:-0.2,0.1 until:menu01.brstm,A,60,6000 wait:300 press:A wait:240 aim:-0.16,-0.15 wait:40 press:A wait:240 aim:-0.21,0.26 wait:40 press:A wait:300`. Then `aim:0,-0.12 wait:40 press:A wait:300` takes CHRONICLES.
+
+- The stage screen has three pieces after `s30c2`: "Memories of a Lost City" at `aim:-0.1,0.05`, "Game of Oblivion" at `aim:0.14,-0.32` and "Operation Javier" at `aim:0.36,0.108`.
+- When a new chapter opens, the pieces of the chapter screen move. Hold the pointer on a piece for 60 retraces: the screen then shows "Chapter N".
+- A new chapter of a scenario that was played before goes straight to the weapon screen. NEXT is at `aim:0.59,0.237`. A chapter with checkpoint data asks "Do you want to resume the game from this checkpoint?", and YES is at `aim:-0.16,0.115`. The game then goes on without the weapon screen.
+- A piece of another chapter asks to delete the checkpoint data of the chapter in progress. YES at the same place deletes it.
+- The step after a chapter is the same for every chapter: NEXT on the result screens (`aim:0.59,0.237 until:NEVERMATCH,A,90,1500`), CHRONICLES (`aim:0,-0.29 wait:60 press:A wait:500`), NEXT on the weapon screen, then `until:Data/script/s,A,120,3000`. A new scenario shows the character screen first: `aim:-0.25,0.0 wait:60 press:A wait:400` takes the character at the left.
+
+These routes were used. Each one follows CHRONICLES at the main menu. "Step after" is the step after a chapter from the list above.
+
+| Script | Start | Steps |
+|---|---|---|
+| `s10c8` | The save of the headset at the boss | `aim:-0.1,0.05` (scenario), `aim:-0.151,0.336` (chapter), YES |
+| `s30c2` | Step after `s10c8` | NEXT on the weapon screen |
+| `s20c1` | Step after `s30c2` | The character at the left, then NEXT |
+| `s20c2` | `save_s20c1_done` | `aim:0.14,-0.32`, `aim:-0.21,0.2`, NEXT |
+| `s20c3` | `save_s20c2_done` | `aim:0.14,-0.32`, `aim:-0.45,-0.19`, NEXT |
+| `s20c4` | `save_s20c4_cp` (four pieces) | `aim:0.14,-0.32`, `aim:0.1,-0.3`, NEXT |
+| `s20c5` | `save_s20c5_cp` (five pieces, checkpoint) | `aim:0.14,-0.32`, `aim:-0.26,-0.34`, YES |
+| `s20c6` | Step after `s20c5` | NEXT. With seven pieces the chapter is at `aim:-0.11,-0.42`. |
+| `s20c7` | `save_s20c7_cp` (seven pieces, checkpoint) | `aim:0.14,-0.32`, `aim:0.26,-0.1`, YES |
+| `s30c3` | Step after `s20c7` | NEXT |
+| `s30c4` | `save_s30c4_cp` (four pieces, checkpoint) | `aim:0.36,0.108`, `aim:0.14,0.0`, YES |
+| `s30c5` | Step after `s30c4` | NEXT |
+| `s00c1` | Step after `s30c5` | The game starts it during the NEXT presses of the result screens. |
+
+With four pieces of "Operation Javier" the chapters 1 to 3 are at `aim:-0.12,0.29`, `aim:-0.14,-0.15` and `aim:0.04,-0.39`.
+
+#### Open
+
+- With `UC_DC_WEAK=1` the run stood at the boss of `s30c4` for 4 minutes. The health of the boss was 1 of 1200, and the fight did not go on. Without the aid the bot passed it in 1400 shots with the two launchers. The cause in the boss class (vtable 806E8A90) was not looked for. An aid that makes each loss of health larger is a possible next step.
+- `s30c6` and `s30c7` were not played. After `s30c5` the game starts `s00c1`, and the way from there to `s30c6` was not found.
+- The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. The cause was not looked for.
+- The six new entries are not in `project/dc/dc.cfg`.
+- The pictures of the two renderer changes were not compared with a console. The frames of the rooms R224 and R213 were not looked at.
+- With `UC_DC_ROCKET=1` the bow gun and the hand grenade have no weapon slot, and the save keeps that.
+- The plain `bot` step with the handgun alone does not pass `s10c8`, `s20c5` and `s20c7`.
 
 ## Frame pacing and load
 
@@ -563,6 +667,7 @@ On 15 November 2026 the Windows build of `SBDE08` does this:
 - It reads the music and voice streams (`Data/sound/stream/*.brstm`). The scenes of the chapter wait for their voice lines, so the chapter did not go on after the first enemy before.
 - The exposure of the picture follows the brightness of the scene: the game reads the picture back from the GPU.
 - With the test aid `UC_DC_GOD=1` it plays the first chapter to its end: the boss, the result screens and the save. It loads that save in the next run. It plays the first seven chapters of "Memories of a Lost City" and most of the eighth (see "Play-through").
+- With the test aids `UC_DC_WEAK=1` and `UC_DC_ROCKET=1` it plays the end of "Memories of a Lost City" and all of "Game of Oblivion". It also plays the chapters 2 to 5 of "Operation Javier" (see "The rest of the game").
 - Its mixed sound is the sound of the game. The title music is equal to the stream file, sample for sample, at the right rate and in stereo (see "Sound").
 
 Found on the way (each is a constant in `common/title.h` or a note in the code):
@@ -584,6 +689,7 @@ Not done yet:
 - Materials with the depth flag of the shadow data get no shadow: an EFB copy to `GX_TF_Z16` gives the farthest depth in every texel. No draw of the first chapter has that flag (see "Shadows"). The casters of the last 32 lines of the shadow picture are not drawn. EFB copies to `GX_CTF_R8` give the red channel. Vulkan renderer only.
 - No person listened to the sound. The numbers are in "Sound". In long fights 2.6 to 7.2 % of the samples are at full scale.
 - The chapters were played with the test aid `UC_DC_GOD=1` only. Play without the aid was not tested after the first fight.
+- The chapters 6 and 7 of "Operation Javier" were not played (see "The rest of the game", "Open").
 - No frame with the squares of the `GX_POINTS` particles was looked at (see "Point draws").
 - After the death of the player or of the partner the game shows its game-over screens. The test input does not operate them. In two runs the game went back to its menus.
 - In one run the player died at the spiders, and the game went back to its menu instead of a checkpoint (it loaded `mainMenu_us.arc`). The B presses of the test input then started the chapter again. The screens between are not checked.
