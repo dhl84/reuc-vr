@@ -699,7 +699,7 @@ The long run of that day. The app played the first eight chapters to their resul
 
 - One crash, after two hours, at the load of the sixth chapter: the Adreno shader compiler again, for a key that had no folded module. The compile guard needs one crash for each such key. On Android the renderer now does not compile a specialized pipeline without a folded module (`folded_only_` in `renderer/vulkan_renderer.cpp`). Its draws keep the ubershader. `UC_UNFOLDED_PIPELINES=1` gives the old way. The next three and a half chapters ran without a crash.
 - The keys that the run recorded are in `project/dc/pipeline_keys.quest` (625 keys).
-- Frame rate with the render scale 2.0: 69.9 fps in the first chapter, with 60 fps or more in 91 % of the seconds. It was 64.3 fps over the first three chapters and 62 fps over chapters six to eight. The fifth chapter ran at about 45 fps (`s10c4`, the glow chain).
+- Frame rate with the render scale 2.0: 69.9 fps in the first chapter, with 60 fps or more in 91 % of the seconds. It was 64.3 fps over the first three chapters and 62 fps over chapters six to eight. The fifth chapter ran at about 45 fps (`s10c4`). The cause is in "The slowdown in a long session" below.
 - The slowest scene of the run was the boss of the ninth chapter: 30 to 35 fps. The scene packet took 12 ms of GPU time and the last packet of the frame 11.4 ms. The cause was not the geometry (see "Keys without a folded module" below).
 - The proxy of the post-processing chain (see "The post-processing chain") was measured there with the live switch `UC_CHAIN_AB`: 34.8 fps without it, 30.3 and 31.1 fps with it. It is off (`kCornerChainProxy`). The copies that no draw samples are still not made. The glow switch changed nothing in that scene.
 
@@ -719,7 +719,7 @@ The headset now makes the missing module itself (`renderer/tev_fold.cpp`, app 0.
 - Checked on the headset: `UC_DEVICE_FOLD_TEST=16` in `env.txt` leaves the build's modules of one material in 16 unused. The app made 155 modules at its start (79 s instead of 4 s, once). It then ran the boss scene at 57 to 61 fps without a crash, and the frame was right.
 - `UC_NO_DEVICE_FOLD=1` turns the fold off.
 
-The fifth chapter (`s10c4`) with the app 0.0.19: the bot played it to its result screen in 20 minutes at 69.8 fps on average. 95 % of the seconds had 60 fps or more, and no second was below 45 fps. The device made two modules in play. The 45 fps of the long run came from keys without a module, not from the glow chain.
+The fifth chapter (`s10c4`) with the app 0.0.19: the bot played it to its result screen in 20 minutes at 69.8 fps on average. 95 % of the seconds had 60 fps or more, and no second was below 45 fps. The device made two modules in play. That run was a new session of the app. The 45 fps of the long run came from the length of the session (see "The slowdown in a long session" below).
 
 The route to a chapter of "Memories of a Lost City" from a save, for `scripts/drive_quest.py`, has five steps:
 
@@ -734,6 +734,38 @@ The piece of `s10c3` is at `aim:0.233,-0.237`, that of `s10c4` at `aim:0.033,0.0
 Space warp. With `refresh 90` and `space_warp on` in `vr.cfg` the app 0.0.19 ran the boss scene for three minutes without a fault. The game rendered 45 or 46 frames each second, and the headset reported application space warp at 90 Hz. The GPU took 14.3 ms a frame. Nobody looked at the frames that the headset makes between the frames of the game, so space warp stays off by default.
 
 At each start 74 pipelines fail to compile with `VkResult -13`. The `RBUE08` app has 78 such failures. The log now names them (app 0.0.20). Each one is a small-draw ubershader of the families with one stage or two stages (`uber_merge.h`). The general small-draw ubershader compiles. So the draws lose only the shorter shader of their family. The cause in the driver is not known.
+
+The slowdown in a long session, 17 November 2026. The long run with the app 0.0.20 played eight chapters in 3 h 10 min without a crash. Most chapters ran at 44 to 54 fps. A new session of the app ran the same chapters at about 70 fps. So the frame rate fell with the length of the session, and a short test did not show that.
+
+The cause was in the render thread. Each of the 16 frame slots of `VulkanRenderer` kept a list of textures (`slot.textures`). The list named each texture whose pixels the texture cache of the game still held. For each packet, `render()` walked that list and built a lookup table from it. A frame has about 27 packets. The list grew with the session. After two hours the render thread took 23 ms a frame, against 14 ms in a new session. The renderer now keeps one set of these textures for all slots (`retained_textures_`, app 0.0.23).
+
+The long run with the app 0.0.23 played the same eight chapters in 3 h 14 min without a crash. The table gives the mean frame rate of each chapter in both runs. Both runs had `UC_DC_GOD=1` and `bot:60000,6`. The seconds of the movies count too.
+
+| Chapter | 0.0.20, mean fps | 0.0.23, mean fps | 0.0.23, seconds at 60 fps or more |
+|---|---|---|---|
+| `s30c1` | 69.5 | 70.6 | 95 % |
+| `s10c1` | 50.5 | 66.0 | 78 % |
+| `s10c2` | 64.7 | 72.3 | 100 % |
+| `s10c3` | 44.4 | 69.8 | 99 % |
+| `s10c4` | 47.8 | 72.1 | 100 % |
+| `s10c5` | 54.4 | 65.5 | 70 % |
+| `s10c6` | 44.1 | 66.0 | 83 % |
+| `s10c7` | 49.3 | 71.8 | 100 % |
+
+The app 0.0.23 also has the automatic render scale (see below), and it lowered the scale for most of that run. So the table shows both changes together.
+
+How the cause was found:
+
+- The GPU was not the limit. Under the sustained-high level of the headset the GPU of a Quest 3 runs at 545 MHz. It goes to 599 or 640 MHz only while it is about 85 % busy. The VrApi lines of logcat show the clock and the load (`GPU%`). In the slow state the GPU was 70 % busy at 545 MHz.
+- `UC_GPU_LEVEL=boost` and the render scale 1.3 changed nothing in the slow state.
+- The line `[perf]` of the log gives the time of the render thread for each second. It showed 23 ms a frame.
+- `adb shell simpleperf record --app org.uc.darksidechronicles.vr -e cpu-clock -f 1000 -g --trace-offcpu --duration 10 -o /data/local/tmp/x.data` records all threads for 10 s. The switch `--trace-offcpu` also records the waits of a thread.
+- `simpleperf report -i /data/local/tmp/x.data --tids N --sort symbol --children` lists the functions of one thread. The log line `[vulkan-xr] render thread N registered` gives the number of the render thread.
+- `llvm-addr2line -i -f -C -e <build folder>/game/libmain.so <address>` of the NDK names the source line of an address.
+
+If a headset run is slow, record such a profile first. Judge the frame rate from a long session, and compare the same moments of the game.
+
+The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
 Not done on the headset: play by a person with the controllers, and the sound.
 
