@@ -195,6 +195,27 @@ inline constexpr uint32_t kDcGlowEffects[3] = {0x8075B010 + 64 + 220, 0x8075B010
 // The clock of the game is the object at 80736D10 (docs/darkside-port.md, "Frame pacing and load"). Its eight time scales are the
 // floats at +0x0C to +0x28. The test aid UC_DC_FREEZE_FILE (game/uc_main.cpp) holds them at 0.
 inline constexpr uint32_t kDcClock = 0x80736D10;
+// The shot and the pointer (docs/darkside-port.md, "The headset view"). A trace build (UC_TRACE_NEW) listed the functions that ran
+// first at two presses of B in the boss fight of s10c8. The rest came from the disassembly of their callers and callees.
+// - 800B8C10 fires a weapon. For each pellet it calls 800B6AE4, which takes a bullet from a pool and calls the initializer 800B4E30
+//   (r3 bullet, r4 origin or 0, r5 direction, r6 weapon kind, r7 player, r8 pellet) at 800B6B84. With r4 = 0 the origin is the
+//   position of the camera. The bullet holds its origin at +0xD8, its direction at +0xE4, the offset of its trail at +0xF0 and the
+//   start of its trail at +0x54. 800B5170 moves the bullet each frame along +0xE4 and tests the step with the segment query.
+// - 800B1EB0 (r4 player, r5 start, r6 end, r7 categories, r8 hit point) is the segment query. The player update 800B151C calls it
+//   at 800B1714 from the camera to the unprojected pointer (802974F4). The item pick-up 800C12E8 calls it at 800C1414 from the camera
+//   to the hit point of the pointer.
+// - The aim data of a player is 988 bytes at 807507A0: the hit point at +0x3BC, the far point of the pointer at +0x3C8, the object
+//   under the pointer at +0x390 and the result of the query at +0x3D4. The getter 800B2400 gives them to the weapon, to the item
+//   pick-up and to the enemies.
+// - The camera: the word at +4 of the static object 807369F8 is the camera system. It holds 32 cameras of 268 bytes from +0xF8, and
+//   the byte at +0xF4 is the index of the camera in use (804CC8D4). A camera starts with its view matrix (three rows of four floats,
+//   world to camera, 804C7FD8). Bit 8 of its flags at +0x70 says that the matrix is up to date. Its position is at +0x74.
+inline constexpr uint32_t kDcBulletInit = 0x800B4E30, kDcBulletInitReturn = 0x800B6B88;
+inline constexpr uint32_t kDcBulletOrigin = 0xD8, kDcBulletDirection = 0xE4, kDcBulletOffset = 0xF0, kDcBulletStart = 0x54;
+inline constexpr uint32_t kDcSegmentQuery = 0x800B1EB0, kDcPointerQueryReturn = 0x800B1718, kDcPickupQueryReturn = 0x800C1418;
+inline constexpr uint32_t kDcAim = 0x807507A0, kDcAimSize = 0x3DC, kDcAimHit = 0x3BC, kDcAimFar = 0x3C8;
+inline constexpr uint32_t kDcCameraManager = 0x807369F8, kDcCameraIndex = 0xF4, kDcCameraFirst = 0xF8, kDcCameraSize = 0x10C, kDcCameraCount = 32;
+inline constexpr uint32_t kDcCameraFlags = 0x70, kDcCameraClean = 8;
 #else
 inline constexpr const char* kDiscId = "RBUE08";
 inline constexpr const char* kName = "Resident Evil: The Umbrella Chronicles";

@@ -1,6 +1,7 @@
 #include "xr_shot.h"
 #include "native_input.h"
 #include "gx_vertices.h"
+#include "title.h"
 #include <algorithm>
 #include <stdexcept>
 #include <cmath>
@@ -28,10 +29,12 @@ V redirect(const V& pellet,const V& from,const V& to) {
     V out;for(unsigned i=0;i<3;++i)out[i]=pellet[i]+a[i]+b[i]/(1+cosine);return out;
 }
 gx::Memory guest_memory(const ppc::Ctx& c) {return {{reinterpret_cast<const std::byte*>(c.mem),24u<<20},{reinterpret_cast<const std::byte*>(c.mem+0x10000000),64u<<20},{}};}
-// The tracked ray (guest camera space) in the world, through the game's view matrix at 8044B4E0; false for a matrix that is not a rotation.
-bool world_ray(ppc::Ctx& c,const TrackedRay& ray,V& origin,V& direction) {
+// The tracked ray (guest camera space) in the world, through a view matrix of the game (three rows of four floats, world to camera);
+// false for a matrix that is not a rotation. RBUE08 keeps its view matrix at 8044B4E0.
+constexpr uint32_t kViewMatrix=0x8044B4E0;
+bool world_ray(ppc::Ctx& c,uint32_t view,const TrackedRay& ray,V& origin,V& direction) {
     std::array<V,3> rows;V translation;
-    for(unsigned i=0;i<3;++i){rows[i]=read(c,0x8044B4E0+i*16);translation[i]=ppc::rdf32(c,0x8044B4E0+i*16+12);}
+    for(unsigned i=0;i<3;++i){rows[i]=read(c,view+i*16);translation[i]=ppc::rdf32(c,view+i*16+12);}
     for(unsigned i=0;i<3;++i) for(unsigned j=0;j<3;++j)
         if(!std::isfinite(dot(rows[i],rows[j])) || std::abs(dot(rows[i],rows[j])-(i==j?1.f:0.f))>.02f)return false;
     origin={};direction={};
@@ -57,11 +60,11 @@ bool align_xr_projectile(ppc::Ctx& c,uint32_t object,unsigned player,const Track
     if(!c.mem || player>1)return false;
     const auto memory=guest_memory(c);
     try {
-        memory.read(object,204);memory.read(c.r[13]-27304,4);memory.read(0x8044B4E0,48);
+        memory.read(object,204);memory.read(c.r[13]-27304,4);memory.read(kViewMatrix,48);
         const uint32_t scene=ppc::rd32(c,c.r[13]-27304),target=scene+player*7364+20180;
         memory.read(target,12);
         V origin,direction;
-        if(!world_ray(c,ray,origin,direction))return false;
+        if(!world_ray(c,kViewMatrix,ray,origin,direction))return false;
         V old_origin=read(c,object+80),old_direction=read(c,object+92),central=sub(read(c,target),old_origin);
         if(!normalize(central)||!normalize(direction)||!normalize(old_direction))return false;
         for(float v:origin)if(!std::isfinite(v))return false;
@@ -99,7 +102,7 @@ XrPickScope::XrPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions
     if((!pointer && !pickup) || !c.mem)return;
     const auto memory=guest_memory(c);
     try {
-        memory.read(c.r[4],12);memory.read(c.r[5],12);memory.read(c.r[13]-27304,4);memory.read(0x8044B4E0,48);
+        memory.read(c.r[4],12);memory.read(c.r[5],12);memory.read(c.r[13]-27304,4);memory.read(kViewMatrix,48);
         const uint32_t scene=ppc::rd32(c,c.r[13]-27304);
         const V end=read(c,c.r[5]);
         for(unsigned p=0;p<2;++p) {
@@ -107,7 +110,7 @@ XrPickScope::XrPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions
             if(pointer ? c.r[5]!=target : read(c,target)!=end)continue;   // the pointer query writes the player's hit point; the pickup reads a copy of it
             auto ray=input_xr_ray(p);if(diagnostic_ray())ray=diagnostic_ray();
             V origin,direction;
-            if(!ray || !world_ray(c,*ray,origin,direction) || !normalize(direction))return;
+            if(!ray || !world_ray(c,kViewMatrix,*ray,origin,direction) || !normalize(direction))return;
             for(float v:origin)if(!std::isfinite(v))return;
             start_=c.r[4];saved_=read(c,start_);
             write(c,start_,origin);
@@ -128,3 +131,98 @@ XrPickScope::~XrPickScope() noexcept(false) {
     if(start_ && std::uncaught_exceptions()==exceptions_)write(c_,start_,saved_);   // the caller's eye point, as it was
 }
 }
+
+#if defined(UC_TITLE_DC)
+namespace uc {
+static_assert(title::kDcBulletInit==0x800B4E30u && title::kDcSegmentQuery==0x800B1EB0u,"the entries of dc_xr_scope (xr_shot.h)");
+namespace {
+// SBDE08: the view matrix of the camera in use (common/title.h, kDcCameraManager); 0 without a camera or while its matrix is stale.
+uint32_t dc_view_matrix(ppc::Ctx& c,const gx::Memory& memory) {
+    memory.read(title::kDcCameraManager+4,4);
+    const uint32_t system=ppc::rd32(c,title::kDcCameraManager+4);
+    if(!system)return 0;
+    memory.read(system+title::kDcCameraIndex,1);
+    const uint32_t index=ppc::rd8(c,system+title::kDcCameraIndex);
+    if(index>=title::kDcCameraCount)return 0;
+    const uint32_t camera=system+title::kDcCameraFirst+index*title::kDcCameraSize;
+    memory.read(camera,title::kDcCameraFlags+4);
+    return ppc::rd32(c,camera+title::kDcCameraFlags)&title::kDcCameraClean ? camera : 0;
+}
+}
+bool align_dc_bullet(ppc::Ctx& c,uint32_t bullet,unsigned player,const TrackedRay& ray) {
+    if(!c.mem || player>1)return false;
+    const auto memory=guest_memory(c);
+    try {
+        memory.read(bullet,title::kDcBulletOffset+12);
+        const uint32_t view=dc_view_matrix(c,memory),target=title::kDcAim+player*title::kDcAimSize+title::kDcAimHit;
+        memory.read(target,12);
+        V origin,direction;
+        if(!view || !world_ray(c,view,ray,origin,direction))return false;
+        // 800B8C10 aims each pellet around the line from the camera to the hit point of the pointer: that line is the centre of the spread.
+        V old_origin=read(c,bullet+title::kDcBulletOrigin),old_direction=read(c,bullet+title::kDcBulletDirection),central=sub(read(c,target),old_origin);
+        if(!normalize(central)||!normalize(direction)||!normalize(old_direction))return false;
+        for(float v:origin)if(!std::isfinite(v))return false;
+        V aimed=redirect(old_direction,central,direction);if(!normalize(aimed))return false;
+        // 800B5170 sweeps the origin along the direction. It draws the trail from the start, which the game puts at the origin plus an
+        // offset to the lower right of the flat screen. The trail starts at the origin of the ray instead.
+        write(c,bullet+title::kDcBulletOrigin,origin);write(c,bullet+title::kDcBulletDirection,aimed);
+        write(c,bullet+title::kDcBulletOffset,{});write(c,bullet+title::kDcBulletStart,origin);
+        if(std::getenv("UC_XR_SHOT_LOG")) {
+            const float error=std::sqrt(dot(sub(aimed,direction),sub(aimed,direction)));
+            std::fprintf(stderr,"[xr-shot] object %08X player %u origin %.5f,%.5f,%.5f direction %.6f,%.6f,%.6f laser %.6f,%.6f,%.6f spread %.7f old-origin %.3f,%.3f,%.3f old-direction %.6f,%.6f,%.6f\n",
+                         bullet,player,origin[0],origin[1],origin[2],aimed[0],aimed[1],aimed[2],direction[0],direction[1],direction[2],error,
+                         old_origin[0],old_origin[1],old_origin[2],old_direction[0],old_direction[1],old_direction[2]);
+        }
+        return true;
+    } catch(const gx::Error&) {return false;}
+}
+DcShotScope::DcShotScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions()) {
+    // 800B4E30(r3 bullet, r4 origin or 0, r5 direction, r6 weapon kind, r7 player, r8 pellet) from 800B6AE4, whose one caller is the
+    // weapon fire 800B8C10. r4 = 0: the bullet starts at the camera.
+    if(c.lr!=title::kDcBulletInitReturn || c.r[4]!=0 || c.r[7]>1)return;
+    object_=c.r[3];player_=c.r[7];ray_=input_xr_ray(player_);
+    if(const auto& diagnostic=diagnostic_ray())ray_=diagnostic;
+}
+DcShotScope::~DcShotScope() noexcept(false) {
+    if(ray_ && std::uncaught_exceptions()==exceptions_ && !align_dc_bullet(c_,object_,player_,*ray_) && std::getenv("UC_XR_SHOT_LOG"))
+        std::fprintf(stderr,"[xr-shot] rejected invalid bullet/camera %08X\n",object_);
+}
+DcPickScope::DcPickScope(ppc::Ctx& c):c_(c),exceptions_(std::uncaught_exceptions()) {
+    // 800B1EB0(r4 player, r5 start, r6 end, r7 categories, r8 hit point). From 800B151C (categories 0x55) it is the ray of the pointer,
+    // camera to the unprojected pointer: its hit point (aim +0x3BC, the same address as the end), its object and its result decide what
+    // the player aims at, fires at and picks up. From 800C12E8 (categories 0x10) it picks the item to take, camera to that hit point.
+    // Both run along the ray of the VR controller instead.
+    const bool pointer=c.lr==title::kDcPointerQueryReturn,pickup=c.lr==title::kDcPickupQueryReturn;
+    if((!pointer && !pickup) || !c.mem || c.r[4]>1)return;
+    const unsigned player=c.r[4];const uint32_t aim=title::kDcAim+player*title::kDcAimSize;
+    if(pointer && c.r[6]!=aim+title::kDcAimHit)return;
+    auto ray=input_xr_ray(player);if(diagnostic_ray())ray=diagnostic_ray();
+    if(!ray)return;
+    const auto memory=guest_memory(c);
+    try {
+        memory.read(c.r[5],12);memory.read(c.r[6],12);memory.read(aim+title::kDcAimFar,12);
+        const uint32_t view=dc_view_matrix(c,memory);
+        V origin,direction;
+        if(!view || !world_ray(c,view,*ray,origin,direction) || !normalize(direction)) {
+            if(std::getenv("UC_XR_SHOT_LOG"))std::fprintf(stderr,"[xr-pick] rejected: no camera matrix for the %s of player %u\n",pointer ? "pointer" : "pickup",player);
+            return;
+        }
+        for(float v:origin)if(!std::isfinite(v))return;
+        const V eye=read(c,c.r[5]);
+        if(pointer) {
+            const V d=sub(read(c,c.r[6]),eye);const float length=std::sqrt(dot(d,d));
+            if(!std::isfinite(length) || length<=0)return;
+            V far;for(unsigned i=0;i<3;++i)far[i]=origin[i]+direction[i]*length;
+            write(c,c.r[6],far);write(c,aim+title::kDcAimFar,far);   // +0x3C8: the far point without the hit, a copy of the end
+        }
+        start_=c.r[5];saved_=eye;write(c,start_,origin);
+        if(std::getenv("UC_XR_SHOT_LOG"))
+            std::fprintf(stderr,"[xr-pick] %s player %u eye %.3f,%.3f,%.3f -> ray %.3f,%.3f,%.3f dir %.4f,%.4f,%.4f\n",pointer ? "pointer" : "pickup",player,
+                         eye[0],eye[1],eye[2],origin[0],origin[1],origin[2],direction[0],direction[1],direction[2]);
+    } catch(const gx::Error&) {start_=0;}
+}
+DcPickScope::~DcPickScope() noexcept(false) {
+    if(start_ && std::uncaught_exceptions()==exceptions_)write(c_,start_,saved_);   // the camera point of the caller, as it was
+}
+}
+#endif

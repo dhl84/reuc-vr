@@ -54,15 +54,16 @@ template <uint32_t a> constexpr bool plain_entry() {
 #endif
 #if defined(UC_TITLE_DC)
 // The Darkside Chronicles (SBDE08): every probe, scope and mod hook above is keyed by an RBUE08 address, so none of them may run here.
-// Until the entries of this game are found, a translated function only reports its entry in a trace build.
+// The entries of this game with native code are the two of uc::dc_xr_scope (game/xr_shot.h): the bullet initializer and the segment
+// query, for the ray of the VR controller. A trace build also reports each entry.
 #include "gx_audit.h"
 #undef UC_PLAIN_ENTRY
 #undef UC_ENTER
 #ifdef UC_TRACE
 #define UC_PLAIN_ENTRY(a) false
-#define UC_ENTER(a) do { ppc::trace_enter(a); uc::gx_audit_enter(a, c); } while (0)
+#define UC_ENTER(a) auto uc_xr_shot_scope=uc::dc_xr_scope<a>(c); do { ppc::trace_enter(a); uc::gx_audit_enter(a, c); } while (0)
 #else
-#define UC_PLAIN_ENTRY(a) true
-#define UC_ENTER(a) ((void)0)
+#define UC_PLAIN_ENTRY(a) (std::is_empty_v<decltype(uc::dc_xr_scope<a>(std::declval<ppc::Ctx&>()))>)
+#define UC_ENTER(a) auto uc_xr_shot_scope=uc::dc_xr_scope<a>(c)
 #endif
 #endif
