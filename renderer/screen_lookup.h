@@ -16,7 +16,24 @@
 
 namespace gx {
 // Coordinate `id`: s / q = s[0] * x / w + s[1] and t / q = t[0] * y / w + t[1], with (x, y, w) the clip position.
-struct ScreenLookup { uint32_t id=0; std::array<float,2> s{}, t{}; };
+// `map`: the texture map that the coordinate reads (0: the first texture of the draw).
+struct ScreenLookup { uint32_t id=0; std::array<float,2> s{}, t{}; uint32_t map=0; };
+// The wide view of the headset (wide_view.h vr_fov_scale): the game makes the coordinate with the view of its own picture, and the
+// projection of the draw is wider by the factors wide and wide_y. The scale of the coordinate over the clip position then holds the
+// factors: 0.9 and 1.35 for 1.8 and 2.7 in the streets of SBDE08, 0.9 and 1.296 for its water. They come out when the projection of
+// the draw is a wide one: its aspect is 16:9 or 4:3 times wide / wide_y.
+inline void lookup_without_wide_view(ScreenLookup& lookup,const std::array<std::array<float,4>,4>& projection,float wide,float wide_y) {
+    if (!(wide>1 || wide_y>1) || projection[0][0]==0) return;
+    const float aspect=std::abs(projection[1][1]/projection[0][0]),k=wide/wide_y;
+    if (std::abs(aspect-16.f/9*k)<.02f*aspect || std::abs(aspect-4.f/3*k)<.02f*aspect) { lookup.s[0]/=wide; lookup.t[0]/=wide_y; }
+}
+// A lookup at the pixel's own place of a copy of the whole picture has the scales and offsets 0.5 (glass, heat haze). Another one
+// reads a part of the picture as a rough mirror picture: the water of SBDE08 reads the middle half of the frame before (0.5 and
+// 0.46, 0.48 and 0.52). In a headset that part moves with the head, so its picture swims on the water.
+inline bool lookup_own_place(const ScreenLookup& lookup) {
+    const auto half=[](float v) { return std::abs(std::abs(v)-.5f)<.012f; };
+    return half(lookup.s[0]) && half(lookup.s[1]) && half(lookup.t[0]) && half(lookup.t[1]);
+}
 namespace screen_lookup_detail {
 using Row=std::array<double,4>;
 inline Row scaled(const std::array<float,4>& r,double k) { return {r[0]*k,r[1]*k,r[2]*k,r[3]*k}; }
@@ -72,7 +89,7 @@ inline std::optional<ScreenLookup> screen_lookup(const DrawPacket& draw) {
         if (!(std::abs(e)>1e-12) || dot(rest,rest)>1e-6*dot(out[2],out[2])) continue;
         std::array<double,2> s,v;
         if (!fit(out[0],clip_x,clip_w,s) || !fit(out[1],clip_y,clip_w,v)) continue;
-        ScreenLookup found; found.id=id;
+        ScreenLookup found; found.id=id; found.map=map;
         found.s={float(s[0]/e),float(s[1]/e)}; found.t={float(v[0]/e),float(v[1]/e)};
         if (!std::isfinite(found.s[0]) || !std::isfinite(found.s[1]) || !std::isfinite(found.t[0]) || !std::isfinite(found.t[1])) continue;
         return found;

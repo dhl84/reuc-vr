@@ -37,6 +37,7 @@
 #include <cstring>
 #include <cmath>
 #include <fstream>
+#include <climits>
 #include <limits>
 #include <map>
 #include <unordered_map>
@@ -1324,6 +1325,12 @@ void VulkanRenderer::create_samplers() {
             auto mips=sampler; mips.mipmapMode=VK_SAMPLER_MIPMAP_MODE_LINEAR; mips.maxLod=VK_LOD_CLAMP_NONE;
             vk_check(vkCreateSampler(device,&mips,nullptr,&auto_samplers_[mode]),"generated-mip texture sampler");
         }
+        if(layers_>1) {   // a rough mirror picture on a surface (soft_lookup_map): low levels only, so nothing of it swims with the head
+            static const float soft_bias=std::getenv("UC_VR_SOFT_LOOKUP_BIAS") ? std::clamp(float(std::atof(std::getenv("UC_VR_SOFT_LOOKUP_BIAS"))),0.f,10.f) : 5.f;
+            auto soft=sampler; soft.magFilter=soft.minFilter=VK_FILTER_LINEAR; soft.mipmapMode=VK_SAMPLER_MIPMAP_MODE_LINEAR; soft.maxLod=VK_LOD_CLAMP_NONE; soft.mipLodBias=soft_bias;
+            soft.anisotropyEnable=VK_FALSE; soft.maxAnisotropy=1.f;
+            vk_check(vkCreateSampler(device,&soft,nullptr,&soft_samplers_[mode]),"soft lookup sampler");
+        }
         if(motion_outputs_) {   // scene draws sample as if at output resolution (DLSS/FSR guides: log2(internal/output) - 1)
             auto biased=sampler; biased.mipLodBias=(upscaler_kind_==UpscalerKind::smaa || upscaler_kind_==UpscalerKind::off) ? 0.f : float(-std::log2(upscale_ratio(upscale_mode_))-1.0);   // SMAA and the pass-through: no upscaling, no jitter, no bias
             vk_check(vkCreateSampler(device,&biased,nullptr,&scene_samplers_[mode]),"scene texture sampler");
@@ -1334,6 +1341,7 @@ void VulkanRenderer::destroy_samplers() {
     for(auto& sampler:texture_samplers_) { if(sampler) vkDestroySampler(device,sampler,nullptr); sampler=VK_NULL_HANDLE; }
     for(auto& sampler:scene_samplers_) { if(sampler) vkDestroySampler(device,sampler,nullptr); sampler=VK_NULL_HANDLE; }
     for(auto& sampler:auto_samplers_) { if(sampler) vkDestroySampler(device,sampler,nullptr); sampler=VK_NULL_HANDLE; }
+    for(auto& sampler:soft_samplers_) { if(sampler) vkDestroySampler(device,sampler,nullptr); sampler=VK_NULL_HANDLE; }
 }
 void VulkanRenderer::set_effects(const GraphicsEffects& effects) {
     owner();
@@ -3635,6 +3643,30 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     static const bool original_refraction=std::getenv("UC_VR_SCREEN_REFRACTION")!=nullptr;   // diagnostic: original flat-screen displacement
     if (layers_>1 && !original_refraction) for (size_t d=0;d<packet.draws.size();++d)
         screen_refraction[d]=gx::vr_screen_refraction(packet.draws[d]);
+    // The headset (title.h kSoftScreenLookup): the map of a draw of the world that reads a part of the picture as a rough mirror picture
+    // (screen_lookup.h). That map is sampled blurred (soft_samplers_). -1: none. UC_VR_SOFT_LOOKUP=0 turns it off.
+    std::vector<int8_t> soft_lookup_map(packet.draws.size(),int8_t(-1));
+    static const bool soft_lookup_off=[] { const char* v=std::getenv("UC_VR_SOFT_LOOKUP"); return v && *v=='0'; }();
+    if (layers_>1 && uc::title::kSoftScreenLookup && !soft_lookup_off) {
+        const float wide=std::max(1.f,gx::vr_fov_scale().load(std::memory_order_relaxed)),wide_y_set=gx::vr_fov_scale_y().load(std::memory_order_relaxed);
+        const float wide_y=wide_y_set>0 ? std::max(1.f,wide_y_set) : wide;
+        for (size_t d=0;d<packet.draws.size();++d) {
+            const auto& draw=packet.draws[d];
+            if (draw.transforms->projection[3][3]!=0) continue;
+            bool copy=false;
+            for (size_t map=0;map<8 && !copy;++map) if (const auto& texture=draw_texture(draw,map); texture && texture->gpu_only) copy=true;
+            if (!copy) continue;
+            if (auto lookup=gx::screen_lookup(draw)) {
+                gx::lookup_without_wide_view(*lookup,draw.transforms->projection,wide,wide_y);
+                if (!gx::lookup_own_place(*lookup)) {
+                    soft_lookup_map[d]=int8_t(lookup->map);
+                    static bool told=false;
+                    if (!told) { told=true; std::fprintf(stderr,"[vr] soft lookup: a draw of the world reads a part of the picture as a mirror picture (call site %08X, map %u, scale %.3f,%.3f offset %.3f,%.3f). The headset reads it blurred\n",
+                                                         draw.callsite,lookup->map,lookup->s[0],lookup->t[0],lookup->s[1],lookup->t[1]); }
+                }
+            }
+        }
+    }
     static const bool physical_indirect=std::getenv("UC_INDIRECT_PHYSICAL_SIZE")!=nullptr;   // diagnostic old behaviour
     if (layers_>1 && !physical_indirect) for (size_t d=0;d<packet.draws.size();++d)
         for (size_t map=0;map<8;++map) if (const auto& texture=draw_texture(packet.draws[d],map); texture && texture->gpu_only && !texture->levels.empty())
@@ -3736,7 +3768,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                         slot.copy_sources.push_back(*chosen);
                         set_size(copied->second.extent);
                         image[map]={VK_NULL_HANDLE,copied->second.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-                        if(copied->second.mips_pending && ((packet.draws[i].texture_wrap[map]>>5)&3) && std::find(copy_mips.begin(),copy_mips.end(),&copied->second)==copy_mips.end())
+                        if(copied->second.mips_pending && (((packet.draws[i].texture_wrap[map]>>5)&3) || soft_lookup_map[i]==int8_t(map)) && std::find(copy_mips.begin(),copy_mips.end(),&copied->second)==copy_mips.end())
                             copy_mips.push_back(&copied->second);   // a mip filter (maxLod above 0): the levels are made before this packet's passes
                         continue;
                     }
@@ -3783,7 +3815,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             for(size_t map=0;map<8;++map) {
                 const auto wrap=packet.draws[i].texture_wrap[map];
                 if(!texture_samplers_[wrap]) throw std::invalid_argument("invalid native texture sampler mode");
-                const VkSampler plain=generated_mips[map] && auto_samplers_[wrap] ? auto_samplers_[wrap] : texture_samplers_[wrap];
+                const VkSampler plain=soft_lookup_map[i]==int8_t(map) && soft_samplers_[wrap] ? soft_samplers_[wrap] : generated_mips[map] && auto_samplers_[wrap] ? auto_samplers_[wrap] : texture_samplers_[wrap];
                 samplers[map]={i<scene_draws ? scene_samplers_[wrap] : plain,VK_NULL_HANDLE,VK_IMAGE_LAYOUT_UNDEFINED};
             }
             VkDescriptorBufferInfo palette{slot.palettes.buffer,0,VK_WHOLE_SIZE};
@@ -4181,7 +4213,18 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     static const long post_dump_every = std::getenv("UC_POST_DUMP") ? std::atol(std::getenv("UC_POST_DUMP")) : 0;
     static const uint64_t post_dump_serial = std::getenv("UC_CAPTURE_PASS_SERIAL") ? std::strtoull(std::getenv("UC_CAPTURE_PASS_SERIAL"),nullptr,10) : 0;
     static long post_dumps = 0;
-    static const long post_dump_from = std::getenv("UC_POST_DUMP_FROM") ? std::max(0L, std::atol(std::getenv("UC_POST_DUMP_FROM"))) : 0;   // the first frame of the dumps
+    static long post_dump_from = std::getenv("UC_POST_DUMP_FROM") ? std::max(0L, std::atol(std::getenv("UC_POST_DUMP_FROM"))) : 0;   // the first frame of the dumps
+    // UC_POST_DUMP_FILE=<file>: the dumps start at the frame after that file appears (a test driver makes it at the scene to look at).
+    static const char* const post_dump_file = std::getenv("UC_POST_DUMP_FILE");
+    static bool post_dump_armed = !post_dump_file;
+    if (!post_dump_armed) {
+        static uint64_t polled = ~0ull;
+        post_dump_from = LONG_MAX;
+        if (polled != frame_index_ && frame_index_ % 20 == 0) {
+            polled = frame_index_; std::error_code error;
+            if (std::filesystem::exists(post_dump_file, error)) { post_dump_armed = true; post_dump_from = long(frame_index_) + 1; }
+        }
+    }
     const bool post_dump = (post_dump_serial && packet.serial==post_dump_serial) ||
         (post_dump_every > 0 && frame_index_ > 0 && frame_index_ >= uint64_t(post_dump_from) && frame_index_ % uint64_t(post_dump_every) == 0 && post_dumps < 12);
     if (post_dump) {
@@ -4874,9 +4917,11 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 }
                 if (post_dump) {   // UC_POST_DUMP: every draw's stereo class and blend (the HUD layer's question: which draws are separable)
                     const auto b=gx::draw_bounds_ndc(draw);
-                    std::fprintf(stderr,"[post-class] draw %zu kind %d persp %d blend %u src %u dst %u logic %u cw %d aw %d depth %02X box %.2f,%.2f..%.2f,%.2f callsite %08X reticle %d layer %d idx %u\n",d,kind,int(facts.perspective),
+                    const auto view=draw.state->viewport.value_or(std::array<float,6>{0,0,640,480,0,1});
+                    std::fprintf(stderr,"[post-class] draw %zu kind %d persp %d blend %u src %u dst %u logic %u cw %d aw %d depth %02X box %.2f,%.2f..%.2f,%.2f callsite %08X reticle %d layer %d idx %u view %.0f,%.0f %.0fx%.0f p %.3f,%.3f copies %d\n",d,kind,int(facts.perspective),
                                  unsigned(draw.blend.mode),unsigned(draw.blend.source),unsigned(draw.blend.destination),unsigned(draw.blend.logic),int(draw.blend.color_write),int(draw.blend.alpha_write),unsigned(info.key[68]&31),
-                                 b?(*b)[0]:9.f,b?(*b)[1]:9.f,b?(*b)[2]:9.f,b?(*b)[3]:9.f,draw.callsite,int(draw.reticle),int(draw.layer),info.index_count);
+                                 b?(*b)[0]:9.f,b?(*b)[1]:9.f,b?(*b)[2]:9.f,b?(*b)[3]:9.f,draw.callsite,int(draw.reticle),int(draw.layer),info.index_count,view[0],view[1],view[2],view[3],
+                                 draw.transforms->projection[0][0],draw.transforms->projection[1][1],int(facts.texture_view));
                 }
                 const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),kind);
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
@@ -4901,7 +4946,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 static const bool cull_stats=std::getenv("UC_GPU_PACKETS")!=nullptr;   // the [vr-cull] line (the eyes' reach is diagnostics only: a per-draw cost)
                 if (cull_stats && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen)
                     for (int eye=0;eye<2;++eye) { const auto e=uc::eye_extent(block+16*eye); reach[0]=std::max(reach[0],e[0]); reach[1]=std::max(reach[1],e[1]); }
-                if (!no_cull && !probe_mono && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen && !draw.reticle && !draw.late_aim && !draw.wake && !draw.layer) {
+                // UC_VR_CULL_TOGGLE=1 (diagnostics): each second frame draws everything. With a standing scene and a still head, two frames
+                // in a row are then equal when the cull takes away only what no eye sees.
+                static const bool cull_toggle=std::getenv("UC_VR_CULL_TOGGLE")!=nullptr;
+                if (!no_cull && !(cull_toggle && (frame_index_&1)) && !probe_mono && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen && !draw.reticle && !draw.late_aim && !draw.wake && !draw.layer) {
                     ++cull_tested;
                     const auto& t=*draw.transforms;
                     const auto to_clip=[&](const std::array<float,3>& p,uint32_t row) {
@@ -4972,11 +5020,12 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 if (xform_ && !no_lookup) if (auto lookup=gx::screen_lookup(draw)) {
                     // The wide view (wide_view.h vr_fov_scale): the game makes this coordinate with the view of its own picture (SBDE08:
                     // 0.5 * 0.974 for 60 degrees at 16:9), and the projection of the draw is wider by the two factors. The scale of
-                    // the coordinate over the clip position then holds the factors (0.9 and 1.35 for 1.8 and 2.7): they come out.
+                    // the coordinate over the clip position then holds the factors: 0.9 and 1.35 for 1.8 and 2.7 in the streets, 0.9
+                    // and 1.296 for the water (its own scale is 0.48). They come out when the projection of the draw is a wide one:
+                    // its aspect is 16:9 or 4:3 times the first factor over the second.
                     const float wide=std::max(1.f,gx::vr_fov_scale().load(std::memory_order_relaxed)),wide_y_set=gx::vr_fov_scale_y().load(std::memory_order_relaxed);
                     const float wide_y=wide_y_set>0 ? std::max(1.f,wide_y_set) : wide;
-                    if ((wide>1 || wide_y>1) && lookup->s[1]!=0 && lookup->t[1]!=0 && std::abs(std::abs(lookup->s[0]/lookup->s[1])-wide)<.03f*wide &&
-                        std::abs(std::abs(lookup->t[0]/lookup->t[1])-wide_y)<.03f*wide_y) { lookup->s[0]/=wide; lookup->t[0]/=wide_y; }
+                    gx::lookup_without_wide_view(*lookup,draw.transforms->projection,wide,wide_y);
                     block[32]=lookup->s[0]; block[33]=lookup->s[1]; block[34]=float(lookup->id); block[35]=1;
                     block[36]=lookup->t[0]; block[37]=lookup->t[1];
                     screen_lookup_draw=true;

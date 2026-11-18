@@ -68,7 +68,10 @@ void hle_MTXPerspective(ppc::Ctx& c) {
         const float vr_y=vr_y_set>0.f ? vr_y_set : vr;
         fov=float(c.f[1]);
         aspect=float(c.f[2]);
-        if((vr>1.f || vr_y>1.f) && std::isfinite(fov) && fov>0 && fov<180 && std::isfinite(aspect) && aspect>0) {
+        // SBDE08 (title.h kWideViewScreenAspectOnly): the game also builds a projection that is not the view of the screen (40 degrees
+        // with the aspect 1.0, near 1, far 500). Only a projection with the shape of the screen (16:9 or 4:3) gets the wide view.
+        const bool screen_shape=!uc::title::kWideViewScreenAspectOnly || std::abs(aspect-16.f/9)<.02f || std::abs(aspect-4.f/3)<.02f;
+        if(screen_shape && (vr>1.f || vr_y>1.f) && std::isfinite(fov) && fov>0 && fov<180 && std::isfinite(aspect) && aspect>0) {
             // VR: the vertical tangent grows by vr_y and the horizontal one by vr (tan_x = tan_y * aspect, so the aspect takes vr / vr_y);
             // culling then covers the headset's view. Each eye is reprojected from the world, so only the culled objects come back.
             const double tangent=std::tan(double(fov)*3.14159265358979323846/360.0)*std::max(1.f,vr_y);

@@ -63,5 +63,23 @@ int main() {
         auto flat=t; flat.projection={{{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}}};
         CHECK(!gx::screen_lookup(draw_with(flat,screen_texgen(t,0,.5f,.5f,-.5f,.5f),0,true)));
     }
+    {   // the wide view of the headset: its factors come out of the scale when the projection of the draw is a wide one
+        using Projection=std::array<std::array<float,4>,4>;
+        const float cot=1/std::tan(27.5f*3.14159265f/180);
+        Projection wide{}; wide[0][0]=cot/(16.f/9)/1.8f; wide[1][1]=-cot/2.7f;
+        Projection plain{}; plain[0][0]=cot/(16.f/9); plain[1][1]=-cot;
+        gx::ScreenLookup water; water.s={.9f,.46f}; water.t={1.296f,.52f};   // SBDE08, call site 804AD87C
+        gx::lookup_without_wide_view(water,wide,1.8f,2.7f);
+        CHECK(std::abs(water.s[0]-.5f)<1e-5f && std::abs(water.t[0]-.48f)<1e-5f && water.s[1]==.46f && water.t[1]==.52f);
+        CHECK(!gx::lookup_own_place(water));   // a mirror picture of a part of the frame
+        gx::ScreenLookup glass; glass.s={.9f,.5f}; glass.t={-1.35f,.5f};     // SBDE08, call site 8049CF24
+        gx::lookup_without_wide_view(glass,wide,1.8f,2.7f);
+        CHECK(gx::lookup_own_place(glass));
+        gx::ScreenLookup same; same.s={.5f,.5f}; same.t={.5f,.5f};
+        gx::lookup_without_wide_view(same,plain,1.8f,2.7f);   // a projection that is not wide keeps its scale
+        CHECK(same.s[0]==.5f && same.t[0]==.5f);
+        gx::lookup_without_wide_view(same,wide,1.f,1.f);      // no wide view
+        CHECK(same.s[0]==.5f && same.t[0]==.5f && gx::lookup_own_place(same));
+    }
     return 0;
 }

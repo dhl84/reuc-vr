@@ -667,6 +667,7 @@ private:
     bool logic_ops_=false;
     VkDescriptorSetLayout texture_layout_=VK_NULL_HANDLE;
     std::array<VkSampler,256> texture_samplers_{};
+    std::array<VkSampler,256> soft_samplers_{};   // the headset: a copy of the picture read blurred (screen_lookup.h lookup_own_place false)
     std::array<VkSampler,256> auto_samplers_{};   // texture_samplers_ with linear mip filtering, for textures with generated mips (linear minification modes)
     VkImage efb_ = VK_NULL_HANDLE;
     VkExtent2D efb_extent_{};
