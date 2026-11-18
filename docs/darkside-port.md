@@ -681,7 +681,7 @@ The headset renderer has a rule for a small picture that the game renders for a 
 
 The rule now also looks at the viewport of the draw (`title::kSmallCopyByViewport`, `stereo_facts` in `renderer/vulkan_renderer.cpp`). A draw with the viewport of the whole picture is a draw of the world.
 
-Some of those draws read a copy of the picture at the place of the pixel (call site 8049CF24), and `gx::screen_lookup` finds them now. With the wide view the scale of that coordinate was wrong. The game makes the coordinate with the view of its own picture, and the projection of the draw is 1.8 and 2.7 times wider. The fit gave the scales 0.9 and 1.35, and the right scale is 0.5. When the scale holds the two factors, the renderer takes them out. Without that the lower part of the picture was stripes.
+Some of those draws read a copy of the picture at the place of the pixel (call site 8049CF24), and `gx::screen_lookup` finds them now. With the wide view the scale of that coordinate was wrong. The game makes the coordinate with the view of its own picture, and the projection of the draw is 1.8 and 2.7 times wider. The fit gave the scales 0.9 and 1.35, and the right scale is 0.5. When the projection of the draw is a wide one, the renderer takes the two factors out (`gx::lookup_without_wide_view`). Without that the lower part of the picture was stripes.
 
 How to see the fault on the PC: run the stereo preview with `UC_VR_PITCH=35` (`pc_ghost.sh`). With the head straight the preview shows nothing wrong. The headset on the desk looks 35 to 40 degrees up, so its stills showed the second picture. Test each change of the headset view with a turned head.
 
@@ -710,6 +710,27 @@ The lens of the aim is the wide view. A 2D reticle keeps its place there and bec
 | 0.0.37 | 1.667 x 1.409 | 1.66 x 1.40 | median 0.04 degrees, 90 % below 0.08 degrees | median 0.1 degrees |
 
 In the app 0.0.37 the two lines meet within 2 cm at a hit 11 to 13 metres away. The test does not show where the 2D reticle is in the picture of an eye, and no person held the controllers yet.
+
+### The second play by a person
+
+On 18 November 2026 a person played the app 0.0.37. The report: the water is terrible and very disorienting, and sprites in the distance pop in badly.
+
+The water (call site 804AD87C) had two faults.
+
+- The scale of its lookup still held the factors of the wide view. The first correction compared the scale with the offset of the coordinate. The water has other offsets (0.46 and 0.52) than the draws in the streets, so the correction did not apply. The water read the copy at 1.8 and 2.7 times the right scale. The correction now looks at the projection of the draw: a wide projection has the aspect of the screen times 1.8 / 2.7.
+- The water does not read the picture at the place of the pixel. Its texture is the middle half of the frame before (the copy of 320x171 pixels from 160,85). Its coordinate has the scale 0.5 over the whole screen. So the water shows a rough mirror picture of the middle of the screen. In the flat game that picture is calm. In a headset the middle of the picture moves with the head, so the mirror picture swims on the water. Each eye also has another one.
+
+The headset now reads such a map blurred (`title::kSoftScreenLookup`). `gx::lookup_own_place` tells the two kinds of lookup apart: a lookup at the place of the pixel has the scales and offsets 0.5. `soft_lookup_map` in `renderer/vulkan_renderer.cpp` gives the map of the other kind a sampler with a level bias of 5 (`UC_VR_SOFT_LOOKUP_BIAS`). `UC_VR_SOFT_LOOKUP=0` turns it off. In the stereo preview the water then is matte mud with soft ripples, as in the flat picture. The head of that test was 20 degrees to the side and 15 degrees down. Before, the water was glossy with bright stripes.
+
+The wide view now applies only to a projection with the shape of the screen (`title::kWideViewScreenAspectOnly`). The game also calls `MTXPerspective` with 40 degrees and the aspect 1.0, which is not a view of the screen.
+
+The sprites in the distance: the cause is not found. What was checked:
+
+- The eye cull. `UC_VR_CULL_TOGGLE=1` draws everything in each second frame. With a standing scene and the head turned 30 degrees, eight frames in a row were equal. So the cull takes away only what no eye sees.
+- Shader compiles on the headset. In the bot run of the first chapter with the app 0.0.37 no pipeline was compiled after the warm-up.
+- The depth of the eyes. The eye projection keeps the near and far planes of the game, and the depth format has 24 bits as on the console.
+
+New test aids: `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy.
 
 ### The finer picture
 
