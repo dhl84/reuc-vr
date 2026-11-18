@@ -729,8 +729,12 @@ The sprites in the distance: the cause is not found. What was checked:
 - The eye cull. `UC_VR_CULL_TOGGLE=1` draws everything in each second frame. With a standing scene and the head turned 30 degrees, eight frames in a row were equal. So the cull takes away only what no eye sees.
 - Shader compiles on the headset. In the bot run of the first chapter with the app 0.0.37 no pipeline was compiled after the warm-up.
 - The depth of the eyes. The eye projection keeps the near and far planes of the game, and the depth format has 24 bits as on the console.
+- A test of the game that hides sprites outside its own picture. In the draw lists the small sprites of the call sites 8049DEC0, 8049E780 and 804A0A20 lie near the middle of the wide view. That alone proves no such test, because the game places its effects near the path of the camera.
+- The view cone of the game. The game keeps a second view object beside the projection matrix. The function 8032F274 builds it from the vertical angle in radians (at r3 + 36), the aspect, and the near and far planes. It takes half of the angle as the half height, without a tangent, so the cone is 9 % narrower than the picture. A trial made this cone as wide as the wide view. Those sprites then were nearer to the middle, and the click on the character screen failed. The trial is not in the code. What the cone does for the sprites is not known.
 
-New test aids: `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy.
+To go on, the place and the kind of the sprites are needed from the person who saw them, or a recording from the headset.
+
+New test aids: `UC_ARG_TRACE=<value>/<value>,<tolerance>` prints each function of the game that is entered with one of the values in f1 or f2. It prints a function once for each caller. It needs a build with `UC_TRACE`, which is the default of the PC build of this game. With `UC_ARG_TRACE_FILE=<file>` the trace starts at the moment that file appears. It found the callers of `MTXLightPerspective` and the view cone. `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy.
 
 ### The finer picture
 

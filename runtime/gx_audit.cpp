@@ -3,8 +3,12 @@
 #include "gx_vertices.h"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <mutex>
+#include <set>
 
 namespace {
 std::mutex mutex;
@@ -34,10 +38,46 @@ bool watched(uint32_t address, uint32_t link) {
     default: return false;
     }
 }
+// UC_ARG_TRACE=<value>[,<tolerance>] (diagnostics, a build with UC_TRACE): each function of the game that is entered with that value
+// in f1 or f2 is printed once for each caller, with its first four float arguments. It finds the code that takes a known number, for
+// example the aspect of the camera (1.77778).
+struct ArgTrace { bool on=false; double values[8]{}; int count=0; double tolerance=1e-3; };   // UC_ARG_TRACE=v1/v2/...[,tolerance]
+const ArgTrace arg_trace=[] {
+    ArgTrace trace;
+    if (const char* text=std::getenv("UC_ARG_TRACE")) {
+        char* end=nullptr;
+        for (const char* at=text;trace.count<8;) { const double v=std::strtod(at,&end); if (end==at) break; trace.values[trace.count++]=v; if (*end!='/') break; at=end+1; }
+        trace.on=trace.count>0;
+        if (trace.on && *end==',') trace.tolerance=std::strtod(end+1,nullptr);
+        if (trace.on) uc::gx_audit_on.store(true, std::memory_order_relaxed);   // every function entry comes to gx_audit_enter_slow
+    }
+    return trace;
+}();
+std::atomic<bool> audit_enabled{false};
 }
 namespace uc {
-void gx_audit_enable() { gx_audit_on.store(true, std::memory_order_relaxed); }
+void gx_audit_enable() { audit_enabled.store(true, std::memory_order_relaxed); gx_audit_on.store(true, std::memory_order_relaxed); }
 void gx_audit_enter_slow(uint32_t address, const ppc::Ctx& ctx) {
+    if (arg_trace.on) {
+        // UC_ARG_TRACE_FILE=<file>: the trace starts when that file appears (looked for each 65536 entries).
+        static const char* const start_file=std::getenv("UC_ARG_TRACE_FILE");
+        static std::atomic<bool> started{!start_file};
+        static std::atomic<uint32_t> entered{0};
+        if (!started.load(std::memory_order_relaxed)) {
+            if ((entered.fetch_add(1,std::memory_order_relaxed)&0xFFFF)==0) if (FILE* file=std::fopen(start_file,"rb")) { std::fclose(file); started.store(true,std::memory_order_relaxed); }
+            if (!started.load(std::memory_order_relaxed)) { if (!audit_enabled.load(std::memory_order_relaxed)) return; goto audit; }
+        }
+        bool hit=false;
+        for (int i=0;i<arg_trace.count && !hit;++i) hit=std::abs(ctx.f[1]-arg_trace.values[i])<arg_trace.tolerance || std::abs(ctx.f[2]-arg_trace.values[i])<arg_trace.tolerance;
+        if (hit) {
+            static std::mutex trace_mutex; static std::set<uint64_t> seen;   // once for each pair of function and caller
+            std::lock_guard lock(trace_mutex);
+            if (seen.size()<400 && seen.insert(uint64_t(address)<<32|ctx.lr).second)
+                std::fprintf(stderr,"[arg-trace] %08X entered from %08X with f1 %.6g f2 %.6g f3 %.6g f4 %.6g\n",address,ctx.lr,double(ctx.f[1]),double(ctx.f[2]),double(ctx.f[3]),double(ctx.f[4]));
+        }
+        if (!audit_enabled.load(std::memory_order_relaxed)) return;
+    }
+audit:
     if (!gx_audit_on.load(std::memory_order_relaxed) || !watched(address,ctx.lr)) return;
     std::lock_guard lock(mutex);
     auto& entry = entries[address];
@@ -80,7 +120,7 @@ void gx_audit_enter_slow(uint32_t address, const ppc::Ctx& ctx) {
     if (address == 0x802885D8) recording = false;
 }
 void gx_audit_fifo_write_slow(int size, uint32_t value) {
-    if (!gx_audit_on.load(std::memory_order_relaxed)) return;
+    if (!gx_audit_on.load(std::memory_order_relaxed) || !audit_enabled.load(std::memory_order_relaxed)) return;
     if (size != 1 && size != 2 && size != 4) throw std::invalid_argument("invalid GX audit write width");
     std::lock_guard lock(mutex);
     if (!recording) return;
