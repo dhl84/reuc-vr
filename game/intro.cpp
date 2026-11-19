@@ -89,6 +89,25 @@ void hle_MTXPerspective(ppc::Ctx& c) {
     uc::call_indirect(c,UC_ADDR(0x80265468));   // SBDE08: 80383B94 (project/dc/dc.cfg)
 }
 
+// SBDE08 8032DCE4 (one caller, 8032CD10): the game tests the sphere of each part of a stage model against its own view cone (80330C60)
+// and hides the parts outside (804D02FC). The cone comes from the camera of the game (8032F274) and not from the projection matrix, so
+// the wide view does not widen it: the cone is the picture of the console. In the wide view of the headset the parts outside that cone
+// are inside the picture, and whole houses of the stage came and went with each turn of the game camera. With a wide view the test does
+// not run and each part stays in the picture. In one run of the first chapter the test hid parts in 3 % of the frames, so the cost is small.
+// UC_DC_PARTS_VIEW_TEST=1 (diagnostics) runs the test of the game in the wide view too.
+void hle_DcStagePartsViewTest(ppc::Ctx& c) {
+    static const bool keep_test=std::getenv("UC_DC_PARTS_VIEW_TEST")!=nullptr;
+    const auto factors=gx::view_factors();
+    const bool wide=factors.x<1.f || factors.y<1.f || gx::vr_fov_scale().load(std::memory_order_relaxed)>1.f ||
+                    gx::vr_fov_scale_y().load(std::memory_order_relaxed)>1.f;   // a wider output, or the wide view of the headset
+    if(wide && !keep_test) return;
+    // Static lowering of 8032DCE4's stwu r1,-272(r1); 8032DCE8 continues the original compiled body (project/dc/dc.cfg).
+    const auto stack=c.r[1];
+    ppc::wr32(c,stack-272,stack);
+    c.r[1]=stack-272;
+    uc::call_indirect(c,0x8032DCE8u);
+}
+
 void hle_MovieUpdate(ppc::Ctx& c) {
     const auto object=c.r[3];
     gx::Memory memory{{reinterpret_cast<const std::byte*>(c.mem),24u<<20},{reinterpret_cast<const std::byte*>(c.mem+0x10000000),64u<<20},{}};

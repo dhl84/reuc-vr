@@ -724,17 +724,33 @@ The headset now reads such a map blurred (`title::kSoftScreenLookup`). `gx::look
 
 The wide view now applies only to a projection with the shape of the screen (`title::kWideViewScreenAspectOnly`). The game also calls `MTXPerspective` with 40 degrees and the aspect 1.0, which is not a view of the screen.
 
-The sprites in the distance: the cause is not found. What was checked:
+The pop-in in the distance: the cause is the view test of the game for the parts of the stage. These were checked first, and none was the cause:
 
 - The eye cull. `UC_VR_CULL_TOGGLE=1` draws everything in each second frame. With a standing scene and the head turned 30 degrees, eight frames in a row were equal. So the cull takes away only what no eye sees.
 - Shader compiles on the headset. In the bot run of the first chapter with the app 0.0.37 no pipeline was compiled after the warm-up.
 - The depth of the eyes. The eye projection keeps the near and far planes of the game, and the depth format has 24 bits as on the console.
-- A test of the game that hides sprites outside its own picture. In the draw lists the small sprites of the call sites 8049DEC0, 8049E780 and 804A0A20 lie near the middle of the wide view. That alone proves no such test, because the game places its effects near the path of the camera.
-- The view cone of the game. The game keeps a second view object beside the projection matrix. The function 8032F274 builds it from the vertical angle in radians (at r3 + 36), the aspect, and the near and far planes. It takes half of the angle as the half height, without a tangent, so the cone is 9 % narrower than the picture. A trial made this cone as wide as the wide view. Those sprites then were nearer to the middle, and the click on the character screen failed. The trial is not in the code. What the cone does for the sprites is not known.
+- A test of the game that hides sprites outside its own picture. `UC_SPRITE_HIST=1` counted the place of each world draw in a run of the first chapter, for each call site. Half of the sprites of the call site 8049DEC0 lie outside the wide picture. So the game does not cut the sprites at the edge of its own picture.
 
-To go on, the place and the kind of the sprites are needed from the person who saw them, or a recording from the headset.
+The cause: the game hides each part of the stage outside its own view cone.
 
-New test aids: `UC_ARG_TRACE=<value>/<value>,<tolerance>` prints each function of the game that is entered with one of the values in f1 or f2. It prints a function once for each caller. It needs a build with `UC_TRACE`, which is the default of the PC build of this game. With `UC_ARG_TRACE_FILE=<file>` the trace starts at the moment that file appears. It found the callers of `MTXLightPerspective` and the view cone. `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy.
+- The loop at 8032DCE4 (one caller, the tail branch at 8032CD10) goes over the parts of a stage model. It makes a sphere from the box of the part (part data + 68 and + 80) and the matrix of the part.
+- The function 80330C60 tests the sphere against the view cone at camera + 640: the near plane, the far plane and four side planes. For a sphere outside, 804D02FC sets the visibility of the part to 0.
+- The function 8032F274 builds the cone from the camera of the game: the vertical angle in radians (at r3 + 36), the aspect, and the near and far planes. It takes half of the angle as the half height, without a tangent. So the cone is 9 % narrower than the picture of the console.
+- The cone does not come from the projection matrix, so the wide view did not widen it. In the wide view the parts outside the cone are inside the picture.
+- A part of the stage is large: a radius near 300 at a distance near 950. So whole houses came and went with each turn of the game camera.
+
+The proof: a trial made the test fail for each sphere in a standing scene. 84 % of the picture changed. The houses and the walkways were gone, and the sky, the water, the enemies and the loose objects stayed. In a run of the first chapter to the water, the test hid a part 8762 times, in four models.
+
+The fix: `DcStagePartsViewTest` (`game/intro.cpp`) takes the place of the loop at 8032DCE4 (`project/dc/hle_manual.txt`, and `entry 8032DCE8` in `project/dc/dc.cfg`). With a wide view it returns at once, and each part stays in the picture. Without a wide view it runs the loop of the game. After the fix a run to the same place had no hide from the test. `UC_DC_PARTS_VIEW_TEST=1` runs the test of the game in the wide view too. The fix is not seen on the headset yet.
+
+What stays open:
+
+- An earlier trial made the cone itself as wide as the wide view (the input of 8032F274). The click on the character screen then failed, so other code reads the cone too. The fix does not change the cone.
+- The view test has a second caller, 80058598. It tests a sphere around four points of an object and skips the work for that object outside the cone. What the object is, is not known.
+- Two more callers change the visibility of parts, 802E68A8 and 802E6B4C (about 1700 hides and 400 shows in the same run). Nobody looked at them yet.
+- One standing frame shows a second see-through picture of the scene (`pv/fx2`, the frame z1). An enemy hits the player at that moment. Nobody looked at it yet.
+
+New test aids: `UC_ARG_TRACE=<value>/<value>,<tolerance>` prints each function of the game that is entered with one of the values in f1 or f2. It prints a function once for each caller. It needs a build with `UC_TRACE`, which is the default of the PC build of this game. With `UC_ARG_TRACE_FILE=<file>` the trace starts at the moment that file appears. It found the callers of `MTXLightPerspective` and the view cone. `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy. `UC_SPRITE_HIST=1` prints, each 1200 frames and for each call site, the count of world draws in steps of 0.05 of the half picture. `UC_DC_VIS_LOG=1` (with `UC_ARG_TRACE`) prints each change of the visibility of a model part with its caller. For a hide by the view test it also prints the radius and the distance of the sphere. In `pc_water.sh`, `WATER_END` and `WATER_TAIL` set the steps of the driver at the marker.
 
 ### The finer picture
 

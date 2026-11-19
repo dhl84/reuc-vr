@@ -4923,6 +4923,28 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                                  b?(*b)[0]:9.f,b?(*b)[1]:9.f,b?(*b)[2]:9.f,b?(*b)[3]:9.f,draw.callsite,int(draw.reticle),int(draw.layer),info.index_count,view[0],view[1],view[2],view[3],
                                  draw.transforms->projection[0][0],draw.transforms->projection[1][1],int(facts.texture_view));
                 }
+                // UC_SPRITE_HIST=1 (diagnostics): for each call site, where the world draws of the eyes' picture lie in the picture of the game.
+                // It counts the middle of each draw in steps of 0.05 of the half picture, and prints the counts each 1200 frames.
+                static const bool sprite_hist=std::getenv("UC_SPRITE_HIST")!=nullptr;
+                if (sprite_hist && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen && target.color==efb_) {
+                    struct Hist { uint64_t draws=0, indices=0; std::array<uint32_t,26> x{}, y{}; };
+                    static std::map<uint32_t,Hist> hists; static uint64_t printed=0;
+                    if (const auto b=gx::draw_bounds_ndc(draw)) {
+                        auto& h=hists[draw.callsite]; ++h.draws; h.indices+=info.index_count;
+                        const float cx=std::abs(((*b)[0]+(*b)[2])*0.5f), cy=std::abs(((*b)[1]+(*b)[3])*0.5f);
+                        ++h.x[std::min<size_t>(25,size_t(cx*20))]; ++h.y[std::min<size_t>(25,size_t(cy*20))];
+                    }
+                    if (frame_index_>=printed+1200) {
+                        printed=frame_index_;
+                        for (const auto& [site,h] : hists) {
+                            std::fprintf(stderr,"[sprite-hist] frame %llu callsite %08X draws %llu idx %.0f x",(unsigned long long)frame_index_,site,(unsigned long long)h.draws,double(h.indices)/double(std::max<uint64_t>(1,h.draws)));
+                            for (const auto v : h.x) std::fprintf(stderr," %u",v);
+                            std::fprintf(stderr," y");
+                            for (const auto v : h.y) std::fprintf(stderr," %u",v);
+                            std::fprintf(stderr,"\n");
+                        }
+                    }
+                }
                 const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),kind);
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
                 stereo_eye_block(matrices,block);

@@ -3,9 +3,11 @@
 #include "gx_vertices.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
@@ -58,6 +60,33 @@ std::atomic<bool> audit_enabled{false};
 namespace uc {
 void gx_audit_enable() { audit_enabled.store(true, std::memory_order_relaxed); gx_audit_on.store(true, std::memory_order_relaxed); }
 void gx_audit_enter_slow(uint32_t address, const ppc::Ctx& ctx) {
+    // UC_DC_VIS_LOG=1 (diagnostics, SBDE08, with UC_ARG_TRACE): each change of the visibility of a model part (804D02FC), with its caller.
+    static const bool vis_log=std::getenv("UC_DC_VIS_LOG")!=nullptr;
+    // A hide by the view test (caller 8032DF24) also shows the sphere of the part: its radius and its distance from the eye of the game.
+    if (vis_log && (address==0x804D02FCu || address==0x80330C60u) && ctx.mem) {
+        static std::atomic<uint64_t> lines{0}; static const auto start=std::chrono::steady_clock::now();
+        thread_local float sphere_radius=0, sphere_distance=0, sphere_depth=0;
+        const uint8_t* mem=reinterpret_cast<const uint8_t*>(ctx.mem);
+        const auto word=[&](uint32_t at) { at&=0x7FFFFFFFu; return at<0x14000000u-4 ? uint32_t(mem[at])<<24|uint32_t(mem[at+1])<<16|uint32_t(mem[at+2])<<8|mem[at+3] : 0u; };
+        const auto real=[&](uint32_t at) { const uint32_t bits=word(at); float value; std::memcpy(&value,&bits,4); return value; };
+        if (address==0x80330C60u) {
+            float d[3], depth=0, square=0;
+            for (int i=0;i<3;++i) { d[i]=real(ctx.r[4]+4*i)-real(ctx.r[3]+4*i); depth+=d[i]*real(ctx.r[3]+12+4*i); square+=d[i]*d[i]; }
+            sphere_radius=real(ctx.r[4]+12); sphere_distance=std::sqrt(square); sphere_depth=depth;
+            return;
+        }
+        const uint32_t model=word(ctx.r[3]), flag=word(ctx.r[3]+8);
+        if (model && flag && (flag&0x7FFFFFFFu)<0x14000000u) {
+            const bool old=mem[flag&0x7FFFFFFFu]!=0, now=ctx.r[4]!=0;
+            if (old!=now && lines.fetch_add(1)<60000) {
+                char name[3][40]={};   // the name of the model file: its offset is at 0x3C, 0x44 or 0x48 of the model data (by version)
+                const uint32_t data=word(model+232);
+                for (int k=0;k<3;++k) { const uint32_t at=data+word(data+(k==0?0x3Cu:k==1?0x44u:0x48u)); for (int i=0;i<39;++i) { const uint32_t a=(at+i)&0x7FFFFFFFu; const char ch=a<0x14000000u ? char(mem[a]) : 0; if (ch<32 || ch>126) break; name[k][i]=ch; } }
+                std::fprintf(stderr,"[vis] %.2f s caller %08X model %08X part %u %s radius %.1f distance %.1f depth %.1f version %u names '%s' '%s' '%s'\n",std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count(),ctx.lr,model,word(ctx.r[3]+4),now?"show":"hide",
+                             ctx.lr==0x8032DF24u?sphere_radius:0.f,ctx.lr==0x8032DF24u?sphere_distance:0.f,ctx.lr==0x8032DF24u?sphere_depth:0.f,word(data+8),name[0],name[1],name[2]);
+            }
+        }
+    }
     if (arg_trace.on) {
         // UC_ARG_TRACE_FILE=<file>: the trace starts when that file appears (looked for each 65536 entries).
         static const char* const start_file=std::getenv("UC_ARG_TRACE_FILE");
