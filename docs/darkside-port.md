@@ -741,7 +741,7 @@ The cause: the game hides each part of the stage outside its own view cone.
 
 The proof: a trial made the test fail for each sphere in a standing scene. 84 % of the picture changed. The houses and the walkways were gone, and the sky, the water, the enemies and the loose objects stayed. In a run of the first chapter to the water, the test hid a part 8762 times, in four models.
 
-The fix: `DcStagePartsViewTest` (`game/intro.cpp`) takes the place of the loop at 8032DCE4 (`project/dc/hle_manual.txt`, and `entry 8032DCE8` in `project/dc/dc.cfg`). With a wide view it returns at once, and each part stays in the picture. Without a wide view it runs the loop of the game. After the fix a run to the same place had no hide from the test. `UC_DC_PARTS_VIEW_TEST=1` runs the test of the game in the wide view too. The fix is not seen on the headset yet.
+The fix: `DcStagePartsViewTest` (`game/intro.cpp`) takes the place of the loop at 8032DCE4 (`project/dc/hle_manual.txt`, and `entry 8032DCE8` in `project/dc/dc.cfg`). With a wide view it returns at once, and each part stays in the picture. Without a wide view it runs the loop of the game. After the fix a run to the same place had no hide from the test. `UC_DC_PARTS_VIEW_TEST=1` runs the test of the game in the wide view too. On the headset the app 0.0.39 played the first chapter with the bot (run `q39`): 70.7 fps as the mean, 99 % of the seconds at 60 or more, the lowest second 58, no crash. A person did not see the fix yet.
 
 What stays open:
 
