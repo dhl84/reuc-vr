@@ -746,7 +746,7 @@ The fix: `DcStagePartsViewTest` (`game/intro.cpp`) takes the place of the loop a
 What stays open:
 
 - An earlier trial made the cone itself as wide as the wide view (the input of 8032F274). The click on the character screen then failed, so other code reads the cone too. The fix does not change the cone.
-- The view test has a second caller, 80058598. It tests a sphere around four points of an object and skips the work for that object outside the cone. What the object is, is not known.
+- The view test has a second caller, 80058598. It tests a sphere around four points of an object and skips the work for that object outside the cone. In a run of the first chapter to the water this caller did not run once, so the object is not known.
 - Two more callers change the visibility of parts, 802E68A8 and 802E6B4C (about 1700 hides and 400 shows in the same run). Nobody looked at them yet.
 - One standing frame shows a second see-through picture of the scene (`pv/fx2`, the frame z1). An enemy hits the player at that moment. Nobody looked at it yet.
 
