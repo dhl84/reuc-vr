@@ -797,6 +797,13 @@ The fix is a draw class of its own, `LG_STEREO_BACKDROP` (`xr/stereo_scene.hpp`)
 
 The switch is off for `SBDE08`. Nobody looked at the sky of that game with a moved head yet.
 
+The check on the headset, with the fork build 0.1.6-fork7 on 23 November 2026:
+
+- The save of the player had a save point in the second chapter, three rooms before the terrace. `q3\build\reuc-build\uc_quest_continue.py` answers the question "Continue the game from the save point?" and lets the bot play. The app works on a copy of the save.
+- The bot played four minutes through the rooms `r026`, `r027`, `r028` and `r029`. The log has no crash report. The frames of the terrace show the cloud sky in both eyes, and `UC_POST_DUMP` names the first five draws as the backdrop.
+- The headset lay on the desk, so its head did not move from its start place. The moved head is tested only in the preview on the PC.
+- The frame rate without test output: 59.8 fps mean in `r027`, 59.6 in `r028` and 57.0 in `r029`. The session of the player with the build before (0.1.6-fork6) had 58.3, 60.0 and 56.8 in these rooms.
+
 How to repeat it: `q3\build\reuc-build\uc_pc_autoplay.py` plays a chapter of `RBUE08` on the PC with the bot of `scripts/uctest`. It waits 15 minutes for the test pipe, and `scripts/uctest` waits 20 seconds. With `--all-classes` it aims at each enemy kind. It writes the room of each saved frame. The chapter card of the second chapter needs the aim point `--chapter-xy 0.15,-0.2` in the preview. The bot of `scripts/uctest` knows only the zombies of the train. Without `--all-classes` it stops at other enemies.
 
 ## On the headset
