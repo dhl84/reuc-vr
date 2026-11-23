@@ -47,8 +47,8 @@ inline constexpr bool kSmallCopyByViewport = true;
 inline constexpr bool kWideViewScreenAspectOnly = true;
 // The headset reads a rough mirror picture on a surface blurred (VulkanRenderer soft_lookup_map): the water of this game.
 inline constexpr bool kSoftScreenLookup = true;
-// The headset draws the backdrop of the game (the sky) with eyes that only turn (xr/stereo_scene.hpp LG_STEREO_BACKDROP). Nobody
-// looked at the sky of this game with a moved head yet.
+// The headset draws the backdrop of the game (the sky) with eyes that only turn (xr/stereo_scene.hpp LG_STEREO_BACKDROP). The sky
+// of this game needs no such eyes: the streets of the first chapter show it right with a head 40 cm from its start place.
 inline constexpr bool kFarBackdrop = false;
 // The game draws its shadow map into the top left 512x480 pixels of the frame buffer and copies it from there (docs/darkside-port.md,
 // "Shadows"). The Vulkan renderer draws a packet with a copy of exactly this source at one pixel for each guest pixel, and not at the

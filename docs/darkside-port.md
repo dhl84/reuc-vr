@@ -795,7 +795,7 @@ On 23 November 2026 a person reported a corrupt sky in the second chapter of `RB
 
 The fix is a draw class of its own, `LG_STEREO_BACKDROP` (`xr/stereo_scene.hpp`). Its eyes turn with the head and stay at the place of the camera of the game. So the sky is at an endless distance. It has no depth for the two eyes, and a moved head does not shift it. The renderer looks for the first world draw of the frame with a depth write. The world draws without a depth write before it get that class (`title::kFarBackdrop`, `renderer/vulkan_renderer.cpp`). With the fix the same run shows the cloud sky of the flat game. `UC_VR_NO_FAR_BACKDROP=1` turns the class off. `UC_POST_DUMP` prints which draws are the backdrop.
 
-The switch is off for `SBDE08`. Nobody looked at the sky of that game with a moved head yet.
+The switch is off for `SBDE08`. The sky of that game does not have the fault: the streets of the first chapter show their cloud sky in both eyes with `UC_VR_POS=0.2,-0.4,0.3` (`pv/skyd1`).
 
 The check on the headset, with the fork build 0.1.6-fork7 on 23 November 2026:
 
