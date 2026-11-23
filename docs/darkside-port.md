@@ -784,6 +784,21 @@ With the wide view the pointer of the game covers 1.8 times the angle across and
 - The app does not start. While the home program does not respond, `am start -W` does not return and the app has no process. The same command helps.
 - A controller that lies on the desk can hold a button down. On 17 November 2026 the left controller held its trigger, so the left hand was the gun hand in each test without a person.
 
+### The sky of Umbrella Chronicles with a moved head
+
+On 23 November 2026 a person reported a corrupt sky in the second chapter of `RBUE08` (script `s00c2`, the terrace of room `r028`). The report compared it with the water of `SBDE08`. The cause is another one.
+
+- The stereo preview on the PC showed a clean sky, with the screen lookup and without it (`UC_VR_NO_SCREEN_LOOKUP=1`). The sky draws do not read a copy of the picture.
+- The head of the preview only turned. `UC_VR_POS=x,y,z` now moves it from its start place, in metres (right, up, back). With `UC_VR_POS=0.2,-0.4,0.3` the sky was a low ceiling of small tiles over the terrace.
+- The sky is the first five draws of the frame. They have the projection of the world and a depth test, and they write no depth. So everything after them covers them. The game can then use a small sheet close above its camera.
+- The eyes of the headset move with the head from the place where the app started. An eye 40 cm lower is several times farther from that sheet, so it sees many repeats of the cloud texture. An eye above the sheet does not see the sky.
+
+The fix is a draw class of its own, `LG_STEREO_BACKDROP` (`xr/stereo_scene.hpp`). Its eyes turn with the head and stay at the place of the camera of the game. So the sky is at an endless distance. It has no depth for the two eyes, and a moved head does not shift it. The renderer looks for the first world draw of the frame with a depth write. The world draws without a depth write before it get that class (`title::kFarBackdrop`, `renderer/vulkan_renderer.cpp`). With the fix the same run shows the cloud sky of the flat game. `UC_VR_NO_FAR_BACKDROP=1` turns the class off. `UC_POST_DUMP` prints which draws are the backdrop.
+
+The switch is off for `SBDE08`. Nobody looked at the sky of that game with a moved head yet.
+
+How to repeat it: `q3\build\reuc-build\uc_pc_autoplay.py` plays a chapter of `RBUE08` on the PC with the bot of `scripts/uctest`. It waits 15 minutes for the test pipe, and `scripts/uctest` waits 20 seconds. With `--all-classes` it aims at each enemy kind. It writes the room of each saved frame. The chapter card of the second chapter needs the aim point `--chapter-xy 0.15,-0.2` in the preview. The bot of `scripts/uctest` knows only the zombies of the train. Without `--all-classes` it stops at other enemies.
+
 ## On the headset
 
 First runs on a Quest 3, 15 November 2026. The game was played from the PC, with nobody in the headset.
