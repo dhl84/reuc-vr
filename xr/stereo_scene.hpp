@@ -40,6 +40,11 @@ struct StereoSettings {
 // A renderer-side draw class beside HOTD4's four: a 2D draw that marks a place in the world (the aim reticle), kept on HOTD4's world-locked
 // screen of the game's lens when the rest of the HUD follows the head.
 enum { LG_STEREO_HUD_AIM=4 };
+// A world draw of the backdrop of the game (the sky): each eye turns with the head and stays at the place of the camera of the game.
+// The game draws its sky as a small sheet close above its camera, first and without a depth write, so everything else covers it. An eye
+// that moves with the head moves through that sheet: 40 cm down turned the sky into a low tiled ceiling, and an eye above the sheet
+// lost the sky.
+enum { LG_STEREO_BACKDROP=5 };
 // Renderer-thread camera policy. Pose publication invalidates a bounded, reusable transform cache; identical draws never invert their
 // camera again. No OpenXR/SDL/GL dependency: the host supplies anchored poses once per frame.
 class StereoScene {
@@ -76,6 +81,7 @@ private:
     std::array<StereoPose,2> eyes_;
     Matrices overlay_{};std::array<std::array<float,3>,2> eye_positions_{};
     bool valid_=false;
+    std::array<Matrix,2> far_view_{};   // the turn of the eyes alone (LG_STEREO_BACKDROP)
     std::array<Matrix,2> view_{},hud_view_{},head_view_{};   // head_view_: head-relative eye views (the fitted HUD's)
     bool fit_on_=false;
     std::array<std::array<float,4>,2> tangents_{};

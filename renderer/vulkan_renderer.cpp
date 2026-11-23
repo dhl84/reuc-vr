@@ -257,13 +257,19 @@ VulkanRenderer::~VulkanRenderer() {
 }
 // The stereo preview's stand-in for xrLocateViews: a head at the anchor (HOTD4 anchors the camera on the head), eyes 63 mm apart, each with a
 // Quest 3-like asymmetric field of view (wider towards its own side), in the compositor's tangent order (left, right, down, up). UC_VR_YAW and
-// UC_VR_PITCH (degrees, left and up positive) turn the head, to look past the game's own frustum.
+// UC_VR_PITCH (degrees, left and up positive) turn the head, to look past the game's own frustum. UC_VR_POS=x,y,z (metres: right, up,
+// back) moves the head from the anchor, as a player does who leans or sits down after the start.
 void VulkanRenderer::preview_publish() {
     static const float yaw = std::getenv("UC_VR_YAW") ? float(std::atof(std::getenv("UC_VR_YAW"))) * .017453292f : 0.f;
     static const float pitch = std::getenv("UC_VR_PITCH") ? float(std::atof(std::getenv("UC_VR_PITCH"))) * .017453292f : 0.f;
     const float cy = std::cos(yaw / 2), sy = std::sin(yaw / 2), cp = std::cos(pitch / 2), sp = std::sin(pitch / 2);
     const std::array<float, 4> head{cy * sp, sy * cp, -sy * sp, cy * cp};   // yaw about Y, then pitch about the turned X (x, y, z, w)
     constexpr float kHalfIpd = .0315f;
+    static const std::array<float, 3> moved = [] {
+        std::array<float, 3> at{};
+        if (const char* text = std::getenv("UC_VR_POS")) std::sscanf(text, "%f,%f,%f", &at[0], &at[1], &at[2]);
+        return at;
+    }();
     const float outer = std::tan(52.f * .017453292f), inner = std::tan(41.f * .017453292f), down = std::tan(50.f * .017453292f), up = std::tan(42.f * .017453292f);
     std::array<xr::StereoPose, 2> eyes;
     for (int eye = 0; eye < 2; ++eye) {
@@ -271,7 +277,7 @@ void VulkanRenderer::preview_publish() {
         float turned[3];
         lg_stereo_rotate(head.data(), offset, turned);
         eyes[eye].orientation = head;
-        eyes[eye].position = {turned[0], turned[1], turned[2]};
+        eyes[eye].position = {moved[0] + turned[0], moved[1] + turned[1], moved[2] + turned[2]};
         eyes[eye].tangents = eye ? std::array<float, 4>{inner, outer, down, up} : std::array<float, 4>{outer, inner, down, up};
     }
     preview_->publish(eyes);
@@ -3903,13 +3909,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     PresentImage* present_image=nullptr;
 #ifdef UC_OPENXR
     if (xr_) {   // the headset's frame opens with the game frame's first packet (HOTD4): every pass of it uses this frame's eye poses
-        if (display && !xr_->frame_open()) { xr_frame_ = xr_->begin_frame(); const bool menu = menu_layout(); world_drawn_ = false; xr_->scene().set_hud_fit(!menu); }
+        if (display && !xr_->frame_open()) { xr_frame_ = xr_->begin_frame(); const bool menu = menu_layout(); world_drawn_ = false; world_depth_drawn_ = false; xr_->scene().set_hud_fit(!menu); }
     } else
 #endif
     {
         if (preview_ && display && !preview_frame_open_) {   // as the headset's frame opens
             const bool menu = menu_layout();
-            preview_publish(); preview_frame_open_ = true; world_drawn_ = false;
+            preview_publish(); preview_frame_open_ = true; world_drawn_ = false; world_depth_drawn_ = false;
             preview_->set_hud_fit(!menu);
         }
     }
@@ -4855,6 +4861,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             bool screen_lookup_draw=false;   // its eye block names a coordinate for the eye's own picture (screen_lookup.h): no ubershader run
             int stereo_kind=-1;   // the draw's stereo class (headset), for the shading rate below
             bool draw_offscreen=false;   // the class's offscreen fact: a perspective picture for a small copy or a 2D pass over copies
+            bool backdrop_draw=false;   // the backdrop of the game (xr/stereo_scene.hpp LG_STEREO_BACKDROP): the eyes keep the place of the game's camera
             if (layers_>1 && stereo_) {   // HOTD4's per-draw reprojection: both eyes' transforms of this draw into binding 5
                 LgStereoDrawFacts facts=stereo_facts(d);
                 const bool texture_view=facts.texture_view;
@@ -4903,6 +4910,13 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 // The aim reticle (and its wake) marks a place in the world: it stays on HOTD4's world-locked screen when the HUD follows the head.
                 if (kind==LG_STEREO_HUD && (draw.reticle || draw.late_aim || draw.wake)) kind=xr::LG_STEREO_HUD_AIM;
                 stereo_kind=kind; draw_offscreen=facts.offscreen;
+                // The backdrop (title.h kFarBackdrop): the world draws of the eyes' picture that come before the first world draw of the
+                // frame with a depth write, and write no depth themselves. UC_VR_NO_FAR_BACKDROP=1 draws them as the rest of the world.
+                if (kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen && target.color==efb_ && !draw.reticle && !draw.late_aim && !draw.wake && !draw.layer) {
+                    static const bool far_backdrop=uc::title::kFarBackdrop && !std::getenv("UC_VR_NO_FAR_BACKDROP");
+                    if (info.key[68]&16) world_depth_drawn_=true;
+                    else backdrop_draw=far_backdrop && !world_depth_drawn_;
+                }
 #ifdef UC_OPENXR
                 if (xr_ && kind==LG_STEREO_WORLD && facts.perspective && !facts.offscreen &&
                     !draw.reticle && !draw.late_aim && !draw.wake && !draw.layer && (info.key[68]&16))
@@ -4922,6 +4936,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                                  unsigned(draw.blend.mode),unsigned(draw.blend.source),unsigned(draw.blend.destination),unsigned(draw.blend.logic),int(draw.blend.color_write),int(draw.blend.alpha_write),unsigned(info.key[68]&31),
                                  b?(*b)[0]:9.f,b?(*b)[1]:9.f,b?(*b)[2]:9.f,b?(*b)[3]:9.f,draw.callsite,int(draw.reticle),int(draw.layer),info.index_count,view[0],view[1],view[2],view[3],
                                  draw.transforms->projection[0][0],draw.transforms->projection[1][1],int(facts.texture_view));
+                    if (backdrop_draw) std::fprintf(stderr,"[post-class] draw %zu is the backdrop\n",d);
                 }
                 // UC_SPRITE_HIST=1 (diagnostics): for each call site, where the world draws of the eyes' picture lie in the picture of the game.
                 // It counts the middle of each draw in steps of 0.05 of the half picture, and prints the counts each 1200 frames.
@@ -4945,7 +4960,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                         }
                     }
                 }
-                const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),kind);
+                const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),backdrop_draw ? int(xr::LG_STEREO_BACKDROP) : kind);
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
                 stereo_eye_block(matrices,block);
                 static const bool probe_mono=std::getenv("UC_PROBE_MONO")!=nullptr;   // diagnostics: both eyes see the game's own clip space (no reprojection)
@@ -5024,7 +5039,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             static const bool direct_view=std::getenv("UC_VR_CLIP_REPROJECT")==nullptr;
             if (direct_view && stereo_ && stereo_->tracking_valid() && stereo_kind==LG_STEREO_WORLD &&
                 !draw_offscreen && draw.transforms->projection[3][3]==0 && push.shift[0]==0 && push.shift[1]==0) {
-                const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),LG_STEREO_WORLD);
+                const auto& matrices=stereo_->transforms(gl_from_vulkan(draw.transforms->projection),backdrop_draw ? int(xr::LG_STEREO_BACKDROP) : int(LG_STEREO_WORLD));
                 float* block=reinterpret_cast<float*>(static_cast<std::byte*>(slot.motions.mapped)+size_t(d)*stereo_stride_);
                 stereo_view_block(matrices,block);
                 push.effects|=kEffectStereoView;

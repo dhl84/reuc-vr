@@ -47,6 +47,9 @@ inline constexpr bool kSmallCopyByViewport = true;
 inline constexpr bool kWideViewScreenAspectOnly = true;
 // The headset reads a rough mirror picture on a surface blurred (VulkanRenderer soft_lookup_map): the water of this game.
 inline constexpr bool kSoftScreenLookup = true;
+// The headset draws the backdrop of the game (the sky) with eyes that only turn (xr/stereo_scene.hpp LG_STEREO_BACKDROP). Nobody
+// looked at the sky of this game with a moved head yet.
+inline constexpr bool kFarBackdrop = false;
 // The game draws its shadow map into the top left 512x480 pixels of the frame buffer and copies it from there (docs/darkside-port.md,
 // "Shadows"). The Vulkan renderer draws a packet with a copy of exactly this source at one pixel for each guest pixel, and not at the
 // scale of its frame buffer: the picture is a texture of that size for the game, not a part of what the player sees. On a Quest 3
@@ -250,6 +253,7 @@ inline constexpr bool kAimLensFromWorldDraws = false;
 inline constexpr bool kSmallCopyByViewport = false;
 inline constexpr bool kWideViewScreenAspectOnly = false;
 inline constexpr bool kSoftScreenLookup = false;
+inline constexpr bool kFarBackdrop = true;   // the sky of the outdoor rooms (s00c2 r028) is a sheet close above the camera
 inline constexpr uint32_t kNativeCopyWidth = 0, kNativeCopyHeight = 0;
 inline constexpr bool kDropDeadCopies = false;
 inline constexpr bool kCornerChainProxy = false;

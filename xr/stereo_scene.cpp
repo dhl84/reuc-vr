@@ -38,6 +38,8 @@ void StereoScene::publish(const std::array<StereoPose,2> &eyes)
         projection[10]=-(f+n)/(f-n);projection[11]=-1;projection[14]=-2*f*n/(f-n);
         const auto vp=multiply(projection,overlay_view);std::copy(vp.begin(),vp.end(),overlay_.view_projection[eye]);
         lg_stereo_pose_view(eyes[eye].orientation.data(),eyes[eye].position.data(),settings_.scale,view_[eye].data());
+        const float origin[3]={0,0,0};
+        lg_stereo_pose_view(eyes[eye].orientation.data(),origin,settings_.scale,far_view_[eye].data());
         float offset[3],relative[3];
         for(unsigned i=0;i<3;++i) offset[i]=eyes[eye].position[i]-.5f*(eyes[0].position[i]+eyes[1].position[i]);
         lg_stereo_rotate(inverse,offset,relative);
@@ -86,8 +88,9 @@ bool StereoScene::world_camera(const Matrix &p) const
 bool StereoScene::zoomed(const Matrix &p) const {return world_camera(p)&&p[0]>settings_.zoom_lens&&zoom_frames_>=6;}
 const Matrices &StereoScene::transforms(const Matrix &p,int kind)
 {
-    if(!valid_ || kind==LG_STEREO_PASS || (kind==LG_STEREO_WORLD&&!lg_stereo_is_perspective(p.data()))) return identity_;
-    auto matches=[&](const Entry &e){return e.kind==kind && (kind!=LG_STEREO_WORLD || e.projection==p);};
+    const bool backdrop=kind==LG_STEREO_BACKDROP;
+    if(!valid_ || kind==LG_STEREO_PASS || ((kind==LG_STEREO_WORLD||backdrop)&&!lg_stereo_is_perspective(p.data()))) return identity_;
+    auto matches=[&](const Entry &e){return e.kind==kind && ((kind!=LG_STEREO_WORLD&&!backdrop) || e.projection==p);};
     if(last_<cache_.size()&&matches(cache_[last_]))return cache_[last_].matrices;
     for(size_t i=0;i<cache_.size();++i) if(matches(cache_[i])) {last_=i;return cache_[i].matrices;}
     if(cache_.size()==32)cache_.clear(); // bounded storage, no per-draw allocation growth
@@ -111,11 +114,11 @@ const Matrices &StereoScene::transforms(const Matrix &p,int kind)
         // HUD_AIM: HOTD4's world-locked screen of the game's lens (the reticle stays over what it marks).
         const float *hud_view=kind==LG_STEREO_HUD_AIM ? view_[eye].data() : fitted ? head_view_[eye].data() : hud_view_[eye].data();
         const float distance=kind==LG_STEREO_HUD_AIM && aim_depth_>0 ? aim_depth_ : settings_.screen;
-        LgStereoProjection policy{view_[eye].data(),hud_view,tangents_[eye].data(),(fitted ? fit_lens : kind==LG_STEREO_HUD_AIM ? aim_lens() : lens_).data(),distance*settings_.scale};
+        LgStereoProjection policy{(backdrop ? far_view_ : view_)[eye].data(),hud_view,tangents_[eye].data(),(fitted ? fit_lens : kind==LG_STEREO_HUD_AIM ? aim_lens() : lens_).data(),distance*settings_.scale};
         Matrix effective;
         // HUD maps guest clip space straight onto its screen plane. It is
         // independent of the original lens, so needs one transform per frame.
-        lg_stereo_eye_projection(hud?unit.data():p.data(),hud?LG_STEREO_HUD:kind,&policy,effective.data());
+        lg_stereo_eye_projection(hud?unit.data():p.data(),hud?LG_STEREO_HUD:backdrop?LG_STEREO_WORLD:kind,&policy,effective.data());
         std::memcpy(e.matrices.from_view[eye],effective.data(),64);
         if(hud)std::memcpy(out,effective.data(),64);
         else if(!lg_stereo_clip_reprojection(p.data(),effective.data(),out))

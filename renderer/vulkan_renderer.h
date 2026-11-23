@@ -330,6 +330,7 @@ private:
     void preview_publish();
     bool xr_frame_ = false;   // this presented frame draws into the headset (begin_frame() said so)
     uint32_t layers_ = 1;     // 2 with the headset: the EFB, its copies and the presented picture hold one layer per eye (multiview)
+    bool world_depth_drawn_ = false;   // this frame drew a world draw with a depth write: a world draw without one before it is the backdrop (LG_STEREO_BACKDROP)
     bool world_drawn_ = false;   // this frame drew the world already: full-screen 2D after it fills the eye (HOTD4's FILL), before it is the HUD screen
     PromptOverlay prompt_overlay_;
     MenuOverlay menu_overlay_;

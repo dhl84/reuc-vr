@@ -82,7 +82,37 @@ static void aim_lens_follows_world_draws() {
     scene.finish_frame();   // a frame without a world draw keeps the lens
     CHECK(scene.aim_lens()[0]==.6f && scene.aim_lens()[1]==.711f);
 }
+// The backdrop (LG_STEREO_BACKDROP): the eyes turn with the head and stay at the place of the camera of the game.
+static void backdrop_keeps_the_place_of_the_camera() {
+    xr::StereoSettings settings; settings.scale=10;
+    xr::StereoScene scene(settings);
+    std::array<xr::StereoPose,2> eyes;
+    eyes[0].position={-.032f,-.4f,.3f}; eyes[1].position={.032f,-.4f,.3f};   // a head 40 cm below and 30 cm behind its start
+    eyes[0].tangents={1.3f,.8f,1.4f,.9f}; eyes[1].tangents={.8f,1.3f,1.4f,.9f};
+    scene.publish(eyes);
+    xr::Matrix p{}; p[0]=1.2f; p[5]=1.6f; p[10]=-1; p[11]=-1; p[14]=-.2f;
+    float rows[32]; stereo_view_block(scene.transforms(p,xr::LG_STEREO_BACKDROP),rows);
+    const float point[4]={.5f,1.f,-10,1};   // a point of a sky sheet 10 cm above the camera
+    for (int eye=0;eye<2;++eye) {
+        float clip[4]{};
+        for (int r=0;r<4;++r) for (int c=0;c<4;++c) clip[r]+=rows[16*eye+4*r+c]*point[c];
+        const auto& t=eyes[eye].tangents;
+        const double expected_x=2*.5/(t[0]+t[1])+(t[1]-t[0])*-10/(t[0]+t[1]);
+        const double expected_y=-(2*1./(t[2]+t[3])+(t[3]-t[2])*-10/(t[2]+t[3]));
+        CHECK(std::abs(clip[0]-expected_x)<2e-6);
+        CHECK(std::abs(clip[1]-expected_y)<2e-6);
+        CHECK(std::abs(clip[3]-10)<2e-6);
+    }
+    float world[32]; stereo_view_block(scene.transforms(p,LG_STEREO_WORLD),world);   // the rest of the world moves with the head
+    CHECK(std::abs(world[7]-rows[7])>1 && std::abs(world[15]-rows[15])>1);
+    // a turned head turns the backdrop
+    const float half=.2f; eyes[0].orientation=eyes[1].orientation={0,std::sin(half),0,std::cos(half)};
+    scene.publish(eyes);
+    float turned[32]; stereo_view_block(scene.transforms(p,xr::LG_STEREO_BACKDROP),turned);
+    CHECK(std::abs(turned[0]-rows[0])>.01f);
+}
 int main() {
+    backdrop_keeps_the_place_of_the_camera();
     aim_lens_follows_world_draws();
     world_projection_keeps_eye_translation(.1f);
     world_projection_keeps_eye_translation(1e-9f);
