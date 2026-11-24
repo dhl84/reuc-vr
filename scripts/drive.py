@@ -365,6 +365,7 @@ def main():
                 extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A", 3, (0.01, 0.01)), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
                 stop, found, done = parts[2] if len(parts) > 2 and parts[2] else None, False, 0
                 weapons = parts[3].split("/") if len(parts) > 3 and parts[3] else []
+                wide = getattr(game, "wide", (1.0, 1.0))   # the step "wide"
                 while game.proc.poll() is None and done < count:
                     if stop and log_has(game, stop):
                         found = True
@@ -377,12 +378,12 @@ def main():
                         shift = (0.0, 0.1, 0.05, -0.05)
                         turn = (done + i) // len(points)
                         x, y = points[(done + i) % len(points)]
-                        game.aim = (round(x + shift[turn % 4], 3), round(y + shift[(turn // 4) % 4], 3))
+                        game.aim = (round((x + shift[turn % 4]) / wide[0], 3), round((y + shift[(turn // 4) % 4]) / wide[1], 3))
                         events += [(at, game.aim[0], game.aim[1], BUTTONS["B"]), (at + 1, game.aim[0], game.aim[1], 0)]
                         at += every
                         if (done + i) % 7 == 6:
                             names, hold, place = extras[((done + i) // 7) % len(extras)]
-                            x, y = place or game.aim
+                            x, y = (place[0] / wide[0], place[1] / wide[1]) if place else game.aim
                             events += [(at, x, y, button_mask(names)), (at + hold, x, y, 0)]
                             at += hold + 2
                         if weapons and (done + i) % 7 == 6 and weapons[((done + i) // 7) % len(weapons)] != "-":   # a weapon slot
@@ -401,6 +402,9 @@ def main():
                     if probes:
                         show_probes(game, probes)
                 print("bot %s: %d points to retrace %d%s" % (value, done, game.retraces(), "" if not stop else ", text found" if found else ", text NOT FOUND"), flush=True)
+            elif kind == "wide":   # wide:X,Y: the bot divides its places by these factors (the wide view of the headset: 1.8,2.7)
+                game.wide = tuple(float(v) for v in value.split(","))
+                print("wide %s" % value, flush=True)
             elif kind == "speed":
                 game.command("speed", factor=int(value))
                 print("speed %s at retrace %d" % (value, game.retraces()), flush=True)
