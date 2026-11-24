@@ -268,7 +268,7 @@ The fifth and the seventh chapter end at the main menu, not at the menu with CHR
 - With `UC_DC_WEAK=1` the run stood at the boss of `s30c4` for 4 minutes. The health of the boss was 1 of 1200, and the fight did not go on. Without the aid the bot passed it in 1400 shots with the two launchers. The cause in the boss class (vtable 806E8A90) was not looked for. An aid that makes each loss of health larger is a possible next step.
 - Without `UC_DC_BLOOD=1` the bot gets the bad ending of the fifth chapter, and the sixth chapter stays closed.
 - The scripts `z10c1` and `z10c2` were not started. The extra chapter `s00c1` was played once.
-- The sixth and the seventh chapter were not played with `UC_DC_WEAK=1`.
+- With `UC_DC_WEAK=1` the fight against the boss of `s30c6` does not go on either. The headset bot stood there for 10 minutes on 24 November 2026. Without the aid it beat that boss in 5 minutes. The seventh chapter was not played with `UC_DC_WEAK=1`.
 - The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. Fourteen frames of the same scene from 24 November 2026 show a waterfall at that wall and no fault (`pv\t_s30c3_flat`). So the streaks are very likely the waterfall, seen from above.
 - The six new entries are not in `project/dc/dc.cfg`.
 - The pictures of the two renderer changes were not compared with a console. Three frames of room R213 after the change show the corridor and its enemies without a fault. No frame of room R224 was looked at.
@@ -1023,9 +1023,11 @@ Routes that were used, as aims for the headset. Each one follows CHRONICLES at t
 |---|---|---|
 | `s30c2` | `save_s10c8_done` | `aim:0.2,0.04` (Operation Javier), `aim:-0.033,-0.1` (the chapter) |
 | `s20c1` | `save_s30c2_done` | `aim:0.078,-0.119` (Game of Oblivion), `aim:0.028,0.0` (the chapter), `aim:-0.139,0.0` (the character at the left) |
-| `s30c4` | `save_s30c3_done` | `aim:0.2,0.04`, `aim:0.078,0.0` (PC preview only) |
+| `s30c4` | `save_s30c3_done` | `aim:0.2,0.04`, `aim:0.078,0.0` |
+| `s30c5` | the save after `s30c4` | `aim:0.2,0.04`, `aim:0.111,-0.152` |
+| `s30c6` | `save_s30c5_done_good` | `aim:0.261,0.126` (the fourth piece), `aim:0.011,0.019` |
 
-The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. The first run (`quest2\g3`, app 0.0.40) played `s30c2` and `s20c1` and was stopped in `s20c2` because of the black picture (see below). The second run (`quest2\g4`, app 0.0.41) played six chapters in a row in 1 h 40 min. Its bot then stood in `s20c6` (see "The bot in the wide view"). The third run (`quest2\h2`, app 0.0.42) went on from the checkpoint of `s20c6` and played to the end of `s30c3`. No run had a crash.
+The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. The first run (`quest2\g3`, app 0.0.40) played `s30c2` and `s20c1` and was stopped in `s20c2` because of the black picture (see below). The second run (`quest2\g4`, app 0.0.41) played six chapters in a row in 1 h 40 min. Its bot then stood in `s20c6` (see "The bot in the wide view"). The third run (`quest2\h2`, app 0.0.42) went on from the checkpoint of `s20c6` and played to the end of `s30c3`. Four more runs of that day (`quest2\h3` to `quest2\h6`, app 0.0.42) played `s30c4` to `s30c7`. They had no `UC_DC_WEAK`, apart from the first part of `s30c6`. No run had a crash. So each chapter of the three scenarios ran on the headset. The fights at the end of `s10c8` and the extra chapter `s00c1` are still left. `s00c1` ran for 30 s only, after the staff roll.
 
 | Script | App | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
 |---|---|---|---|---|---|
@@ -1040,8 +1042,13 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c6`, from the checkpoint | 0.0.42 | 1,189 | 69.5 | 99 % | 25 fps |
 | `s20c7` | 0.0.42 | 1,930 | 58.5 | 42 % | 24 fps |
 | `s30c3` | 0.0.42 | 798 | 70.3 | 95 % | 45 fps |
+| `s30c4` | 0.0.42 | 1,180 | 63.7 | 72 % | 27 fps |
+| `s30c5` | 0.0.42 | 1,206 | 62.4 | 71 % | 43 fps |
+| `s30c6`, to the boss | 0.0.42 | 1,821 | 68.1 | 86 % | 30 fps |
+| `s30c6`, the boss | 0.0.42 | 267 | 71.2 | 100 % | 50 fps |
+| `s30c7` | 0.0.42 | 1,793 | 62.4 | 76 % | 42 fps |
 
-The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now (1,359 keys). With the keys in the build the app starts in 4 to 5 s.
+The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 has 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. With the keys in the build the app starts in 4 to 5 s.
 
 #### The black picture after a change of the render scale
 
@@ -1069,7 +1076,9 @@ In `s20c1` the automatic render scale stayed at its lowest level (1.5) for the w
 
 #### A scene below 60 fps
 
-The last boss of `s20c7` ran at 53 to 55 fps for about 10 minutes (`quest2\h2`). The GPU took 15.5 ms a frame at the scale 1.25, at 640 MHz. A frame has about 1,150 draws and 16 EFB copies there. The step from 1.5 to 1.25 did not make the GPU time shorter, so the pixels are not the limit. Only four new keys came in that fight, so the ubershader is not the cause. This is the same kind of scene as the span of `s10c6` (see "Scenes with many draws"). The cause of the GPU cost of a draw is still not found.
+The last boss of `s20c7` ran at 53 to 55 fps for about 10 minutes (`quest2\h2`). The GPU took 15.5 ms a frame at the scale 1.25, at 640 MHz. A frame has about 1,150 draws and 16 EFB copies there. The step from 1.5 to 1.25 did not make the GPU time shorter, so the pixels are not the limit. Only four new keys came in that fight, so the ubershader is not the cause. This is the same kind of scene as the span of `s10c6` (see "Scenes with many draws"). The cause of the GPU cost of a draw is still not found. The start of `s30c4` is such a scene too: the GPU is 97 % busy at 640 MHz and takes 14.6 ms a frame at the scale 1.25.
+
+A trap of the log. The line `[sched]` gives the time for which each thread of the game held the baton. If a thread blocks and no other thread is ready, that thread runs the idle wait of the scheduler (`Sched::idle_wait`). The wait counts for it. So 400 ms a second for thread 5 in a slow scene is not work. That thread ran only 46 million guest cycles a second there. `q3\build\darkside\thread_times.py` prints these times for each chapter of a log.
 
 #### The bot in the wide view
 
@@ -1082,7 +1091,7 @@ The `bot` step of `scripts/drive.py` presses A at fixed places for a choice of w
 
 #### Other checks of 24 November 2026
 
-- The fix for the black picture in the long runs. `blackwatch.py` took a picture each 30 s. The runs `quest2\g4`, `quest2\h1` and `quest2\h2` had 47 automatic changes of the scale and 348 pictures. One picture was dark, at a room load, and the next one was right.
+- The fix for the black picture in the long runs. `blackwatch.py` took a picture each 30 s. The runs `quest2\g4` and `quest2\h1` to `quest2\h6` had 83 automatic changes of the scale and 564 pictures. One picture was dark, at a room load, and the next one was right.
 
 - The screens after a death. Without `UC_DC_GOD` and without a shot, the first enemy of the first chapter kills the player. The game shows "You are Dead" and "Continue? Yes / No" (music `menu02.brstm`). Yes is at `aim:0.133,0.407`. A press of A there starts the chapter again from its first movie. This works in the flat picture (`pv\dm1`) and in the stereo preview with a turned and moved head (`pv\ds2`). `q3\build\reuc-build\pc_death.sh NAME mono|stereo` repeats it.
 - `q3\build\reuc-build\pc_tour.sh NAME SAVE "ROUTE"` plays the first minutes of a chapter in the stereo preview, with a frame each 10 s. The head is turned and moved (`UC_VR_POS=0.2,-0.3,0.2`). The frames show no fault of the view. They are the whole chapters `s20c1`, `s20c2` and `s20c3` and the first minutes of `s30c4` and `s30c6` (`pv\t_s20c1` and so on). The sky of these chapters is right with the moved head.
