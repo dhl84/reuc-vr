@@ -29,9 +29,15 @@ int main() {
         CHECK(run(scale,heavy,10)==2 && scale.level()==2);
         CHECK(run(scale,heavy,600)==0);
     }
+    {   // a frame that needs three levels, and the chosen size comes back in three steps
+        uc::AutoScale scale; const Scene heavy{19,72}, light{6,72};
+        CHECK(run(scale,heavy,20)==3 && scale.level()==3);
+        CHECK(run(scale,heavy,600)==0);
+        CHECK(run(scale,light,200)==3 && scale.level()==0);
+    }
     {   // the heaviest frame stops at the last level
         uc::AutoScale scale; const Scene heavy{40,72};
-        CHECK(run(scale,heavy,60)==2 && scale.level()==2 && scale.level()+1==uc::AutoScale::kFactors.size());
+        CHECK(run(scale,heavy,60)==3 && scale.level()==3 && scale.level()+1==uc::AutoScale::kFactors.size());
     }
     {   // the game's own code limits the frame: fewer pixels bring no frames, so they come back, and each new try waits longer
         uc::AutoScale scale; const Scene slow{11.5,55};

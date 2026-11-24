@@ -361,7 +361,7 @@ def main():
             elif kind == "bot":   # the spray, and a press of A, the wave, Z or A+B after each row of 7 points (quick-time prompts, the reload)
                 parts = value.split(",")
                 count, every = int(parts[0]), max(2, int(parts[1]) if len(parts) > 1 else 2)
-                points = [(x / 10.0, y / 10.0) for y in (-1, 1, -3, 3, 0) for x in (0, -2, 2, -4, 4, -6, 6)]
+                points = [(x / 10.0, y / 10.0) for y in getattr(game, "rows", (-1, 1, -3, 3, 0)) for x in (0, -2, 2, -4, 4, -6, 6)]   # the step "rows"
                 extras = [("A", 3, (0.47, -0.03)), ("WAVE", 12, None), ("Z", 3, None), ("A", 3, (0.01, 0.01)), ("A+B", 3, None), ("WAVE", 12, None), ("A", 3, (-0.47, -0.03))]
                 stop, found, done = parts[2] if len(parts) > 2 and parts[2] else None, False, 0
                 weapons = parts[3].split("/") if len(parts) > 3 and parts[3] else []
@@ -402,6 +402,9 @@ def main():
                     if probes:
                         show_probes(game, probes)
                 print("bot %s: %d points to retrace %d%s" % (value, done, game.retraces(), "" if not stop else ", text found" if found else ", text NOT FOUND"), flush=True)
+            elif kind == "rows":   # rows:Y,Y,...: the rows of the shot grid of the bot in tenths (default -1,1,-3,3,0); 5 and -5 reach low and high targets
+                game.rows = tuple(float(v) for v in value.split(","))
+                print("rows %s" % value, flush=True)
             elif kind == "wide":   # wide:X,Y: the bot divides its places by these factors (the wide view of the headset: 1.8,2.7)
                 game.wide = tuple(float(v) for v in value.split(","))
                 print("wide %s" % value, flush=True)
