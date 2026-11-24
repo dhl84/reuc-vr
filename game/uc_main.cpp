@@ -511,6 +511,15 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
         // UC_DC_GOD=1 (test aid, off by default): the health of both players stays full (common/title.h kDcPlayerHealth). A hit takes
         // less than the full health, so the write at every retrace is enough; the game still plays its hit reactions.
         static const bool god = [] { const char* v = std::getenv("UC_DC_GOD"); return v && v[0] == '1'; }();
+        // UC_DC_FREEZE_ON_HIT=N (test aid, needs UC_DC_GOD=1): the game time stands still from the Nth hit on a player, as with
+        // UC_DC_FREEZE_FILE. UC_DC_FREEZE_HIT_DELAY=<retraces> (12) is the time from the hit to the stop, so the hit reaction of the
+        // game is in the standing picture. With UC_DC_FREEZE_HIT_HOLD=<retraces> the time runs again after that many retraces, and
+        // the next hit stops it again.
+        static const long freeze_on_hit = std::getenv("UC_DC_FREEZE_ON_HIT") ? std::atol(std::getenv("UC_DC_FREEZE_ON_HIT")) : 0;
+        static const long freeze_hit_delay = std::getenv("UC_DC_FREEZE_HIT_DELAY") ? std::atol(std::getenv("UC_DC_FREEZE_HIT_DELAY")) : 12;
+        static const long freeze_hit_hold = std::getenv("UC_DC_FREEZE_HIT_HOLD") ? std::atol(std::getenv("UC_DC_FREEZE_HIT_HOLD")) : 0;
+        static long hits_seen = 0;
+        static uint64_t hit_freeze_at = 0;   // the retrace of the stop, 0: no stop asked
         if (god) {
             ppc::Ctx& c = sched.irq_ctx();
             static bool said = false;
@@ -520,7 +529,13 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
                 const uint32_t entry = uc::title::kDcObjectTable + index * 8, object = ppc::rd32(c, entry + 4);
                 if (ppc::rd32(c, entry) != id || object < 0x80004000 || (object >= 0x81800000 && object < 0x90000000) || object >= 0x93400000) continue;
                 const uint32_t full = uc::title::kDcFullHealthBits, at = object + uc::title::kDcPlayerHealth;
-                if (ppc::rd32(c, at) != full) ppc::wr32(c, at, full);
+                if (ppc::rd32(c, at) != full) {
+                    ppc::wr32(c, at, full);
+                    if (freeze_on_hit > 0 && ++hits_seen >= freeze_on_hit && !hit_freeze_at) {
+                        hit_freeze_at = retraces + uint64_t(std::max(0L, freeze_hit_delay));
+                        std::fprintf(stderr, "[dc-god] hit %ld on player %u at retrace %llu: the game time stops at retrace %llu\n", hits_seen, player, (unsigned long long)retraces, (unsigned long long)hit_freeze_at);
+                    }
+                }
                 if (!said) { said = true; std::fprintf(stderr, "[dc-god] UC_DC_GOD=1: the health of the players stays full (player object %08X)\n", object); }
             }
             for (uint32_t slot = 0; slot < 4; ++slot) {   // the partner's health follows its maximum
@@ -619,10 +634,12 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             static const char* freeze_file = std::getenv("UC_DC_FREEZE_FILE");
             static bool frozen = false;
             static uint32_t scales[8];
-            if (freeze_file && *freeze_file) {
+            if ((freeze_file && *freeze_file) || freeze_on_hit > 0) {
                 ppc::Ctx& c = sched.irq_ctx();
-                static bool wanted = false;
-                if (retraces % 30 == 0) wanted = uc::switch_file_on(freeze_file);
+                static bool file_wanted = false;
+                if (freeze_file && *freeze_file && retraces % 30 == 0) file_wanted = uc::switch_file_on(freeze_file);
+                if (hit_freeze_at && freeze_hit_hold > 0 && retraces >= hit_freeze_at + uint64_t(freeze_hit_hold)) hit_freeze_at = 0;
+                const bool wanted = file_wanted || (hit_freeze_at && retraces >= hit_freeze_at);
                 if (wanted && !frozen) { for (uint32_t i = 0; i < 8; ++i) scales[i] = ppc::rd32(c, uc::title::kDcClock + 0x0C + i * 4); frozen = true; std::fprintf(stderr, "[dc-freeze] the game time stands still (retrace %llu)\n", (unsigned long long)retraces); }
                 if (frozen && wanted) for (uint32_t i = 0; i < 8; ++i) ppc::wr32(c, uc::title::kDcClock + 0x0C + i * 4, 0);
                 if (frozen && !wanted) { for (uint32_t i = 0; i < 8; ++i) ppc::wr32(c, uc::title::kDcClock + 0x0C + i * 4, scales[i]); frozen = false; std::fprintf(stderr, "[dc-freeze] the game time runs again (retrace %llu)\n", (unsigned long long)retraces); }

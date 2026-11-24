@@ -400,3 +400,4 @@
 @8037CF94 OSTryLockMutex  # manual
 @802D8308 DcFrameWait  # manual
 @8032DCE4 DcStagePartsViewTest  # manual
+@80330C60 DcViewConeTest  # manual

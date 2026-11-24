@@ -95,17 +95,38 @@ void hle_MTXPerspective(ppc::Ctx& c) {
 // are inside the picture, and whole houses of the stage came and went with each turn of the game camera. With a wide view the test does
 // not run and each part stays in the picture. In one run of the first chapter the test hid parts in 3 % of the frames, so the cost is small.
 // UC_DC_PARTS_VIEW_TEST=1 (diagnostics) runs the test of the game in the wide view too.
+static bool dc_wide_view() {   // a wider output, or the wide view of the headset
+    const auto factors=gx::view_factors();
+    return factors.x<1.f || factors.y<1.f || gx::vr_fov_scale().load(std::memory_order_relaxed)>1.f ||
+           gx::vr_fov_scale_y().load(std::memory_order_relaxed)>1.f;
+}
+
 void hle_DcStagePartsViewTest(ppc::Ctx& c) {
     static const bool keep_test=std::getenv("UC_DC_PARTS_VIEW_TEST")!=nullptr;
-    const auto factors=gx::view_factors();
-    const bool wide=factors.x<1.f || factors.y<1.f || gx::vr_fov_scale().load(std::memory_order_relaxed)>1.f ||
-                    gx::vr_fov_scale_y().load(std::memory_order_relaxed)>1.f;   // a wider output, or the wide view of the headset
-    if(wide && !keep_test) return;
+    if(dc_wide_view() && !keep_test) return;
     // Static lowering of 8032DCE4's stwu r1,-272(r1); 8032DCE8 continues the original compiled body (project/dc/dc.cfg).
     const auto stack=c.r[1];
     ppc::wr32(c,stack-272,stack);
     c.r[1]=stack-272;
     uc::call_indirect(c,0x8032DCE8u);
+}
+
+// SBDE08 80330C60: the test of a sphere (r4: centre and radius) against the view cone of the game (r3). The result is 1 for a sphere
+// inside and 0 for a sphere outside. It has two callers. The loop over the stage parts (above) does not run with a wide view. The
+// second caller, 80058598, skips the work for an object with four points (object + 2852) outside the cone. With a wide view the cone is
+// narrower than the picture, so each sphere counts as inside. The first call from another caller than the stage loop prints one line:
+// no run met that object yet. UC_DC_PARTS_VIEW_TEST=1 (diagnostics) runs the test of the game in the wide view too.
+void hle_DcViewConeTest(ppc::Ctx& c) {
+    static const bool keep_test=std::getenv("UC_DC_PARTS_VIEW_TEST")!=nullptr;
+    if(c.lr!=0x8032DF00u) {
+        static bool said=false;
+        if(!said) { said=true; std::fprintf(stderr,"[dc] the view test 80330C60 ran for another caller than the stage loop (return to %08X)\n",c.lr); }
+    }
+    if(dc_wide_view() && !keep_test) { c.r[3]=1; return; }
+    // Static lowering of 80330C60's lfs f1,4(r4); 80330C64 continues the original compiled body (project/dc/dc.cfg).
+    const double y=ppc::rdf32(c,c.r[4]+4);
+    c.f[1]=y; c.ps1[1]=y;
+    uc::call_indirect(c,0x80330C64u);
 }
 
 void hle_MovieUpdate(ppc::Ctx& c) {

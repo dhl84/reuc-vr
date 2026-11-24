@@ -40,6 +40,8 @@ static double seen_fov, seen_aspect;
 static unsigned perspective_calls;
 static unsigned parts_calls;
 static void parts_body(ppc::Ctx& c) { ++parts_calls; CHECK(ppc::rd32(c,c.r[1])==0x817D0000); c.r[1]=ppc::rd32(c,c.r[1]); }
+static unsigned cone_calls;
+static void cone_body(ppc::Ctx& c) { ++cone_calls; CHECK(c.f[1]==2.5); c.r[3]=0; }   // the original test from 80330C64: the wrapper has loaded f1
 static void perspective_body(ppc::Ctx& c) {   // the original C_MTXPerspective body from 80265468: the wrapper has lowered the stwu
     ++perspective_calls;
     CHECK(ppc::rd32(c,c.r[1])==0x817D0000 && c.r[1]==0x817D0000-64);
@@ -48,8 +50,8 @@ static void perspective_body(ppc::Ctx& c) {   // the original C_MTXPerspective b
 }
 int main() {
     Fix fixture; auto& c=fixture.c;
-    const uc::FnEntry entries[]={{0x801426D8,movie_update},{0x80245860,original_update},{0x80265468,perspective_body},{0x8032DCE8,parts_body}};
-    uc::dispatch_init(entries,4,0x801426D8,0x8032DCF0);
+    const uc::FnEntry entries[]={{0x801426D8,movie_update},{0x80245860,original_update},{0x80265468,perspective_body},{0x8032DCE8,parts_body},{0x80330C64,cone_body}};
+    uc::dispatch_init(entries,5,0x801426D8,0x80330C6C);
     c.r[1]=0x817D0000; c.lr=0x80100000;
     ppc::wr8(c,0x804D1E70,1); ppc::wr8(c,0x804D1E71,1);
     ppc::wr8(c,0x804D1E94,0); ppc::wr32(c,0x804D1EA4,3); ppc::wr32(c,0x804D1EA8,0x80002000);
@@ -116,5 +118,19 @@ int main() {
         gx::vr_fov_scale().store(1.f);
         hle_DcStagePartsViewTest(c);
         CHECK(parts_calls==2 && c.r[1]==0x817D0000);
+    }
+    {   // SBDE08, the view test of a sphere: the test of the game runs at 16:9, and each sphere is inside with a wide view
+        c.r[4]=0x80002400; ppc::wrf32(c,0x80002404,2.5f); c.lr=0x8005859C;
+        gx::set_view_factors({});
+        c.r[3]=0x80002500; hle_DcViewConeTest(c);
+        CHECK(cone_calls==1 && c.r[3]==0);
+        gx::vr_fov_scale().store(1.8f);   // the wide view of the headset
+        c.r[3]=0x80002500; hle_DcViewConeTest(c);
+        CHECK(cone_calls==1 && c.r[3]==1);
+        gx::vr_fov_scale().store(1.f);
+        gx::set_view_factors(gx::factors_for_aspect(21.0/9));
+        c.r[3]=0x80002500; hle_DcViewConeTest(c);
+        CHECK(cone_calls==1 && c.r[3]==1);
+        gx::set_view_factors({});
     }
 }
