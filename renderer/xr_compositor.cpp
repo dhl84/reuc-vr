@@ -780,6 +780,12 @@ void XrCompositor::observe_aim(const gx::Projection& projection) {
     lens_seen_ = true;
 }
 
+void XrCompositor::forget_views() {
+    if (bound_.empty() || !device_ || !pool_) return;
+    vk(vkResetDescriptorPool(device_, pool_, 0), "descriptor pool reset");
+    bound_.clear();
+}
+
 void XrCompositor::record(VkCommandBuffer command, VkImage picture, VkImageView picture_view, VkImageLayout layout, const std::array<float,4>& rect, VkImageView fovea, VkExtent2D texel,
                           const XrHudLayer* hud) {
     if (!acquired_) throw std::logic_error("XR: record without an acquired eye array");

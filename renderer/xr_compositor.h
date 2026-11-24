@@ -73,6 +73,11 @@ public:
     // hud: the HUD layer laid over both eyes (its images in SHADER_READ_ONLY_OPTIMAL), or none.
     void record(VkCommandBuffer command, VkImage picture, VkImageView picture_view, VkImageLayout layout, const std::array<float,4>& rect = {0, 0, 1, 1},
                 VkImageView fovea = VK_NULL_HANDLE, VkExtent2D texel = {}, const XrHudLayer* hud = nullptr);
+    // record() keeps a descriptor set for each group of image views that it saw, and it finds the set by the handles of the views. The
+    // driver can give the handle of a destroyed view to a new view. The kept set then still names the destroyed view, and the eyes show a
+    // black picture (seen on the Quest after about one change of the render scale in fifteen). So the renderer calls this before it
+    // destroys a view that record() saw (the EFB, a HUD or glow layer). No submitted command buffer may still use a set.
+    void forget_views();
     // UC_CAPTURE_XR: retain the actual eye output, including the direct EFB/HUD composite.
     // Destination is a native-sized RGBA8 array in TRANSFER_SRC_OPTIMAL, left in that layout.
     void copy_capture(VkCommandBuffer command, VkImage destination, VkExtent2D size);

@@ -65,7 +65,7 @@ void log_to_logcat() {
 void load_env(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "r");
     if (!f) return;
-    char line[512];
+    static char line[16384];   // a long list (UC_VR_SCALE_SWITCH with some hundred changes) is one line
     while (std::fgets(line, sizeof line, f)) {
         line[std::strcspn(line, "\r\n")] = 0;
         char* eq = std::strchr(line, '=');

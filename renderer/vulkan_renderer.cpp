@@ -2667,6 +2667,9 @@ void VulkanRenderer::ensure_hud_layer(HudLayer& layer, VkExtent2D extent) {
     if (layer.light && layer.extent.width==extent.width && layer.extent.height==extent.height) return;
     if (layer.light) {   // a new size (render scale): no frame in flight may still read the old images
         vk_check(present_.wait_idle(device),"HUD layer resize");
+#ifdef UC_OPENXR
+        if (xr_) xr_->forget_views();   // its kept descriptor sets name these views by handle
+#endif
         for (VkImageView* view:{&layer.light_view,&layer.transmit_view}) { if (*view) vkDestroyImageView(device,*view,nullptr); *view=VK_NULL_HANDLE; }
         for (VkImage* image:{&layer.light,&layer.transmit}) { if (*image) vkDestroyImage(device,*image,nullptr); *image=VK_NULL_HANDLE; }
         for (VkDeviceMemory* memory:{&layer.light_memory,&layer.transmit_memory}) { if (*memory) vkFreeMemory(device,*memory,nullptr); *memory=VK_NULL_HANDLE; }
@@ -2734,6 +2737,9 @@ void VulkanRenderer::ensure_hud_layer(HudLayer& layer, VkExtent2D extent) {
     vkUpdateDescriptorSets(device,2,writes,0,nullptr);
 }
 void VulkanRenderer::destroy_hud_layer() {
+#ifdef UC_OPENXR
+    if (xr_ && (hud_.light || glow_.light)) xr_->forget_views();   // its kept descriptor sets name these views by handle
+#endif
     for (HudLayer* layer:{&hud_,&glow_}) {
         for (VkImageView view:{layer->light_view,layer->transmit_view}) if (view) vkDestroyImageView(device,view,nullptr);
         for (VkImage image:{layer->light,layer->transmit}) if (image) vkDestroyImage(device,image,nullptr);
@@ -3131,6 +3137,12 @@ void VulkanRenderer::rebuild() {
     const VkExtent2D internal{visible.width,uint32_t(std::llround(960*scale))};
     if(internal.width>max_image_dimension_ || internal.height>max_image_dimension_) throw std::runtime_error("internal render extent exceeds device image limits");
     if(efb_extent_.width!=internal.width || efb_extent_.height!=internal.height) {
+#ifdef UC_OPENXR
+        // The headset's screen pass keeps descriptor sets that name the view of the EFB by its handle. The view that is made below can
+        // get the handle of this one, and the kept set would then show the destroyed EFB: a black picture until the next change of the
+        // render scale. The GPU is idle here (retire above).
+        if (xr_ && efb_view_) xr_->forget_views();
+#endif
         if(depth_view_) vkDestroyImageView(device,depth_view_,nullptr);
         if(depth_) vkDestroyImage(device,depth_,nullptr);
         if(depth_memory_) vkFreeMemory(device,depth_memory_,nullptr);

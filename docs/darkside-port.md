@@ -746,11 +746,11 @@ The fix: `DcStagePartsViewTest` (`game/intro.cpp`) takes the place of the loop a
 What stays open:
 
 - An earlier trial made the cone itself as wide as the wide view (the input of 8032F274). The click on the character screen then failed, so other code reads the cone too. The fix does not change the cone.
-- The view test has a second caller, 80058598. No run met its object yet, so the object is not known. The list below tells what the port does for it.
+- The view test has a second caller, 80058598. Its object is in `s20c1`, and nobody looked at which object it is. The list below tells what the port does for it.
 
 A later look on 24 November 2026 closed three points:
 
-- The second caller of the view test, 80058598. The function 800547D4 goes over a list of objects and calls 80058440 for each. That function makes a sphere around four points of the object (object + 2852). For a sphere outside the cone it skips the work for the object. `DcViewConeTest` (`game/intro.cpp`) now takes the place of the view test 80330C60 (`entry 80330C64` in `project/dc/dc.cfg`). With a wide view it returns 1 for each sphere, so the object stays in the picture. Without a wide view it runs the test of the game. The first call from another caller than the stage loop prints a line that starts with `[dc] the view test 80330C60`. Two runs of the first chapter with eight hits each did not print it.
+- The second caller of the view test, 80058598. The function 800547D4 goes over a list of objects and calls 80058440 for each. That function makes a sphere around four points of the object (object + 2852). For a sphere outside the cone it skips the work for the object. `DcViewConeTest` (`game/intro.cpp`) now takes the place of the view test 80330C60 (`entry 80330C64` in `project/dc/dc.cfg`). With a wide view it returns 1 for each sphere, so the object stays in the picture. Without a wide view it runs the test of the game. The first call from another caller than the stage loop prints a line that starts with `[dc] the view test 80330C60`. Two runs of the first chapter with eight hits each did not print it. A headset run of `s20c1` printed it on 24 November 2026 (return to 8005859C).
 - The callers 802E68A8 and 802E6B4C. They do not test the camera. The function 802E6868 finds one part by its name and gives it the visibility that its caller asks for. The function 802E69A0 does the same for a part and each part below it. The log of the run `pv/fx1` names the models. The first function changes props that break: `R302_coconuts_S_M`, `R301_rice_baketu_M` and `R301_fukuro_M`. The second changes the models of the menus at the start: `stage`, `chapter1` to `chapter8` and `CharacterA`. It also changes parts of the characters: `PKR1`, `EZS1`, `EZT1` and `EZU1`.
 - The second see-through picture in the frame z1 of `pv/fx2`. It is the hit reaction of the game and not a fault of the port. The flat picture shows it too (`pv/hitm1`, the frame z4). A hit puts blood on the screen, and some hits add a see-through second picture or a blur from the middle. In the stereo preview with a moved head each eye shows these on its own picture (`pv/hits2`, `UC_VR_POS=0.2,-0.4,0.3`).
 
@@ -1005,7 +1005,63 @@ The render scale of this run: the app held the scale 2.0 for 4 to 100 % of a cha
 
 The scripts that play the game from the PC leave their log readers behind on Windows (`adb logcat`, and the `tail` of `uc.log`). A reader of an old run then appends lines to the log of that run. Stop these readers at the end of each run.
 
-Not done on the headset: play by a person with the controllers, the shot along the ray of the controller, and the sound. The remote play has no tracked ray, so its shots still follow the pointer.
+### The rest of the game on the headset
+
+Until 24 November 2026 the headset played `s30c1` and `s10c1` to `s10c8` only. The other 14 chapters ran on the PC only. This section is the work to play them on the headset.
+
+How to play chapters in a row. `q3\build\reuc-build\quest_chain.sh NAME PC_SAVE "ROUTE" COUNT WEAPONS [ENV_LINE...]` copies a save of the PC to the headset and starts the app with the test server. It goes to the main menu, takes CHRONICLES and follows the route to the weapon screen. Then it plays COUNT chapters one after the other in one session of the app. Between two chapters it uses the step after a chapter from "The menus". After each chapter it pulls the save to `save_<script>_done` and writes one line to `chain.log`. It takes a picture of the headset screen each 60 s.
+
+Three facts that the script needs:
+
+- `adb push` cannot make folders inside the app folder of the headset, and the shell can. So the script pushes the save to `/data/local/tmp` and copies it with `cp -r` in the shell.
+- The stage screen, the chapter screen and the character screen are 3D scenes. With the wide view of the headset the pointer covers 1.8 times the angle across and 2.7 times the angle up. Divide the aims of the flat picture by these two numbers. The stereo preview of the PC has the same wide view, so try a route there first.
+- The first start after a session with new shader keys folds a module for each new key (see "Keys without a folded module"). After the first three chapters of this section that start took 3 minutes. The driver waits 120 s for the test channels of the app, so start the app once by hand before the run.
+
+Routes that were used, as aims for the headset. Each one follows CHRONICLES at the main menu:
+
+| Script | Save | Steps |
+|---|---|---|
+| `s30c2` | `save_s10c8_done` | `aim:0.2,0.04` (Operation Javier), `aim:-0.033,-0.1` (the chapter) |
+| `s20c1` | `save_s30c2_done` | `aim:0.078,-0.119` (Game of Oblivion), `aim:0.028,0.0` (the chapter), `aim:-0.139,0.0` (the character at the left) |
+| `s30c4` | `save_s30c3_done` | `aim:0.2,0.04`, `aim:0.078,0.0` (PC preview only) |
+
+The first run (`quest2\g3`, app 0.0.40) had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. It had no crash. It was stopped in `s20c2` because of the fault below.
+
+| Script | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
+|---|---|---|---|---|
+| `s30c2` | 632 | 68.3 | 91 % | 37 fps |
+| `s20c1` | 737 | 64.2 | 72 % | 40 fps |
+| `s20c2`, the first part | 343 | 65.0 | 80 % | 28 fps |
+
+The app of that run had no folded module for 323 keys of these chapters, so their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now (954 keys). The app 0.0.41 has them, and its start takes 4.3 s.
+
+#### The black picture after a change of the render scale
+
+In `s20c1` the pictures of the headset screen were black for 8 minutes, from room R203 to the end of the chapter. They had a few small specks of colour. The game went on, the frame rate was normal, and the log had no fault line. The stereo preview of the PC showed the same rooms without a fault.
+
+The cause. The screen pass of the headset (`XrCompositor::record` in `renderer/xr_compositor.cpp`) keeps a descriptor set for each group of image views that it saw. A descriptor set is the list of pictures that a shader reads. The pass finds a kept set by the handles of the views. When the render scale changes, the renderer destroys the frame buffer (EFB) and makes a new one. The driver can give the new view the handle of a destroyed view. The pass then takes a kept set that still names the destroyed frame buffer, and the eyes show its freed memory. The picture stays black until the next change of the scale gives the view another handle. The automatic render scale changes the scale about ten times in a chapter, so the fault came with it (app 0.0.24). A change of the Render scale in the settings panel goes the same way, in both games.
+
+The fix. `XrCompositor::forget_views` drops the kept sets. The renderer calls it before it destroys the frame buffer (`renderer/vulkan_renderer.cpp`). It also calls it before it destroys the images of a HUD layer or a glow layer. The GPU is idle at these places.
+
+How it was found:
+
+- The black time started at the log line of one change of the scale, from 1.75 to 1.5. It ended at the line of the next change. Eight other changes of that run had no fault.
+- `q3\build\reuc-build\quest_scale.sh NAME [COUNT] [STEP]` plays the first chapter and forces a change of the scale each STEP presented frames (`UC_VR_SCALE_SWITCH`, with `UC_AUTO_SCALE=0`). `scalewatch.py` takes pictures of the headset screen all the time, and `scale_report.py` counts the changes after which each picture was dark.
+- With the app 0.0.40, 2 of 31 changes with pictures were dark (`quest2\sc2`). One of them stayed dark for 4 s, until the next change.
+- With the app 0.0.41, none of 53 changes with pictures was dark (`quest2\sc41a`).
+- The same forced changes in the stereo preview of the PC gave no dark frame in 63 changes. The preview does not use `XrCompositor`.
+
+A picture of the headset screen takes 1 to 7 s, so only a part of the changes has a picture. `env.txt` now takes lines of up to 16,383 characters (`game/android_main.cpp`). Before, a line ended after 511 characters, which is 46 changes.
+
+Lesson: the long runs of 16 and 17 November measured the frame rate and the crashes only. A black picture does not show in these numbers. Take pictures of the headset screen in each long run. `blackwatch.py` does that, and it prints a line for each black picture.
+
+#### Other checks of 24 November 2026
+
+- The screens after a death. Without `UC_DC_GOD` and without a shot, the first enemy of the first chapter kills the player. The game shows "You are Dead" and "Continue? Yes / No" (music `menu02.brstm`). Yes is at `aim:0.133,0.407`. A press of A there starts the chapter again from its first movie. This works in the flat picture (`pv\dm1`) and in the stereo preview with a turned and moved head (`pv\ds2`). `q3\build\reuc-build\pc_death.sh NAME mono|stereo` repeats it.
+- `q3\build\reuc-build\pc_tour.sh NAME SAVE "ROUTE"` plays the first minutes of a chapter in the stereo preview, with a frame each 10 s. The head is turned and moved (`UC_VR_POS=0.2,-0.3,0.2`). The frames of `s20c1` (the whole chapter, `pv\t_s20c1`) and of `s30c4` (`pv\t_s30c4`) show no fault of the view. The sky of both chapters is right with the moved head.
+- One headset picture at the start of `s30c2` is very bright: the two characters are almost white. The PC shows the same look at that place while a rocket of the bot explodes. It is the flash of the game and not a fault.
+
+A person played the app on 17, 18 and 20 November 2026. The sections "The first play by a person" and "The second play by a person" have the reports. Not done on the headset: a fight against a boss by a person, and a check of the sound by a person. The remote play has no tracked ray, so its shots still follow the pointer.
 
 ## State
 
