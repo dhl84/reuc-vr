@@ -269,7 +269,7 @@ The fifth and the seventh chapter end at the main menu, not at the menu with CHR
 - Without `UC_DC_BLOOD=1` the bot gets the bad ending of the fifth chapter, and the sixth chapter stays closed.
 - The scripts `z10c1` and `z10c2` were not started. The extra chapter `s00c1` was played once.
 - The sixth and the seventh chapter were not played with `UC_DC_WEAK=1`.
-- The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. The cause was not looked for.
+- The start of `s30c3` has one frame whose left third is drawn as horizontal streaks. Fourteen frames of the same scene from 24 November 2026 show a waterfall at that wall and no fault (`pv\t_s30c3_flat`). So the streaks are very likely the waterfall, seen from above.
 - The six new entries are not in `project/dc/dc.cfg`.
 - The pictures of the two renderer changes were not compared with a console. Three frames of room R213 after the change show the corridor and its enemies without a fault. No frame of room R224 was looked at.
 - With `UC_DC_ROCKET=1` the bow gun and the hand grenade have no weapon slot, and the save keeps that.
@@ -974,7 +974,7 @@ Two traps of these measurements:
 
 The automatic render scale (`uc::AutoScale` in `renderer/auto_scale.h`, app 0.0.24). The GPU of the headset stays at 545 MHz while it is less than about 85 % busy. A frame that needs a little more than one refresh at 545 MHz misses each third refresh. The GPU then idles between the frames, so the clock does not rise. The headset therefore gives the picture fewer pixels while the GPU limits the frame rate:
 
-- It has three levels: the chosen scale, 0.875 of it and 0.75 of it. For the scale 2.0 these are 2.0, 1.75 and 1.5.
+- It has four levels: the chosen scale, and 0.875, 0.75 and 0.625 of it. For the scale 2.0 these are 2.0, 1.75, 1.5 and 1.25. The fourth level came on 24 November 2026 (see "The fourth level of the automatic render scale").
 - Each second it reads the frame rate and the GPU time of a frame.
 - A slow second has less than 93 % of the refresh rate and a GPU time above 78 % of the period. After two slow seconds it goes one level down.
 - It then judges the step. If the step gave no more frames and the GPU time did not fall, the pixels were not the limit. It goes back, and the next try waits longer (60 s at first, 600 s at most).
@@ -1025,15 +1025,23 @@ Routes that were used, as aims for the headset. Each one follows CHRONICLES at t
 | `s20c1` | `save_s30c2_done` | `aim:0.078,-0.119` (Game of Oblivion), `aim:0.028,0.0` (the chapter), `aim:-0.139,0.0` (the character at the left) |
 | `s30c4` | `save_s30c3_done` | `aim:0.2,0.04`, `aim:0.078,0.0` (PC preview only) |
 
-The first run (`quest2\g3`, app 0.0.40) had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. It had no crash. It was stopped in `s20c2` because of the fault below.
+The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. The first run (`quest2\g3`, app 0.0.40) played `s30c2` and `s20c1` and was stopped in `s20c2` because of the black picture (see below). The second run (`quest2\g4`, app 0.0.41) played six chapters in a row in 1 h 40 min. Its bot then stood in `s20c6` (see "The bot in the wide view"). The third run (`quest2\h2`, app 0.0.42) went on from the checkpoint of `s20c6` and played to the end of `s30c3`. No run had a crash.
 
-| Script | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
-|---|---|---|---|---|
-| `s30c2` | 632 | 68.3 | 91 % | 37 fps |
-| `s20c1` | 737 | 64.2 | 72 % | 40 fps |
-| `s20c2`, the first part | 343 | 65.0 | 80 % | 28 fps |
+| Script | App | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
+|---|---|---|---|---|---|
+| `s30c2` | 0.0.41 | 623 | 67.2 | 85 % | 44 fps |
+| `s20c1` | 0.0.41 | 794 | 62.6 | 64 % | 42 fps |
+| `s20c1` | 0.0.42 | 754 | 65.3 | 78 % | 46 fps |
+| `s20c2` | 0.0.41 | 587 | 65.9 | 80 % | 44 fps |
+| `s20c3` | 0.0.41 | 1,444 | 66.6 | 84 % | 27 fps |
+| `s20c4` | 0.0.41 | 853 | 65.7 | 81 % | 27 fps |
+| `s20c5` | 0.0.41 | 720 | 63.0 | 66 % | 23 fps |
+| `s20c6`, to the mine room | 0.0.41 | 1,790 | 61.4 | 50 % | 46 fps |
+| `s20c6`, from the checkpoint | 0.0.42 | 1,189 | 69.5 | 99 % | 25 fps |
+| `s20c7` | 0.0.42 | 1,930 | 58.5 | 42 % | 24 fps |
+| `s30c3` | 0.0.42 | 798 | 70.3 | 95 % | 45 fps |
 
-The app of that run had no folded module for 323 keys of these chapters, so their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now (954 keys). The app 0.0.41 has them, and its start takes 4.3 s.
+The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now (1,359 keys). With the keys in the build the app starts in 4 to 5 s.
 
 #### The black picture after a change of the render scale
 
@@ -1055,10 +1063,29 @@ A picture of the headset screen takes 1 to 7 s, so only a part of the changes ha
 
 Lesson: the long runs of 16 and 17 November measured the frame rate and the crashes only. A black picture does not show in these numbers. Take pictures of the headset screen in each long run. `blackwatch.py` does that, and it prints a line for each black picture.
 
+#### The fourth level of the automatic render scale
+
+In `s20c1` the automatic render scale stayed at its lowest level (1.5) for the whole chapter. The GPU took 13.3 ms a frame at the median there, and 14.9 ms in the seconds below 60 fps. The GPU time followed the pixels: 18.9 ms at the scale 2.0 and 15.5 ms at 1.75. So the rule has a fourth level since the app 0.0.42: 0.625 of the chosen scale, which is 1.25 for the scale 2.0 (`renderer/auto_scale.h`). With it the chapter had 78 % of its seconds at 60 fps or more, against 64 %. In the minutes at 1.25 the GPU took 11.4 ms at the median.
+
+#### A scene below 60 fps
+
+The last boss of `s20c7` ran at 53 to 55 fps for about 10 minutes (`quest2\h2`). The GPU took 15.5 ms a frame at the scale 1.25, at 640 MHz. A frame has about 1,150 draws and 16 EFB copies there. The step from 1.5 to 1.25 did not make the GPU time shorter, so the pixels are not the limit. Only four new keys came in that fight, so the ubershader is not the cause. This is the same kind of scene as the span of `s10c6` (see "Scenes with many draws"). The cause of the GPU cost of a draw is still not found.
+
+#### The bot in the wide view
+
+The `bot` step of `scripts/drive.py` presses A at fixed places for a choice of ways, and it shoots at a grid of five rows. Two places stopped it:
+
+- With the wide view the pointer covers 1.8 times the angle across and 2.7 times the angle up. The bot did not take a way at the choice in `s30c6` (stereo preview). After the step `wide:1.8,2.7` the bot divides its shot places and its prompt places by these factors.
+- In the mine room of `s20c6` the game waits for a shot at an enemy with a rifle who stands low in the picture. The grid of the bot ends above him. The bot stood there for 20 minutes on the headset, and it stood there in the flat picture of the PC too. The step `rows:-1,1,-3,3,0,5,-5` gives the grid two more rows. With it the PC bot passed the room after about 3,000 points, and the headset bot passed it too.
+
+`q3\build\reuc-build\quest_chain2.sh` uses both steps. `CHAIN_RESUME=1` is for a route that ends with YES in the checkpoint dialog. With six pieces the piece of `s20c6` is at `aim:-0.061,-0.156`. YES is at `aim:-0.16,0.115` in the wide view too, because the dialog is a 2D layout.
+
 #### Other checks of 24 November 2026
 
+- The fix for the black picture in the long runs. `blackwatch.py` took a picture each 30 s. The runs `quest2\g4`, `quest2\h1` and `quest2\h2` had 47 automatic changes of the scale and 348 pictures. One picture was dark, at a room load, and the next one was right.
+
 - The screens after a death. Without `UC_DC_GOD` and without a shot, the first enemy of the first chapter kills the player. The game shows "You are Dead" and "Continue? Yes / No" (music `menu02.brstm`). Yes is at `aim:0.133,0.407`. A press of A there starts the chapter again from its first movie. This works in the flat picture (`pv\dm1`) and in the stereo preview with a turned and moved head (`pv\ds2`). `q3\build\reuc-build\pc_death.sh NAME mono|stereo` repeats it.
-- `q3\build\reuc-build\pc_tour.sh NAME SAVE "ROUTE"` plays the first minutes of a chapter in the stereo preview, with a frame each 10 s. The head is turned and moved (`UC_VR_POS=0.2,-0.3,0.2`). The frames of `s20c1` (the whole chapter, `pv\t_s20c1`) and of `s30c4` (`pv\t_s30c4`) show no fault of the view. The sky of both chapters is right with the moved head.
+- `q3\build\reuc-build\pc_tour.sh NAME SAVE "ROUTE"` plays the first minutes of a chapter in the stereo preview, with a frame each 10 s. The head is turned and moved (`UC_VR_POS=0.2,-0.3,0.2`). The frames show no fault of the view. They are the whole chapters `s20c1`, `s20c2` and `s20c3` and the first minutes of `s30c4` and `s30c6` (`pv\t_s20c1` and so on). The sky of these chapters is right with the moved head.
 - One headset picture at the start of `s30c2` is very bright: the two characters are almost white. The PC shows the same look at that place while a rocket of the bot explodes. It is the flash of the game and not a fault.
 
 A person played the app on 17, 18 and 20 November 2026. The sections "The first play by a person" and "The second play by a person" have the reports. Not done on the headset: a fight against a boss by a person, and a check of the sound by a person. The remote play has no tracked ray, so its shots still follow the pointer.
