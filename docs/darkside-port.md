@@ -756,6 +756,16 @@ A later look on 24 November 2026 closed three points:
 
 How to repeat the hit frames: `q3\build\reuc-build\pc_hit.sh NAME [YAW] [PITCH]` plays the first chapter with the bot. `UC_DC_FREEZE_ON_HIT=N` (with `UC_DC_GOD=1`) stops the game time at the Nth hit on a player. `UC_DC_FREEZE_HIT_DELAY` is the count of retraces from the hit to the stop (12). With `UC_DC_FREEZE_HIT_HOLD=<retraces>` the time runs again after that many retraces, and the next hit stops it again. `HIT_SHOTS=8` of the script takes a frame at each of eight stops, and `MODE=mono` gives the flat picture.
 
+The check on the headset on 24 November 2026, with the bot in the first chapter and `UC_DC_GOD=1`:
+
+| Run | App | Mean fps | Seconds at 60 or more | Lowest second | Crash reports |
+|---|---|---|---|---|---|
+| `q40` | 0.0.40 | 68.4 | 84 % | 50 | 0 |
+| `q39b` | 0.0.39 | 67.9 | 81 % | 49 | 0 |
+| `q39` (19 November) | 0.0.39 | 70.7 | 99 % | 58 | 0 |
+
+The two builds are equal in runs of the same day. Both runs of this day are slower than the run of 19 November in the last minute of the chapter. The median GPU time of a frame in that minute was 11.8 ms (`q40`) and 13.4 ms (`q39b`). It was 10.4 ms on 19 November. On this day another VR app (`com.vrmin.app`) was open on the headset and used about 14 % of a CPU core. That is a likely cause, and it is not proven. Compare two builds only in runs of the same day.
+
 New test aids: `UC_ARG_TRACE=<value>/<value>,<tolerance>` prints each function of the game that is entered with one of the values in f1 or f2. It prints a function once for each caller. It needs a build with `UC_TRACE`, which is the default of the PC build of this game. With `UC_ARG_TRACE_FILE=<file>` the trace starts at the moment that file appears. It found the callers of `MTXLightPerspective` and the view cone. `pc_water.sh` plays to the flooded place and takes frames there (the voice line `VO_3010309.brstm` is its marker, because runs differ in their pace). With `UC_POST_DUMP_FILE=<file>` the draw dump starts at the frame after that file appears. The `[post-class]` lines also give the viewport, the projection scales and whether the draw reads a copy. `UC_SPRITE_HIST=1` prints, each 1200 frames and for each call site, the count of world draws in steps of 0.05 of the half picture. `UC_DC_VIS_LOG=1` (with `UC_ARG_TRACE`) prints each change of the visibility of a model part with its caller. For a hide by the view test it also prints the radius and the distance of the sphere. In `pc_water.sh`, `WATER_END` and `WATER_TAIL` set the steps of the driver at the marker.
 
 ### The finer picture
