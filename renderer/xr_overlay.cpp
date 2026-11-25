@@ -218,10 +218,11 @@ void XrOverlay::draw(VkCommandBuffer command, const xr::Matrices& views, const s
     for (const auto& f : frames) any |= f.gun_valid && (f.show_gun || f.beam || f.dot || f.flash);
     for (unsigned i = 0; i < 2; ++i) any |= panels[i].visible && panel_ready_[i];
     if (!any) return;
-    const VkRect2D rect{{0, 0}, {width_, height_}};
+    const VkExtent2D part = part_.width ? part_ : VkExtent2D{width_, height_};
+    const VkRect2D rect{{0, 0}, part};
     int bound = -1; bool forced_depth = false;
     auto viewport = [&](bool force) {   // HOTD4's forced depth: the whole draw at depth 1
-        const VkViewport v{0, 0, float(width_), float(height_), force ? 1.f : 0.f, 1};
+        const VkViewport v{0, 0, float(part.width), float(part.height), force ? 1.f : 0.f, 1};
         vkCmdSetViewport(command, 0, 1, &v);
     };
     vkCmdSetScissor(command, 0, 1, &rect); viewport(false);

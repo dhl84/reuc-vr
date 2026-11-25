@@ -3296,6 +3296,17 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             set_render_scale(native_eye_scale_ ? native : scale);
             std::fprintf(stderr,"[vr] render scale %.3f at frame %u (UC_VR_SCALE_SWITCH)\n",configured_scale_,frame_index_);
         }
+        {   // UC_PROBE_FILE (graphics_effects.h): the probes s100, s150 and s200 hold the render scale at 1.0, 1.5 or 2.0
+            static double probe_scale=0, scale_before=0;
+            const uint32_t scale_probes=renderer_probes();
+            const double wanted=scale_probes&kProbeScale100 ? 1.0 : scale_probes&kProbeScale150 ? 1.5 : scale_probes&kProbeScale200 ? 2.0 : 0.0;
+            if (wanted!=probe_scale) {
+                if (probe_scale==0) scale_before=configured_scale_;
+                probe_scale=wanted; native_eye_scale_=false; auto_scale_={};
+                set_render_scale(wanted>0 ? wanted : scale_before);
+                std::fprintf(stderr,"[vr] render scale %.3f at frame %u (UC_PROBE_FILE)\n",configured_scale_,frame_index_);
+            }
+        }
     }
     if (auto_scale_on_ && packet.present && display) auto_scale_tick();
     const bool has_output = swapchain_ != VK_NULL_HANDLE || (xr_ && efb_);   // the headset has no window swapchain: its output is the XR swapchain
@@ -4124,7 +4135,15 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             megapixels.clear(); since = std::chrono::steady_clock::now();
         }
     }
-    for (Texture* copy : copy_mips) record_copy_mips(slot.command, *copy);
+    // UC_PROBE_FILE (graphics_effects.h): the uploads of 2 s for the line "[probe-uploads]", and the probes nomip and nocopymip
+    const uint32_t upload_probes=renderer_probes();
+    static uint64_t probe_uploads=0, probe_upload_texels=0, probe_mip_blits=0, probe_copy_mips=0; static auto probe_upload_since=std::chrono::steady_clock::now();
+    if (std::getenv("UC_PROBE_FILE") && std::chrono::steady_clock::now()-probe_upload_since>std::chrono::seconds(2)) {
+        std::fprintf(stderr,"[probe-uploads] bits %u, 2 s: %llu textures uploaded (%llu texels), %llu blits for their levels, %llu EFB copies got levels\n",upload_probes,(unsigned long long)probe_uploads,(unsigned long long)probe_upload_texels,(unsigned long long)probe_mip_blits,(unsigned long long)probe_copy_mips);
+        probe_uploads=probe_upload_texels=probe_mip_blits=probe_copy_mips=0; probe_upload_since=std::chrono::steady_clock::now();
+    }
+    probe_copy_mips+=copy_mips.size();
+    if (!(upload_probes&kProbeNoCopyMip)) for (Texture* copy : copy_mips) record_copy_mips(slot.command, *copy);
     VkDeviceSize staged=0;   // pooled textures (make_texture) have no buffer of their own: their texels go through one buffer of the slot
     for (const auto& held : slot.textures) if (!held->initialized && held->pooled) staged+=held->source->levels[0].rgba.size();
     if (staged>slot.staging.size) { destroy_buffer(slot.staging); slot.staging=make_buffer(std::max<VkDeviceSize>(staged*2,16384),VK_BUFFER_USAGE_TRANSFER_SRC_BIT); }
@@ -4147,7 +4166,10 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             copies[i].bufferOffset=at; copies[i].imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,i,0,1}; copies[i].imageExtent={width,height,1}; at+=texture.bc7 ? gx::bc7_level_size(width,height) : VkDeviceSize(width)*height*4;
         }
         vkCmdCopyBufferToImage(slot.command,upload,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(copies.size()),copies.data());
-        if(texture.auto_mips) {   // each level a linear blit of the one above, as EFB copies make theirs (record_texture_copy)
+        ++probe_uploads; probe_upload_texels+=uint64_t(texture.extent.width)*texture.extent.height; if(texture.auto_mips) probe_mip_blits+=texture.mip_levels-1;
+        if(texture.auto_mips && (upload_probes&kProbeNoMip))   // the probe: the levels keep what they had
+            barrier(slot.command,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,texture.mip_levels);
+        else if(texture.auto_mips) {   // each level a linear blit of the one above, as EFB copies make theirs (record_texture_copy)
             for(uint32_t i=1;i<texture.mip_levels;++i) {
                 barrier(slot.command,texture.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_READ_BIT,VK_IMAGE_ASPECT_COLOR_BIT,1,i-1);
                 VkImageBlit mip{}; mip.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,i-1,0,1}; mip.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,i,0,1};
@@ -4203,7 +4225,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (gpu_ops_enabled()) pass_timer_.begin(slot.command,uint32_t(&slot-slots_.data()),GpuPass::vertex_prepass);
             vkCmdBindPipeline(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_pipeline_);
             vkCmdBindDescriptorSets(slot.command,VK_PIPELINE_BIND_POINT_COMPUTE,xform_layout_,0,1,&slot.xform_set,0,nullptr);
-            vkCmdDispatch(slot.command,uint32_t(chunks.size()),1,1);
+            if (!(renderer_probes()&kProbeNoDispatch)) vkCmdDispatch(slot.command,uint32_t(chunks.size()),1,1);   // UC_PROBE_FILE: the probe nodispatch
             VkMemoryBarrier2 written{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
             written.srcStageMask=VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; written.srcAccessMask=VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
             written.dstStageMask=VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT; written.dstAccessMask=VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
@@ -4697,13 +4719,14 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const auto set_draw_state=[&](const PipelineKey& key) {
             if (static_depth_) return;   // in the pipeline
             const bool decal=decal_depth_bias(key);
-            const uint32_t state=((key[0]>>14)&3)|((key[68]&31)<<2)|(uint32_t(decal)<<7);
+            const bool zfail=renderer_probes()&kProbeZFail;   // UC_PROBE_FILE: each draw fails the depth test
+            const uint32_t state=((key[0]>>14)&3)|((key[68]&31)<<2)|(uint32_t(decal)<<7)|(uint32_t(zfail)<<8);
             if (state==bound_state) return;
             bound_state=state;
             vkCmdSetCullMode(slot.command,cull_mode(key));
-            vkCmdSetDepthTestEnable(slot.command,key[68]&1);
+            vkCmdSetDepthTestEnable(slot.command,zfail ? VK_TRUE : key[68]&1);
             vkCmdSetDepthWriteEnable(slot.command,(key[68]>>4)&1);
-            vkCmdSetDepthCompareOp(slot.command,VkCompareOp((key[68]>>1)&7));
+            vkCmdSetDepthCompareOp(slot.command,zfail ? VK_COMPARE_OP_NEVER : VkCompareOp((key[68]>>1)&7));
             vkCmdSetDepthBias(slot.command,decal ? float(kDecalDepthBias) : 0.f,0.f,decal ? kDecalSlopeBias : 0.f);
         };
         bool probe_bound=false;
@@ -4753,13 +4776,30 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         };
         std::optional<Run> pending;
         size_t run_last=0;   // the pending run's last draw
+        // UC_PROBE_FILE (graphics_effects.h): the probes of this pass, and their line "[probe]" each 2 s with what went to the GPU.
+        const uint32_t probes=renderer_probes();
+        static uint64_t probe_runs=0, probe_binds=0, probe_alpha=0, probe_passes=0; static auto probe_since=std::chrono::steady_clock::now();
+        if (std::getenv("UC_PROBE_FILE")) {
+            ++probe_passes;
+            if (std::chrono::steady_clock::now()-probe_since>std::chrono::seconds(2)) {
+                std::fprintf(stderr,"[probe] bits %u, 2 s: %llu passes, %llu runs issued, %llu pipeline binds, %llu second destination-alpha draws\n",probes,(unsigned long long)probe_passes,(unsigned long long)probe_runs,(unsigned long long)probe_binds,(unsigned long long)probe_alpha);
+                probe_runs=probe_binds=probe_alpha=probe_passes=0; probe_since=std::chrono::steady_clock::now();
+            }
+        }
+        std::vector<Run> held_runs;   // the probe sort: the runs of the pass, issued at its end
         const auto issue_run=[&](const Run& run) {
+            if (probes&(kProbeEmpty|kProbeNoBlend|kProbeNoOpaque)) {
+                const auto mode=packet.draws[run.d].blend.mode; const bool blending=mode==1 || mode==3;
+                if ((probes&kProbeEmpty) || (blending ? probes&kProbeNoBlend : probes&kProbeNoOpaque)) return;
+            }
+            ++probe_runs; const uint64_t binds_before=pipeline_binds_;
             const VkPipeline family=run.few[0] ? run.few[0] : run.few[1];   // the smallest family of the ubershader that holds every draw of the run
             if (run.uber) { ++uber_runs_; uber_draws_+=run.draws; uber_pixels_+=run.pixels; uber_few_runs_+=family!=VK_NULL_HANDLE; }
             else if (run.merge) ++uber_singles_;   // small draws that stayed on their folded module (nothing to join through the ubershader)
             const auto& draw=packet.draws[run.d]; const auto& info=gpu_draws[run.d];
             if (no_dedup || std::memcmp(&run.viewport,&bound_viewport,sizeof run.viewport)) { vkCmdSetViewport(slot.command,0,1,&run.viewport); bound_viewport=run.viewport; }
-            if (no_dedup || std::memcmp(&run.scissor,&bound_scissor,sizeof run.scissor)) { vkCmdSetScissor(slot.command,0,1,&run.scissor); bound_scissor=run.scissor; }
+            const VkRect2D run_scissor=probes&kProbeTiny ? VkRect2D{{0,0},{1,1}} : run.scissor;   // UC_PROBE_FILE: one pixel
+            if (no_dedup || std::memcmp(&run_scissor,&bound_scissor,sizeof run_scissor)) { vkCmdSetScissor(slot.command,0,1,&run_scissor); bound_scissor=run_scissor; }
             if (bound_indices!=&slot.xform_indices) { vkCmdBindIndexBuffer(slot.command,slot.xform_indices.buffer,0,VK_INDEX_TYPE_UINT32); bound_indices=&slot.xform_indices; bound_index_offset=0; }
             bind_pipeline(run.uber && family ? family : run.pipeline);
             set_draw_state(info.key);
@@ -4786,17 +4826,20 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             vkCmdDrawIndexed(slot.command,run.count,1,run.first,0,0);
             ++issued_draws_;
             const auto depth=draw.uniforms->pixel[1]&31;
-            if((draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw))) {   // as below: destination alpha after RGB blending
+            if(!(probes&kProbeAlpha2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw))) {   // as below: destination alpha after RGB blending
                 const auto alpha_key=pipeline_key(draw,true);
                 const auto alpha=pipeline_for(alpha_key);
                 bind_pipeline(alpha.pipeline);
                 set_draw_state(alpha_key);
                 if (alpha.uber) { push.alpha_pass=1; vkCmdPushConstants(slot.command,layout_,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,uint32_t(sizeof push),&push); }
                 vkCmdDrawIndexed(slot.command,run.count,1,run.first,0,0);
-                ++alpha_passes_;
+                ++alpha_passes_; ++probe_alpha;
             }
+            probe_binds+=pipeline_binds_-binds_before;
             if (counted) { vkCmdEndQuery(slot.command,frag_pool_,uint32_t(frag_queries_.size()*layers_)); frag_queries_.push_back(uint32_t(run.d)); }
         };
+        // the probe sort holds the runs of the pass. The end of the pass orders them by their pipeline and issues them.
+        const auto emit_run=[&](const Run& run) { if (probes&kProbeSort) held_runs.push_back(run); else issue_run(run); };
         for (size_t d=first; d<last; ++d) {
             const auto& draw=packet.draws[d]; const auto& info=gpu_draws[d];
             const size_t set_index=d;
@@ -5126,7 +5169,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 }();
                 if (table_ok && !particle_pass && std::find(table_skipped.begin(),table_skipped.end(),draw.callsite)==table_skipped.end()) {
                     const auto depth=draw.uniforms->pixel[1]&31;
-                    const bool second_alpha=(draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw));
+                    const bool second_alpha=!(probes&kProbeJoin2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw));
                     // Lazily (the default): the draw keeps its folded module and own set and only remembers its table variant (run.table_pipeline);
                     // the run moves onto the table when a draw with other textures joins it. A single draw or a run of equal textures reading the
                     // table cost the headset per fragment (non-uniform descriptor indexing: the full-screen glows, fades and sprites ~2x, S18
@@ -5218,7 +5261,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                         }
                     }
                 }
-                else { if (pending) issue_run(*pending); pending=run; run_last=d; }
+                else { if (pending) emit_run(*pending); pending=run; run_last=d; }
                 continue;
             }
             if (set_shading_rate_) {
@@ -5250,7 +5293,12 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             }
             if (counted) { vkCmdEndQuery(slot.command,frag_pool_,uint32_t(frag_queries_.size()*layers_)); frag_queries_.push_back(uint32_t(d)); }
         }
-        if (pending) issue_run(*pending);
+        if (pending) emit_run(*pending);
+        if (!held_runs.empty()) {
+            const auto shown=[](const Run& run) { const VkPipeline family=run.few[0] ? run.few[0] : run.few[1]; return run.uber && family ? family : run.pipeline; };
+            std::stable_sort(held_runs.begin(),held_runs.end(),[&](const Run& a,const Run& b) { return std::less<VkPipeline>()(shown(a),shown(b)); });
+            for (const auto& run:held_runs) issue_run(run);
+        }
     }
     vkCmdEndRendering(slot.command);
     barrier(slot.command, target.color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
@@ -5709,6 +5757,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             hud.glow_light=glow_.light_view; hud.glow_transmit=glow_.transmit_view;
             hud.glow={glow_.map.rows[0][0][0],glow_.map.rows[0][0][2],glow_.map.rows[0][1][1],glow_.map.rows[0][1][2]};
         }
+        xr_->set_shown_pixels(uint32_t(u1-u0));
         xr_->record(slot.command, efb_, efb_view_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, {u0/w, v0/h, (u1-u0)/w, (v1-v0)/h}, fovea_level_ ? fovea_eye_.view : VK_NULL_HANDLE, fovea_texel_, (hud_.used || glow_.used) ? &hud : nullptr);
         hud_.used=glow_.used=false;
     }
@@ -5794,6 +5843,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         if (packet.present && upscaler_ && !scene_only) scene_clear_={true,packet.display_source,packet.clear_color,packet.clear_depth};
     }
 #ifdef UC_OPENXR
+    if (xr_ && xr_frame_ && packet.present && display && !xr_direct) xr_->set_shown_pixels(0);   // the slot image: the whole eye images
     if (xr_ && xr_frame_ && packet.present && display && !xr_direct) xr_->record(slot.command, slot.image, slot.view, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, {0, 0, 1, 1}, fovea_level_ ? fovea_eye_.view : VK_NULL_HANDLE, fovea_texel_);
     if (capture_xr && xr_frame_ && packet.present && display) xr_->copy_capture(slot.command,slot.image,extent_);
 #endif

@@ -21,6 +21,7 @@ public:
     // Before the eye pass, outside any rendering: the panel pictures that changed (null: unchanged).
     void upload(VkCommandBuffer command, const unsigned char* panel, const unsigned char* label);
     // Inside the eye pass (multiview, depth attached): what HOTD4's Overlay::draw draws.
+    void set_part(VkExtent2D part) { part_ = part; }   // XrCompositor::record, before draw
     void draw(VkCommandBuffer command, const xr::Matrices& views, const std::array<std::array<float,3>,2>& eyes, const std::array<XoFrame,2>& frames,
               const std::array<xr::PanelDraw,2>& panels);
 private:
@@ -32,6 +33,7 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkPhysicalDeviceMemoryProperties memory_{};
     uint32_t width_ = 0, height_ = 0;
+    VkExtent2D part_{};   // set_part: the part of the eye images that the pass of this frame fills (0: all)
     bool fovea_support_ = false;
     VkImage depth_ = VK_NULL_HANDLE; VkDeviceMemory depth_memory_ = VK_NULL_HANDLE; VkImageView depth_view_ = VK_NULL_HANDLE;
     struct Mesh { VkDeviceSize offset = 0; uint32_t vertices = 0; float rail = 0; };

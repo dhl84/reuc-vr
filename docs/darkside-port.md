@@ -961,7 +961,7 @@ After the change the GPU limits most of that scene. At the render scale 2.0 it r
 A span of `s10c6` stays at 61 fps with the app 0.0.28. It starts about six minutes into the chapter. A frame has about 970 draws there, in 27 packets. The GPU is 93 % busy at 640 MHz and takes 14.6 ms a frame. What was measured there:
 
 - The render scale does not change the GPU time. The scene packet took 7.9 ms at the scale 2.0 and 6.6 ms at the scale 1.0. `UC_VR_SCALE_SWITCH=<frame>:<scale>,...` changed the scale at fixed frames for this test.
-- The vertex pre-pass is not the cost. It took 0.05 ms a frame (the line `the vertex pre-pass of all packets` of `UC_GPU_PACKETS=1`).
+- The line `the vertex pre-pass of all packets` of `UC_GPU_PACKETS=1` gave 0.05 ms a frame for the vertex pre-pass. That line is wrong on this GPU: the pre-pass takes about 1.5 ms (see "The parts of the GPU time of a frame").
 - Without the pre-pass (`UC_NO_XFORM=1`) the span ran at 42 fps, with 22.8 ms of GPU time a frame.
 - The time of the scene packet follows its draws more than its triangles. A packet with 712 draws and 193,000 indices took 7.3 ms. A packet with 341 draws and 205,000 indices took 3.9 ms.
 
@@ -974,7 +974,7 @@ Two traps of these measurements:
 
 The automatic render scale (`uc::AutoScale` in `renderer/auto_scale.h`, app 0.0.24). The GPU of the headset stays at 545 MHz while it is less than about 85 % busy. A frame that needs a little more than one refresh at 545 MHz misses each third refresh. The GPU then idles between the frames, so the clock does not rise. The headset therefore gives the picture fewer pixels while the GPU limits the frame rate:
 
-- It has four levels: the chosen scale, and 0.875, 0.75 and 0.625 of it. For the scale 2.0 these are 2.0, 1.75, 1.5 and 1.25. The fourth level came on 24 November 2026 (see "The fourth level of the automatic render scale").
+- It has five levels: the chosen scale, and 0.875, 0.75, 0.625 and 0.5 of it. For the scale 2.0 these are 2.0, 1.75, 1.5, 1.25 and 1.0. The fourth level came on 24 November 2026 (see "The fourth level of the automatic render scale"). The fifth came on 25 November 2026 (see "The parts of the GPU time of a frame").
 - Each second it reads the frame rate and the GPU time of a frame.
 - A slow second has less than 93 % of the refresh rate and a GPU time above 78 % of the period. After two slow seconds it goes one level down.
 - It then judges the step. If the step gave no more frames and the GPU time did not fall, the pixels were not the limit. It goes back, and the next try waits longer (60 s at first, 600 s at most).
@@ -1052,7 +1052,7 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s10c8`, from the Tyrant | 0.0.43 | 587 | 62.7 | 66 % | 37 fps |
 | `s00c1` | 0.0.43 | 736 | 62.0 | 64 % | 29 fps |
 
-The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 has 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. The list has 1,772 keys after the runs of `s10c8` and `s00c1`, for the next build. With the keys in the build the app starts in 4 to 5 s.
+The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 was built for 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. Its package still holds the 1,359 keys of 0.0.42 (see the traps of "The parts of the GPU time of a frame"). The headset folds the other keys itself at a start. The list has 1,772 keys after the runs of `s10c8` and `s00c1`. The app 0.0.44 is the first with all of them in its package. With the keys in the build the app starts in 4 to 5 s.
 
 #### The black picture after a change of the render scale
 
@@ -1102,9 +1102,79 @@ Where the GPU time goes in that scene. A run with `UC_GPU_PACKETS=1` (`quest2\pk
 | The packet with 50 to 199 draws and no copy | 1.5 ms |
 | All other packets | about 3.7 ms |
 
-A frame has 21 passes on the frame buffer and 21 EFB copies. The passes load and store 68 million attachment pixels a frame. The vertex pre-pass takes 0.05 ms a frame. Almost every draw of the main scene packet has destination alpha, and the renderer draws these in one draw each (`fused_destination_alpha`). The small-draw ubershader held 3,125 draws in 514 runs in 2 s, and 10,321 big draws kept their own pipeline. The next step is a test that takes one of these costs away at a time: fewer passes, or the main scene packet at a quarter of its pixels.
+A frame has 21 passes on the frame buffer and 21 EFB copies. The passes load and store 68 million attachment pixels a frame. Almost every draw of the main scene packet has destination alpha, and the renderer draws these in one draw each (`fused_destination_alpha`). The small-draw ubershader held 3,125 draws in 514 runs in 2 s, and 10,321 big draws kept their own pipeline. The next subsection takes these costs away one at a time.
 
 A trap of the log. The line `[sched]` gives the time for which each thread of the game held the baton. If a thread blocks and no other thread is ready, that thread runs the idle wait of the scheduler (`Sched::idle_wait`). The wait counts for it. So 400 ms a second for thread 5 in a slow scene is not work. That thread ran only 46 million guest cycles a second there. `q3\build\darkside\thread_times.py` prints these times for each chapter of a log.
+
+#### The parts of the GPU time of a frame
+
+The test aid `UC_PROBE_FILE=<file>` splits the GPU time of a frame (`renderer_probes` in `renderer/graphics_effects.h`, 25 November 2026). A probe is on while the file `<file>.<name>` exists. The renderer looks at the files twice a second. Most probes draw a wrong picture. The line `[probe]` of the log gives the passes, the runs of draws, the pipeline binds and the second alpha draws of 2 s. The line `[probe-uploads]` gives the texture uploads.
+
+| Probe | What it takes away |
+|---|---|
+| `empty` | Every draw of the passes on the frame buffer. The passes, the copies, the vertex pre-pass and the screen pass stay. |
+| `noblend`, `noopaque` | The draws with blending, or the draws without. |
+| `tiny` | The fragments. The scissor of each draw is one pixel. |
+| `zfail` | The fragment shading. Each draw fails the depth test, and the GPU still walks the triangles in each bin. |
+| `alpha2` | The second draw for the destination alpha of a blending draw. With `join2` such a draw can join the texture table and the ubershader. |
+| `sort` | Nothing. The runs of a pass go to the GPU in the order of their pipelines. |
+| `s100`, `s150`, `s200` | Nothing. They hold the render scale at 1.0, 1.5 or 2.0. |
+| `nomip`, `nocopymip` | The generated levels of an uploaded texture, or the levels of an EFB copy. |
+| `nodispatch` | The compute dispatch of the vertex pre-pass. |
+| `nofxaa`, `nosharp` | The edge smoothing or the sharpening of the screen pass. |
+
+Warning: Use `nodispatch` only together with `empty`. Without `empty` the draws read vertices that no dispatch wrote, the GPU device is lost (`VkResult -4`), and the app ends.
+
+The method. `q3\build\reuc-build\quest_probe.sh NAME [SECONDS] [ENV_LINE...]` plays the start of `s30c4` with the bot at the fixed scale 1.25. After 100 s it stops the game time with `UC_DC_FREEZE_FILE`. Then each window of 14 to 20 s has one set of probes (the variable `PROBE_PLAN`). `q3\build\darkside\probe_report.py` prints the frame rate and the GPU time of each window from the VrApi lines. Its column "GPU work" is the GPU time at 640 MHz: the time multiplied by the clock and divided by 640. The windows without a probe gave the same GPU time within 1 %: 13.13, 13.11, 13.19 and 13.09 ms in one run. The standing picture took the same GPU time as the 20 s of play before it.
+
+One standing frame at the scale 1.25 (`quest2\pb2`, 277 runs of draws, 10.3 ms):
+
+| Part of the frame | GPU work |
+|---|---|
+| No draw at all (`empty`) | 3.9 ms |
+| The vertices and the state of the draws (`tiny` less `empty`) | 1.4 ms |
+| The walk of the triangles in the bins (`zfail` less `tiny`) | 1.9 ms |
+| The fragment shading (the whole frame less `zfail`) | 3.1 ms |
+
+The same frame took 8.2 ms at the scale 1.0 and 15.2 ms at 2.0. So the fragment part follows the pixels, and the other parts follow them little.
+
+What the frame without draws holds (`quest2\pb3`, `quest2\pb6`):
+
+- The compute dispatch of the vertex pre-pass takes 1.45 ms a frame. The frame without draws took 3.6 ms, and 2.2 ms with `nodispatch`. The two scene packets took 1.0 and 0.7 ms with no draw in them.
+- The screen pass (the packet `present`) takes 1.9 ms for the two eye images of 1346x1440 pixels. The edge smoothing and the sharpening are off by default, and their probes changed nothing.
+- All other passes and copies take about 0.3 ms together.
+
+Other results (`quest2\pb1`, a frame of 13.1 ms with 416 runs, and `quest2\pb4`):
+
+- The second draw for the destination alpha costs 1.3 ms a frame, for 132 such draws. `join2` gave no more.
+- The order of the draws is not a cost. With `alpha2`, `sort` cut the pipeline binds from 127 to 68 a frame and saved 0.1 ms.
+- The texture uploads are not a cost. A frame uploads 7 to 8 textures of 4x4 or 8x8 texels, with 19 blits for their levels. `nomip` changed nothing.
+- The draws with blending cost 5.3 ms of that frame, and the draws without blending cost 4.9 ms.
+- `UC_GPU_LEVEL=boost` does not hold the GPU clock (`quest2\pf2`). The level of the GPU stayed 4, and the clock was at 545 MHz for 136 s of that run.
+
+Two changes came from these numbers (app 0.0.48):
+
+- The automatic render scale has a fifth level: 0.5 of the chosen scale, which is 1.0 for the scale 2.0 (`renderer/auto_scale.h`).
+- The screen pass fills only a part of the eye images while the picture is smaller than they are (`XrCompositor::set_shown_pixels`). The part has the share of the width of the picture, in blocks of 8 pixels: 848x904 at the scale 1.25 and 680x720 at 1.0. `end_frame` gives the runtime that part as `subImage.imageRect`. The foveation map of the eye images is for the whole images, so a part does not use it. The frame without draws then took 3.1 ms at 1.25 and 2.6 ms at 1.0 (`quest2\pb7`). `UC_XR_FULL_EYES=1` fills the whole images, as before.
+
+What limits the slowest seconds now. Three live runs of the start of `s30c4` with the automatic scale reached the scale 1.0 (`quest2\lv5`, `pf1`, `pf2`). They still had 40 to 60 % of their seconds below 60 fps, with a mean of 60 to 62 fps. In the seconds below 60 fps a frame has 890 to 1,280 draws:
+
+- The GPU is 70 to 84 % busy, and its clock falls to 545 or 599 MHz. The headset raises the clock only above about 85 %. So less GPU work gives a lower clock first, and the GPU time of a frame stays near 13 ms.
+- A CPU profile with the waits shows the render thread on a core for about 75 % of the time (`q3\build\reuc-build\quest_prof.sh`, `quest2\pf1`). That is about 14 ms a frame at 52 fps. The code of the port takes 35 % of the thread, the Vulkan driver 21 % and `memcpy` 7 %. For 14 % of the time the thread waits for a packet.
+- The main thread of the game waits for 55 % of its time, and the builder thread for 57 %.
+- So the render thread and the GPU each need 13 to 14 ms for such a frame, and their work overlaps only in part.
+
+Next steps, by expected gain:
+
+- Draw a blending draw with destination alpha once. The Adreno 740 has `dualSrcBlend`: the draw writes the constant alpha, and the blend factors read a second colour output. This saves the second draw on the GPU (1.3 ms) and on the render thread.
+- Cut the work of the render thread for each packet. `vkQueueSubmit2`, `vkResetCommandBuffer`, `vkCmdBeginRendering` and the fences took about 15 % of the thread. A frame has 21 packets, and each one is a submission of its own.
+- Give the vertex pre-pass no vertices of draws that the cull test removes.
+
+Traps of these measurements:
+
+- While `UC_DC_FREEZE_FILE` is on, the game draws a wall of noise with the text "Loading data" over the scene on the headset. It is a blending overlay: with the probe `noblend` the scene shows. The GPU time of the frame does not change. Nobody looked at this on the PC yet.
+- The value `render` of the line `[perf]` holds waits of the render thread. It stayed near 13 ms a frame with the probe `empty`. Take the CPU time of that thread from a profile.
+- When the build links `libmain.so` again, it copies the key list and the folded modules into the package (`POST_BUILD` in `game/CMakeLists.txt`). It does not copy them at any other time. A build after a change of the key list alone packs the old keys and modules.
 
 #### The bot in the wide view
 

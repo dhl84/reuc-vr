@@ -39,6 +39,34 @@ inline bool chain_as_before() {
     }
     return before.load(std::memory_order_relaxed);
 }
+// UC_PROBE_FILE=<file> (diagnostics): the probe <name> of the renderer is on while the file <file>.<name> exists. A probe takes one
+// cost of a frame away, so one run can measure that cost on a standing picture (UC_DC_FREEZE_FILE). Most probes draw a wrong picture.
+// The files are looked at twice a second. Any thread. vulkan_renderer.cpp (the passes on the frame buffer) reads the bits.
+//   alpha2: no second draw for the destination alpha of a blending draw    join2: such a draw can join the texture table and the ubershader
+//   sort: the runs of a pass go to the GPU ordered by their pipeline       empty: no draw at all
+//   noblend: no blending draws                                             noopaque: no draws without blending
+//   s100, s150, s200: the render scale 1.0, 1.5 or 2.0 on the headset (with none of them: the scale that the app had before)
+//   tiny: the scissor of each draw is one pixel, so the GPU shades the vertices and no fragment
+//   zfail: each draw fails the depth test, so the GPU walks the triangles in each bin and shades no fragment
+//   nomip: an uploaded texture gets no generated levels             nocopymip: an EFB copy gets no levels for a mip filter
+//   nodispatch: no compute dispatch of the vertex pre-pass (the draws read the vertices of an earlier frame)
+//   nofxaa, nosharp: the screen pass of the headset without edge smoothing, without sharpening
+enum : uint32_t { kProbeAlpha2=1, kProbeJoin2=2, kProbeSort=4, kProbeEmpty=8, kProbeNoBlend=16, kProbeNoOpaque=32, kProbeScale100=64, kProbeScale150=128, kProbeScale200=256, kProbeTiny=512, kProbeZFail=1024, kProbeNoMip=2048, kProbeNoCopyMip=4096, kProbeNoDispatch=8192, kProbeNoFxaa=16384, kProbeNoSharp=32768 };
+inline uint32_t renderer_probes() {
+    static const char* const path=std::getenv("UC_PROBE_FILE");
+    if(!path || !*path) return 0;
+    static std::atomic<uint32_t> bits{0};
+    static std::atomic<int64_t> checked{0};
+    const int64_t now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t last=checked.load(std::memory_order_relaxed);
+    if(now-last>500 && checked.compare_exchange_strong(last,now)) {
+        static const char* const names[]={"alpha2","join2","sort","empty","noblend","noopaque","s100","s150","s200","tiny","zfail","nomip","nocopymip","nodispatch","nofxaa","nosharp"};
+        uint32_t found=0; std::error_code error;
+        for(uint32_t i=0;i<16;++i) if(std::filesystem::exists(std::string(path)+"."+names[i],error)) found|=1u<<i;
+        bits.store(found,std::memory_order_relaxed);
+    }
+    return bits.load(std::memory_order_relaxed);
+}
 // Quality presets of the effects that have them (config graphics.*, launcher, menu).
 enum class EffectLevel { off, low, medium, high, ultra };
 inline std::string_view effect_level_name(EffectLevel level) {

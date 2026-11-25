@@ -152,6 +152,10 @@ public:
     const std::vector<float>& refresh_rates() const { return refresh_rates_; }
     uint32_t eye_width() const { return width_; }
     uint32_t eye_height() const { return height_; }
+    // The pixels of the picture that the next record() shows (the shown region of the EFB). While the picture is smaller than the eye
+    // images (the automatic render scale), record() fills only a part of the eye images of that share, and end_frame() gives the
+    // runtime that part (subImage.imageRect). The screen pass then stores fewer pixels. UC_XR_FULL_EYES=1: always the whole images.
+    void set_shown_pixels(uint32_t width) { shown_width_ = width; }
     XrTime display_time() const { return frame_.predictedDisplayTime; }
     XrSpace space() const { return space_; }
 private:
@@ -172,6 +176,8 @@ private:
     XrFoveationProfileFB profile_ = XR_NULL_HANDLE;
     bool running_ = false, exiting_ = false, frame_open_ = false, acquired_ = false, render_scale_changed_ = false, fovea_support_ = false;
     uint32_t width_ = 0, height_ = 0, image_ = 0;
+    uint32_t shown_width_ = 0;        // set_shown_pixels
+    VkExtent2D frame_extent_{};       // the part of the eye images that the last record() filled (end_frame)
     XrSessionState session_state_ = XR_SESSION_STATE_UNKNOWN;
     XrFrameState frame_{XR_TYPE_FRAME_STATE};
     std::array<XrView, 2> views_{{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}}};

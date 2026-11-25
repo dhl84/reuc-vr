@@ -1,6 +1,7 @@
 // HOTD4 VR's OpenXR host for this renderer: the session, swapchain, frame loop, foveation and refresh code of lindberghrecomp's
 // renderer/vulkan/openxr.cpp (ef5cd20), with lindbergh's Device/Target replaced by the renderer's handles and the screen pass below.
 #include "xr_compositor.h"
+#include "graphics_effects.h"
 #include "../runtime/host_thread.h"
 #include <algorithm>
 #include <chrono>
@@ -750,10 +751,12 @@ void XrCompositor::finish_input() {
 int XrCompositor::sharpen_level() const {
     static const char* forced = std::getenv("UC_XR_SHARPEN");
     const int level = forced && *forced ? std::atoi(forced) : config_.settings.sharpen;
+    if (uc::renderer_probes() & uc::kProbeNoSharp) return 0;   // UC_PROBE_FILE (graphics_effects.h)
     return std::clamp(level, 0, 3);
 }
 bool XrCompositor::fxaa_on() const {
     static const char* forced = std::getenv("UC_XR_FXAA");
+    if (uc::renderer_probes() & uc::kProbeNoFxaa) return false;   // UC_PROBE_FILE (graphics_effects.h)
     return forced && *forced ? *forced != '0' : config_.settings.fxaa != 0;
 }
 bool XrCompositor::post_shading_coarse() const {
@@ -845,17 +848,30 @@ void XrCompositor::record(VkCommandBuffer command, VkImage picture, VkImageView 
         VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; dependency.imageMemoryBarrierCount = 1; dependency.pImageMemoryBarriers = &b;
         vkCmdPipelineBarrier2(command, &dependency);
     }
-    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO}; rendering.renderArea.extent = {width_, height_}; rendering.layerCount = 1; rendering.viewMask = 0b11;
+    // The part of the eye images of this frame (set_shown_pixels): the share of the picture's width, in whole blocks of 8 pixels.
+    static const bool full_eyes = std::getenv("UC_XR_FULL_EYES") != nullptr;
+    frame_extent_ = {width_, height_};
+    if (!full_eyes && shown_width_ && shown_width_ + 8 <= width_) {
+        const double share = double(shown_width_) / width_;
+        frame_extent_ = {std::min(width_, (uint32_t(std::ceil(width_ * share)) + 7) / 8 * 8), std::min(height_, (uint32_t(std::ceil(height_ * share)) + 7) / 8 * 8)};
+    }
+    const bool part = frame_extent_.width != width_ || frame_extent_.height != height_;
+    {
+        static VkExtent2D logged{};
+        if (logged.width != frame_extent_.width || logged.height != frame_extent_.height) { logged = frame_extent_; std::fprintf(stderr, "[xr] the screen pass fills %ux%u of the eye images %ux%u\n", frame_extent_.width, frame_extent_.height, width_, height_); }
+    }
+    overlay_.set_part(frame_extent_);
+    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO}; rendering.renderArea.extent = frame_extent_; rendering.layerCount = 1; rendering.viewMask = 0b11;
     rendering.colorAttachmentCount = 1; rendering.pColorAttachments = &color; rendering.pDepthAttachment = &depth;
     VkRenderingFragmentShadingRateAttachmentInfoKHR rate{VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR};
-    if (fovea && fovea_support_) {   // the renderer's map of the eye image: the screen pass coarser towards each eye's periphery
+    if (fovea && fovea_support_ && !part) {   // the renderer's map of the eye image: the screen pass coarser towards each eye's periphery (the map is for the whole image)
         rate.imageView = fovea; rate.imageLayout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR; rate.shadingRateAttachmentTexelSize = texel;
         rendering.pNext = &rate;
     }
     vkCmdBeginRendering(command, &rendering);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_[(fxaa_on() ? 4 : 0) + sharpen_level()]);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set, 0, nullptr);
-    const VkViewport viewport{0, 0, float(width_), float(height_), 0, 1}; const VkRect2D scissor{{0, 0}, {width_, height_}};
+    const VkViewport viewport{0, 0, float(frame_extent_.width), float(frame_extent_.height), 0, 1}; const VkRect2D scissor{{0, 0}, frame_extent_};
     vkCmdSetViewport(command, 0, 1, &viewport); vkCmdSetScissor(command, 0, 1, &scissor);
     // Each eye's layer covers that eye: the renderer drew it in the eye's space already.
     EyeConstants constants{};
@@ -934,7 +950,8 @@ void XrCompositor::end_frame(bool rendered) {
     std::array<XrCompositionLayerSpaceWarpInfoFB, 2> warps{{{XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}, {XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB}}};
     for (unsigned i = 0; i < 2; ++i) {
         views[i].pose = views_[i].pose; views[i].fov = views_[i].fov;
-        views[i].subImage.swapchain = swapchain_; views[i].subImage.imageRect.extent = {int32_t(width_), int32_t(height_)}; views[i].subImage.imageArrayIndex = i;
+        const VkExtent2D filled = frame_extent_.width ? frame_extent_ : VkExtent2D{width_, height_};
+        views[i].subImage.swapchain = swapchain_; views[i].subImage.imageRect.extent = {int32_t(filled.width), int32_t(filled.height)}; views[i].subImage.imageArrayIndex = i;
         if (!warp) continue;
         // The vectors hold the scene's own motion in the layer's space (the game's camera and actors); the runtime adds the head's.
         auto& w = warps[i];

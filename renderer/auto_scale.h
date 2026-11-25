@@ -10,9 +10,10 @@ namespace uc {
 // judged at the clock of the moment, and the clock rises with the load: kRoom is therefore near the whole period.
 // One call of window() for each second of presented frames. It returns true when the level changed (factor() is the new multiplier).
 struct AutoScale {
-    // Of the chosen scale: 2 -> 2, 1.75, 1.5, 1.25. The last level is for scenes whose GPU time follows the pixels and does not fit at
-    // 1.5 (SBDE08 s20c1 on a Quest 3: 13.3 ms a frame at the median at 1.5, and 64 % of the seconds at 60 fps or more).
-    static constexpr std::array<double,4> kFactors{1.0,0.875,0.75,0.625};
+    // Of the chosen scale: 2 -> 2, 1.75, 1.5, 1.25, 1.0. The fourth level is for scenes whose GPU time follows the pixels and does not fit
+    // at 1.5 (SBDE08 s20c1 on a Quest 3: 13.3 ms a frame at the median at 1.5, and 64 % of the seconds at 60 fps or more). The fifth level
+    // is for the heaviest fights: a standing frame of s30c4 took 10.3 ms at 1.25 and 8.2 ms at 1.0 (docs/darkside-port.md).
+    static constexpr std::array<double,5> kFactors{1.0,0.875,0.75,0.625,0.5};
     static constexpr uint32_t kSettle=2, kSlowWindows=2, kUpWait=10, kDownWait=60, kLongestWait=600, kFailedUp=30, kHeldUp=120;
     static constexpr double kLate=0.93, kBusy=0.78, kOnTime=0.97, kRoom=0.88, kPixelShare=0.75, kGain=1.03, kFell=0.92;
     double factor() const { return kFactors[level_]; }
