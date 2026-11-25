@@ -1092,6 +1092,18 @@ One setting was tried on the start of `s30c4`: the limit of the small-draw ubers
 
 The GPU time is the same within 3 %, and no limit is better than the default. So this limit is not the cause. The runs differ in their draws, because the bot does not play the same way twice.
 
+Where the GPU time goes in that scene. A run with `UC_GPU_PACKETS=1` (`quest2\pk1`, scale 1.25, 46 fps with the switch) gave these times for one frame:
+
+| Packets of a frame | GPU time |
+|---|---|
+| The main scene packet: 532 draws, 170,000 indices, 19 pipelines, 109 pipeline changes | 7.6 ms |
+| The packets with 50 to 199 draws and a copy of 640x342 | 3.0 ms |
+| The present | 1.9 ms |
+| The packet with 50 to 199 draws and no copy | 1.5 ms |
+| All other packets | about 3.7 ms |
+
+A frame has 21 passes on the frame buffer and 21 EFB copies. The passes load and store 68 million attachment pixels a frame. The vertex pre-pass takes 0.05 ms a frame. Almost every draw of the main scene packet has destination alpha, and the renderer draws these in one draw each (`fused_destination_alpha`). The small-draw ubershader held 3,125 draws in 514 runs in 2 s, and 10,321 big draws kept their own pipeline. The next step is a test that takes one of these costs away at a time: fewer passes, or the main scene packet at a quarter of its pixels.
+
 A trap of the log. The line `[sched]` gives the time for which each thread of the game held the baton. If a thread blocks and no other thread is ready, that thread runs the idle wait of the scheduler (`Sched::idle_wait`). The wait counts for it. So 400 ms a second for thread 5 in a slow scene is not work. That thread ran only 46 million guest cycles a second there. `q3\build\darkside\thread_times.py` prints these times for each chapter of a log.
 
 #### The bot in the wide view
