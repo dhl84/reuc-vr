@@ -1067,6 +1067,11 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c5` again | 0.0.53 | 786 | 70.3 | 96 % | 44 fps |
 | `s20c1` again | 0.0.54 | 749 | 70.1 | 98 % | 52 fps |
 | `s30c4` again | 0.0.54 | 1,460 | 65.5 | 73 % | 31 fps |
+| `s20c1` again | 0.0.55 | 750 | 69.9 | 97 % | 51 fps |
+| `s20c2` again | 0.0.55 | 528 | 71.4 | 99 % | 53 fps |
+| `s20c3` again | 0.0.55 | 1,419 | 71.2 | 98 % | 47 fps |
+| `s20c4` again | 0.0.55 | 852 | 71.0 | 97 % | 44 fps |
+| `s20c5` again | 0.0.55 | 724 | 69.6 | 95 % | 43 fps |
 
 The three rows of `s20c7` do not hold the same seconds, because the bot needed a different time for the last boss in each run. The fight took 1,467 s with the app 0.0.42, 675 s with the app 0.0.50 and 2,900 s with the app 0.0.51 (`quest2\b51`). In the fight the mean was 56.1 fps with the app 0.0.42 and 67.2 fps with the app 0.0.51. In the part before the first boss the mean was 62.6 fps and 68.1 fps. The run `quest2\b51` had no GPU hang and no crash. `q3\build\darkside\room_seconds.py RUN\run.log` prints the seconds and the frame rate of each part of a chapter.
 
@@ -1305,7 +1310,12 @@ Three changes were tried and removed:
 - A cull test that starts with one point, not with 16 (app 0.0.54). The transform of the points took 4.3 % of the thread, as before. That cost is in the draws that no eye sees, and the test needs all their points.
 - A palette block that wrote only its loaded rows (in no app). The game keeps the rows up to 60 loaded, for the same cause.
 
-The app 0.0.55 has only the two changes that stayed. When this text was written, its play of five chapters was not finished (`quest2\r55`).
+The app 0.0.55 has only the two changes that stayed. It played the five Oblivion chapters in a row (`quest2\r55`):
+
+- Each chapter loaded and ended. The play had no crash report and no fault frame.
+- The chapter `s20c1` had 20 seconds below 60 fps in its first 715 s. The app 0.0.54 had 9 there, and two plays of the app 0.0.53 had 14 and 40. So one play does not prove the gain. The spread from play to play is as large as the gain.
+- In the slow seconds with a busy game thread, the game thread waited 137 ms a second for the renderer. That is more than the 84 ms of the app 0.0.54, and less than the 142 to 184 ms before.
+- The five chapters had 119 seconds below 60 fps in 4,273 seconds. In 83 of them the game thread used less than 600 ms of CPU. The render loop found no free GPU slot 225 to 413 times a second there. So the GPU limits most of the slow seconds that are left.
 
 #### The bot in the wide view
 
