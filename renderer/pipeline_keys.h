@@ -14,6 +14,35 @@ namespace uc {
 // A graphics pipeline is fully described by this key (blend/cull word, TEV specialization constants, depth word, topology).
 using PipelineKey=std::array<uint32_t,70>;
 
+// The last value of many keys, for one thread: a table with one entry for each hash of a key and its kind. A hit costs the hash and one
+// compare of the key. A new key with the same hash takes the place of the old one. find gives Value{} for a key that is not in the table.
+template<class Value,size_t Slots=1024>
+class KeyMemo {
+    static_assert((Slots&(Slots-1))==0);
+    static_assert(sizeof(PipelineKey)/sizeof(uint32_t)%2==0);   // index() takes the words in pairs
+public:
+    Value find(uint32_t kind,const PipelineKey& key) const {
+        const Entry& entry=entries_[index(kind,key)];
+        return entry.kind==kind && entry.value!=Value{} && entry.key==key ? entry.value : Value{};
+    }
+    void put(uint32_t kind,const PipelineKey& key,Value value) { Entry& entry=entries_[index(kind,key)]; entry.key=key; entry.kind=kind; entry.value=value; }
+    void clear() { for (auto& entry:entries_) entry.value=Value{}; }
+private:
+    struct Entry { PipelineKey key{}; uint32_t kind=0; Value value{}; };
+    static size_t index(uint32_t kind,const PipelineKey& key) {   // four chains side by side: the key has 70 words, and a single chain takes four times as long
+        constexpr uint64_t mul=0x9FB21C651E98DF25ull;
+        uint64_t lane[4]={0x9E3779B97F4A7C15ull+kind,0xC2B2AE3D27D4EB4Full,0x165667B19E3779F9ull,0x27D4EB2F165667C5ull};
+        const auto step=[&](size_t l,size_t i) { lane[l]=(lane[l]^(uint64_t(key[i])|uint64_t(key[i+1])<<32))*mul; lane[l]^=lane[l]>>29; };
+        size_t i=0;
+        for (;i+8<=key.size();i+=8) for (size_t l=0;l<4;++l) step(l,i+l*2);
+        for (size_t l=0;i+2<=key.size();i+=2,++l) step(l,i);
+        uint64_t hash=lane[0]+lane[1]*3+lane[2]*5+lane[3]*7;
+        hash^=hash>>32; hash*=mul; hash^=hash>>29;
+        return size_t(hash)&(Slots-1);
+    }
+    std::vector<Entry> entries_=std::vector<Entry>(Slots);
+};
+
 // Key file: {magic, version, key size} followed by raw keys. Replaying it at startup compiles pipelines before the game first needs them.
 inline constexpr uint32_t kPipelineKeysHeader[3]={0x4B504355u,1u,uint32_t(sizeof(PipelineKey))};
 

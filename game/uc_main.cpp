@@ -53,6 +53,7 @@
 #include "test_state.h"
 #include "test_draws.h"
 #include "packet_dump.h"
+#include "packet_trash.h"
 #include "feature_report.h"
 #include "upscaler_probe.h"
 #include "intro.h"
@@ -957,6 +958,10 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
     int stalled = 0, boot_seconds = 0, result = 0;
     bool close = false;
     std::shared_ptr<const gx::FramePacket> pending;
+    // A rendered packet is freed on a thread of its own (packet_trash.h). Not in the deterministic mode, which stays as it was.
+    // UC_NO_PACKET_TRASH=1: the render thread frees it, as before.
+    std::optional<uc::PacketTrash> packet_trash;
+    if (!deterministic && !std::getenv("UC_NO_PACKET_TRASH")) packet_trash.emplace();
     std::deque<std::shared_ptr<const gx::FramePacket>> scene_commands;
     uint64_t render_serial=0,pending_serial=0;
     auto overlay_due=std::chrono::steady_clock::now(),overlay_last=std::chrono::steady_clock::time_point{};
@@ -1152,6 +1157,7 @@ static int real_main(int argc, char** argv,uc::Options& startup_options) {
             const bool late_frame=renderer.presentation_count()>=120 && std::chrono::steady_clock::now()-start>=std::chrono::seconds(15);
             if (options.gx_audit && !audit_late_captured && !audit_capture_serial && audit_seen_geometry && pending->present && display && (!audit_captured || late_frame)) audit_capture_serial=pending_serial;
             at_frame_boundary=pending->present;
+            if (packet_trash) packet_trash->put(std::move(pending));
             pending.reset();
             }
         }

@@ -529,6 +529,7 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
     frag_uniform_merge_ = xform_ && (frag_uniform_forced_ ? std::strcmp(frag_uniform_env, "0") != 0 : kFragUniformDefault);
     if (frag_uniform_merge_) std::fprintf(stderr, "[vr] fragment-only uniform identity for merging on%s\n", frag_uniform_forced_ ? " (UC_MERGE_FRAG_UNIFORM)" : "");
     static_depth_ = layers_ > 1 && std::getenv("UC_STATIC_DEPTH");   // diagnostics: does dynamic depth state cost the tiler its LRZ?   // the headset's vertex pre-pass reads the vertices by address
+    key_memo_on_ = std::getenv("UC_NO_KEY_MEMO") == nullptr;
     if (xform_) {
         features12.bufferDeviceAddress = VK_TRUE;
         if (!features12_chained) { features12.pNext = features13.pNext; features13.pNext = &features12; features12_chained = true; }
@@ -1256,6 +1257,7 @@ PipelineKey VulkanRenderer::pipeline_key(const gx::DrawPacket& draw,bool alpha_p
 }
 VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& requested) {
     if (last_pipeline_ && requested==last_key_) return {last_pipeline_,false};
+    if (key_memo_on_ && !uber_only_) if (const VkPipeline known=key_memo_.find(0,requested)) { last_key_=requested; last_pipeline_=known; return {known,false}; }
     const auto key=static_depth_ ? requested : static_key(requested);   // static_depth_: cull and depth state baked into the pipeline
     const auto fixed=uber_key(key);
     PipelineChoice choice;
@@ -1263,7 +1265,11 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
     {
         std::lock_guard lock(pipelines_mutex_);
         if (!uber_only_) {
-            if (auto found=pipelines_.find(key); found!=pipelines_.end()) { last_key_=requested; last_pipeline_=found->second; return {found->second,false}; }
+            if (auto found=pipelines_.find(key); found!=pipelines_.end()) {
+                last_key_=requested; last_pipeline_=found->second;
+                if (key_memo_on_ && found->second) key_memo_.put(0,requested,found->second);
+                return {found->second,false};
+            }
             fresh=known_keys_.insert(key).second;
         }
         if (auto found=uber_pipelines_.find(fixed); found!=uber_pipelines_.end()) {
@@ -1298,12 +1304,13 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
 // and the draw keeps its own pipeline and set meanwhile (no ubershader for the table: the draw is just not merged across textures).
 VkPipeline VulkanRenderer::dual_pipeline(const PipelineKey& requested) {
     if (last_dual_pipeline_ && requested==last_dual_key_) return last_dual_pipeline_;
+    if (key_memo_on_) if (const VkPipeline known=key_memo_.find(1,requested)) { last_dual_key_=requested; last_dual_pipeline_=known; return known; }
     const auto key=static_depth_ ? requested : static_key(requested);
     bool fresh=false;
     {
         std::lock_guard lock(pipelines_mutex_);
         if (const auto found=pipelines_.find(key); found!=pipelines_.end()) {
-            if (found->second) { last_dual_key_=requested; last_dual_pipeline_=found->second; }
+            if (found->second) { last_dual_key_=requested; last_dual_pipeline_=found->second; if (key_memo_on_) key_memo_.put(1,requested,found->second); }
             return found->second;
         }
         fresh=known_keys_.insert(key).second;
@@ -1315,10 +1322,15 @@ VkPipeline VulkanRenderer::dual_pipeline(const PipelineKey& requested) {
 }
 VkPipeline VulkanRenderer::table_pipeline(const PipelineKey& requested) {
     if (last_table_pipeline_ && requested==last_table_key_) return last_table_pipeline_;
+    if (key_memo_on_) if (const VkPipeline known=key_memo_.find(2,requested)) { last_table_key_=requested; last_table_pipeline_=known; return known; }
     auto key=static_depth_ ? requested : static_key(requested);
     key[0]|=kTexTableKeyBit;
     std::lock_guard lock(pipelines_mutex_);
-    if (const auto found=pipelines_.find(key); found!=pipelines_.end()) { last_table_key_=requested; last_table_pipeline_=found->second; return found->second; }
+    if (const auto found=pipelines_.find(key); found!=pipelines_.end()) {
+        last_table_key_=requested; last_table_pipeline_=found->second;
+        if (key_memo_on_ && found->second) key_memo_.put(2,requested,found->second);
+        return found->second;
+    }
     queue_pipeline(key,false);
     return VK_NULL_HANDLE;
 }
@@ -1329,9 +1341,14 @@ VkPipeline VulkanRenderer::table_pipeline(const PipelineKey& requested) {
 VkPipeline VulkanRenderer::uber_merge_pipeline(const PipelineKey& requested,uint32_t family) {
     if (family && (family>kUberFewStages || !(uber_families_&(1u<<(family-1))) || requested[1]>family)) return VK_NULL_HANDLE;
     if (last_merge_pipeline_[family] && requested==last_merge_key_[family]) return last_merge_pipeline_[family];
+    if (key_memo_on_) if (const VkPipeline known=key_memo_.find(3+family,requested)) { last_merge_key_[family]=requested; last_merge_pipeline_[family]=known; return known; }
     const auto key=uber_merge_key(static_depth_ ? requested : static_key(requested),family);
     std::lock_guard lock(pipelines_mutex_);
-    if (const auto found=pipelines_.find(key); found!=pipelines_.end()) { last_merge_key_[family]=requested; last_merge_pipeline_[family]=found->second; return found->second; }
+    if (const auto found=pipelines_.find(key); found!=pipelines_.end()) {
+        last_merge_key_[family]=requested; last_merge_pipeline_[family]=found->second;
+        if (key_memo_on_ && found->second) key_memo_.put(3+family,requested,found->second);
+        return found->second;
+    }
     queue_pipeline(key,false);
     return VK_NULL_HANDLE;
 }
@@ -3501,6 +3518,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     std::vector<DrawGpu> gpu_draws; gpu_draws.reserve(packet.draws.size());
     std::unordered_map<const gx::TextureBank*,uint32_t> bank_of;   // one bank per distinct texture matrix set
     std::vector<const gx::TextureBank*> banks;
+    std::vector<std::array<uint64_t,2>> bank_ids;   // for each bank: the texture matrix ids that can differ from the identity (gx::DrawPacket::bank_ids)
     std::unordered_map<const gx::Transforms*,uint32_t> palette_of;   // one palette per distinct transform block
     std::vector<const gx::Transforms*> palette_blocks;
     // The headset's space warp: per draw its motion kind and previous palette for the pre-pass (smoke.slang XformJob motionKind/prevPalette):
@@ -3569,7 +3587,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         if (!no_banks && gx::has_texture_matrix_index(*draw.state)) {
             if (!draw.texture_bank) throw std::invalid_argument("native draw has per-vertex texture matrix indices but no texture bank");
             const auto [bank,added]=bank_of.try_emplace(draw.texture_bank.get(),uint32_t(banks.size()));
-            if (added) banks.push_back(bank->first);
+            if (added) { banks.push_back(bank->first); bank_ids.push_back(draw.bank_ids); }
             info.bank=bank->second;
         }
         if (const size_t d=gpu_draws.size(); d<scene_draws) {   // scene draw: last frame's matrices of the same draw for its motion vectors
@@ -3656,9 +3674,22 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         for (size_t i=0;i<palette_blocks.size();++i) gx::fill_palette(palettes[i], *palette_blocks[i]);
     }
     {   // the descriptor always has a bank bound; a frame without per-vertex texture matrices binds one unused entry
+        static const bool full_blocks=std::getenv("UC_FULL_BANKS")!=nullptr;   // UC_FULL_BANKS=1: every bank is written whole, as before
         const VkDeviceSize bank_bytes=VkDeviceSize(std::max<size_t>(banks.size(),1))*sizeof(gx::TextureBank);
-        if (slot.banks.size < bank_bytes) { destroy_buffer(slot.banks); slot.banks = make_buffer(bank_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
-        for (size_t i=0;i<banks.size();++i) std::memcpy(static_cast<gx::TextureBank*>(slot.banks.mapped)+i,banks[i],sizeof(gx::TextureBank));
+        if (slot.banks.size < bank_bytes) { destroy_buffer(slot.banks); slot.banks = make_buffer(bank_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); slot.bank_ids.clear(); }
+        // A bank has 6,048 bytes, and a draw with per-vertex texture matrices has a bank of its own in many scenes. A bank writes only
+        // the matrices that it has set and the ones that the bank before it in this place had set: all others are the identity in both.
+        if (slot.bank_ids.size()<banks.size()) slot.bank_ids.resize(banks.size(),std::array<uint64_t,2>{~uint64_t(0),~uint64_t(0)});
+        for (size_t i=0;i<banks.size();++i) {
+            auto* target=static_cast<gx::TextureBank*>(slot.banks.mapped)+i;
+            const std::array<uint64_t,2> write{bank_ids[i][0]|slot.bank_ids[i][0],bank_ids[i][1]|slot.bank_ids[i][1]};
+            if (full_blocks || (write[0]&write[1])==~uint64_t(0)) std::memcpy(target,banks[i],sizeof(gx::TextureBank));
+            else for (size_t word=0;word<2;++word) for (uint64_t ids=write[word];ids;ids&=ids-1) {
+                const size_t id=word*64+size_t(std::countr_zero(ids));
+                if (id*3+3<=target->rows.size()) std::memcpy(&target->rows[id*3],&banks[i]->rows[id*3],3*sizeof(target->rows[0]));
+            }
+            slot.bank_ids[i]=full_blocks ? std::array<uint64_t,2>{~uint64_t(0),~uint64_t(0)} : bank_ids[i];
+        }
     }
     {   // bound even when no draw reads it
         const VkDeviceSize motion_bytes=layers_>1 ? VkDeviceSize(std::max<size_t>(packet.draws.size(),1))*stereo_stride_ : VkDeviceSize(std::max<size_t>(motion_blocks.size(),1))*sizeof(MotionBlock);
@@ -5087,12 +5118,16 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                         std::array<float,4> clip; for (int i=0;i<4;++i) { const auto& m=t.projection[i]; clip[i]=m[0]*view[0]+m[1]*view[1]+m[2]*view[2]+m[3]; }
                         return clip;
                     };
-                    // The points go to the test in parts of 16. A draw that an eye sees leaves the test after its first parts: most draws
+                    // The points go to the test in parts. A draw that an eye sees leaves the test after its first parts: most draws
                     // are seen, and the transform of every vertex of every draw was a sixth of the render thread's own time (Quest 3,
-                    // 2,000 draws a frame).
+                    // 2,000 draws a frame). The first part is one point, and each part after it has four times the points of the one
+                    // before, up to 16: one point inside an eye's view ends the test, and with parts of 16 from the start the test
+                    // still took a twelfth of the thread's time. UC_VR_CULL_PART=<n> gives the size of the first part (16: as before).
+                    static const size_t first_part=std::getenv("UC_VR_CULL_PART") ? std::clamp<size_t>(std::strtoul(std::getenv("UC_VR_CULL_PART"),nullptr,10),1,16) : 1;
+                    size_t part=first_part;
                     std::vector<std::array<float,4>>& points=cull_points_; points.clear();
                     uc::ClipOutside eyes[2]; bool open=true;   // open: each eye can still be outside
-                    const auto test=[&] { open=eyes[0].add(block,points.data(),points.size()) && eyes[1].add(block+16,points.data(),points.size()); points.clear(); };
+                    const auto test=[&] { open=eyes[0].add(block,points.data(),points.size()) && eyes[1].add(block+16,points.data(),points.size()); points.clear(); part=std::min<size_t>(16,part*4); };
                     if (info.box && !info.indexed) {
                         const auto& b=*info.box;
                         for (int corner=0;corner<8;++corner) points.push_back(to_clip({b[corner&1 ? 3 : 0],b[corner&2 ? 4 : 1],b[corner&4 ? 5 : 2]},info.current));
@@ -5101,7 +5136,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                             const uint32_t row=info.indexed ? vertex.position_matrix : info.current;
                             if (row>61) continue;
                             points.push_back(to_clip(vertex.position,row));
-                            if (points.size()==16) { test(); if (!open) break; }
+                            if (points.size()>=part) { test(); if (!open) break; }
                         }
                     }
                     if (open && !points.empty()) test();
@@ -6204,7 +6239,7 @@ void VulkanRenderer::shutdown() {
         stop_workers();
         for (auto [key,pipeline]:pipelines_) vkDestroyPipeline(device,pipeline,nullptr);
         for (auto [key,pipeline]:uber_pipelines_) vkDestroyPipeline(device,pipeline,nullptr);
-        pipelines_.clear(); uber_pipelines_.clear(); last_pipeline_=VK_NULL_HANDLE; last_table_pipeline_=VK_NULL_HANDLE; last_merge_pipeline_[0]=last_merge_pipeline_[1]=last_merge_pipeline_[2]=VK_NULL_HANDLE; last_dual_pipeline_=VK_NULL_HANDLE;
+        pipelines_.clear(); uber_pipelines_.clear(); last_pipeline_=VK_NULL_HANDLE; last_table_pipeline_=VK_NULL_HANDLE; last_merge_pipeline_[0]=last_merge_pipeline_[1]=last_merge_pipeline_[2]=VK_NULL_HANDLE; last_dual_pipeline_=VK_NULL_HANDLE; key_memo_.clear();
         if (pipeline_cache_) { save_pipeline_cache(); vkDestroyPipelineCache(device,pipeline_cache_,nullptr); pipeline_cache_=VK_NULL_HANDLE; }
         if (g_compile_guard.load()==&compile_guard_) g_compile_guard.store(nullptr);
         compile_guard_.close();

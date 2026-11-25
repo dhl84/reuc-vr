@@ -1060,6 +1060,11 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c4` again | 0.0.51 | 826 | 70.4 | 96 % | 50 fps |
 | `s20c5` again | 0.0.51 | 899 | 69.4 | 96 % | 43 fps |
 | `s20c7` again | 0.0.51 | 3,385 | 67.5 | 93 % | 43 fps |
+| `s20c1` again | 0.0.53 | 712 | 67.7 | 90 % | 45 fps |
+| `s20c2` again | 0.0.53 | 556 | 71.3 | 99 % | 56 fps |
+| `s20c3` again | 0.0.53 | 1,401 | 71.3 | 99 % | 46 fps |
+| `s20c4` again | 0.0.53 | 837 | 71.2 | 99 % | 44 fps |
+| `s20c5` again | 0.0.53 | 786 | 70.3 | 96 % | 44 fps |
 
 The three rows of `s20c7` do not hold the same seconds, because the bot needed a different time for the last boss in each run. The fight took 1,467 s with the app 0.0.42, 675 s with the app 0.0.50 and 2,900 s with the app 0.0.51 (`quest2\b51`). In the fight the mean was 56.1 fps with the app 0.0.42 and 67.2 fps with the app 0.0.51. In the part before the first boss the mean was 62.6 fps and 68.1 fps. The run `quest2\b51` had no GPU hang and no crash. `q3\build\darkside\room_seconds.py RUN\run.log` prints the seconds and the frame rate of each part of a chapter.
 
@@ -1234,21 +1239,62 @@ Results for the first 683 s of `s20c1` (`q3\build\darkside\bins_compare.py CHAPT
 | `quest2\gp1` | 0.0.51 | 69.0 | 37 | 667 ms a second | 212 ms a second | 20.7 ms |
 | `quest2\d52` | 0.0.53 | 69.2 | 46 | 686 ms a second | 185 ms a second | 21.7 ms |
 | `quest2\ps14` | 0.0.53 with `UC_PACE_SLACK_MS=14` | 69.8 | 24 | 623 ms a second | 11 ms a second | 27.0 ms |
+| `quest2\ps5` | 0.0.53 with `UC_PACE_SLACK_MS=5` | 69.8 | 40 | 670 ms a second | 92 ms a second | 24.5 ms |
+| `quest2\r53` | 0.0.53 | 67.8 | 68 | 675 ms a second | 126 ms a second | not taken |
 
 - The new sleep alone changes the frame rate by less than the spread between two runs of the same app. Each of the four chapter runs with it loaded its data and came to its result screen.
 - With a slack of 14 ms the chapter had the fewest seconds below 60 fps. The frame latency of the log line `[guest-blocked]` rose from 21 ms to 27 ms. The game then works ahead of the display by up to one period.
 - In `s30c4` the slack gave nothing. The run with it had 65.8 fps, and 75 % of its 1,441 s were at 60 fps or more (`quest2\cs14`). The run `quest2\c48` had 67.0 fps and 83 % of 1,189 s. Without the slack the frame wait is 2 to 12 ms a second in the slow seconds of that chapter. The bot needed 252 s more in the run with the slack, so the two runs do not hold the same seconds.
+- The app 0.0.53 played the five chapters `s20c1` to `s20c5` in a row with no crash and no GPU hang (`quest2\r53`). The table of chapter frame rates has its rows. Its `s20c1` had 68 seconds below 60 fps, the most of all runs.
 - `UC_SCHED_SPIN_US=200` lets a guest thread spin for the baton before it sleeps. It gave nothing: 68.9 fps and 45 seconds below 60 fps with the new sleep (`quest2\sp1`).
 
 Open points:
 
-- A smaller slack was not tested. It gives less latency and makes up less delay.
-- A guest thread of priority 3 (entry 804FDCA8) takes the baton about 500 times a second. It uses 45 to 56 ms of CPU a second. The game thread is off the baton for 18 to 20 % of its time because of it. Nobody looked at the cause.
+- A slack of 5 ms gave 40 seconds below 60 fps, with a frame latency of 24.5 ms (`quest2\ps5`). The runs without a slack have 37 to 68 such seconds. So one run for each value decides nothing. `q3\build\reuc-build\ab_slack.sh` plays the chapter four times, two times with a slack of 14 ms. When this text was written, that series was not finished.
+- The guest thread of priority 3 (entry 804FDCA8) is the sound thread of the game. The sound frame of the console wakes it each 3 ms (`hle_AXFrame` in `runtime/ax_audio.cpp`). It uses 45 to 56 ms of CPU a second. A profile shows the game thread off the baton for 18 to 20 % of its time. That value is too high, because the profiler makes each thread switch slower. `q3\build\darkside\baton_seconds.py RUN\run.log` takes the values from the log lines. In the slow seconds with a busy game thread, the game thread uses 690 to 720 ms of CPU a second. The other guest threads use 61 to 67 ms. About 1,000 switches a second take 36 to 53 ms of wake time. The game thread waits 72 to 160 ms a second for the renderer.
 
 Traps of these values:
 
 - The value `main loop waited` of the line `[guest-blocked]` is the wait of the render loop of the host. The frame wait of the game is the value `wait` of the line `[game-pacing]`, which is a total.
 - The values `run ms` of the line `[sched]` hold the idle time of the scheduler after a thread blocked. The line `[sched-cycles]` has the CPU time of each thread. On Android its unit is the millisecond.
+
+#### The render thread in slow seconds
+
+In the slow seconds of `s20c1` to `s20c5` the game thread waits 72 to 160 ms a second for the renderer. A profile at 640 s of `s20c1` gives the time of the render thread (`quest2\ps14`, app 0.0.53). The thread is on a core for about 93 % of it. So the render thread limits these seconds together with the game thread.
+
+Three scripts in `q3\build\darkside` give the time of a thread by source line, on the PC:
+
+- `pull_prof.sh NAME_AT` copies a profile of `quest_prof_s20c1.sh` from the headset to `D:\reuc-tools\prof`.
+- `prof_samples.sh NAME_AT` writes the samples with their call chains as text. It needs the library with symbols in `D:\reuc-tools\prof\symfs`, at the path that the app has on the headset.
+- `prof_own.py SAMPLES TID [TOP] [FILTER]` gives each sample to the nearest source line of the port in its call chain. So the time of `memcpy`, of the allocator and of the driver counts for the line that called them.
+
+The parts of the time of the render thread in that profile:
+
+| Part | Share of the thread |
+|---|---|
+| The cull test of the draws (`vr_cull.h` and the transform of the points) | about 8 % |
+| The free of the rendered packet, with its draws and their shared blocks | 5.7 % |
+| `vkEndCommandBuffer` and `vkResetFences` | 3.7 % |
+| The copy of the texture banks (6,048 bytes each) | 3.6 % |
+| `vkQueueSubmit2` | 3.3 % |
+| The lookups in the map of pipelines | 3.2 % |
+| The copy of the palette blocks (2,064 bytes each) | 3.1 % |
+| `vkResetCommandBuffer` | 2.7 % |
+| `vkCmdBeginRendering` | 2.5 % |
+| `vkUpdateDescriptorSets` | 2.5 % |
+| The copy of the draw uniforms | 1.9 % |
+| The copy of the indices for the vertex pre-pass | 1.7 % |
+
+Four changes came from these numbers (app 0.0.54):
+
+- A thread of its own frees the rendered packets (`uc::PacketTrash` in `game/packet_trash.h`). The pools of a packet take a free from any thread. When that thread is behind by 96 packets, the render thread frees the packet itself. The deterministic mode does not use the thread. `UC_NO_PACKET_TRASH=1` turns it off.
+- A hash table holds the pipelines of the last keys (`uc::KeyMemo` in `renderer/pipeline_keys.h`). A hit needs no lock and no walk of the map of 70-word keys. A compiled pipeline never changes, so an entry stays right. A test on the PC gave 29 ns for a lookup, against 82 ns in the map. That test is not in the test suite yet. `UC_NO_KEY_MEMO=1` turns the table off.
+- A texture bank is uploaded only where its matrices are set. The game code gives each draw the ids of the set matrices (`DrawPacket::bank_ids`, `set_texture_bank` in `runtime/hle/gx.cpp`). The renderer writes these matrices, and the ones that the bank before it in the same place had set. All other matrices are the identity in both banks. A draw from another producer has all ids, and its bank is written whole. `UC_FULL_BANKS=1` writes every bank whole.
+- The cull test of a draw starts with one point. Each part after it has four times the points, up to 16. One point inside the view of an eye ends the test. Before, the first part had 16 points. `UC_VR_CULL_PART=16` gives the old parts.
+
+Warning: Do not take the app 0.0.54 as tested. It was built on 25 November 2026. When this text was written, the app was not yet played on the headset. Its frame rate is not known, and a fault of the picture is possible. No PC build ran with these changes.
+
+One change was tried and removed. A palette block wrote only its loaded rows. The game keeps the rows up to 60 loaded, because position loads and texture loads share the rows. So the change saved nothing.
 
 #### The bot in the wide view
 

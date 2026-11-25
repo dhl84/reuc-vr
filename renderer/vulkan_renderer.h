@@ -236,6 +236,10 @@ private:
         Buffer warp_frame;       // and its eye rows (xr_motion.slang WarpEyes)
         VkDescriptorPool warp_pool = VK_NULL_HANDLE; VkDescriptorSet warp_set = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<const gx::MeshBuffers>> mesh_refs;   // keeps the meshes this submission draws alive until its fence completed
+        // What `banks` holds from the submission before, for each bank: the texture matrix ids that can differ from the identity
+        // (gx::DrawPacket::bank_ids). A bank writes only these matrices and its own. Empty after the buffer is made again: every bank
+        // is then written whole.
+        std::vector<std::array<uint64_t,2>> bank_ids;
         std::vector<std::shared_ptr<Texture>> textures;   // shared through texture_pool_: one GPU image per texture, not one per slot
         std::vector<std::shared_ptr<const gx::TexturePixels>> copy_sources;
         Buffer readback; std::shared_ptr<gx::CopyReadback> readback_target; VkExtent2D readback_extent{};   // an EFB copy that the game reads from memory: delivered when the fence completed (collect)
@@ -304,6 +308,11 @@ private:
     VkPipeline dual_pipeline(const PipelineKey& key);
     bool dual_alpha_=false;   // the device has dualSrcBlend and UC_NO_DUAL_ALPHA is not set
     PipelineKey last_dual_key_{}; VkPipeline last_dual_pipeline_=VK_NULL_HANDLE;   // dual_pipeline's memo (render thread only)
+    // The compiled pipelines of the last keys of pipeline_for (kind 0), dual_pipeline (1), table_pipeline (2) and uber_merge_pipeline
+    // (3 + family), render thread only. A pipeline of pipelines_ never changes, so an entry stays right until shutdown() clears the
+    // table. A frame of 1,500 draws asks four to five times for each draw, and each ask took the lock and walked the map of
+    // 70-word keys. UC_NO_KEY_MEMO=1 turns the table off.
+    KeyMemo<VkPipeline> key_memo_; bool key_memo_on_=true;
     VkPipeline uber_merge_pipeline(const PipelineKey& key,uint32_t family=0);   // the small-draw ubershader pipeline of the draw's fixed-function state when compiled (else queued, null)
     std::mutex folded_mutex_; std::unordered_map<uint64_t,VkShaderModule> folded_modules_;
     // The headset: a key without a module of the build gets one made on the device (tev_fold.h), on a compile thread, one at a time.
