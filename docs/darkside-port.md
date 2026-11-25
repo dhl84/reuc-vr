@@ -1059,6 +1059,9 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c3` again | 0.0.51 | 1,384 | 70.9 | 98 % | 46 fps |
 | `s20c4` again | 0.0.51 | 826 | 70.4 | 96 % | 50 fps |
 | `s20c5` again | 0.0.51 | 899 | 69.4 | 96 % | 43 fps |
+| `s20c7` again | 0.0.51 | 3,385 | 67.5 | 93 % | 43 fps |
+
+The three rows of `s20c7` do not hold the same seconds, because the bot needed a different time for the last boss in each run. The fight took 1,467 s with the app 0.0.42, 675 s with the app 0.0.50 and 2,900 s with the app 0.0.51 (`quest2\b51`). In the fight the mean was 56.1 fps with the app 0.0.42 and 67.2 fps with the app 0.0.51. In the part before the first boss the mean was 62.6 fps and 68.1 fps. The run `quest2\b51` had no GPU hang and no crash. `q3\build\darkside\room_seconds.py RUN\run.log` prints the seconds and the frame rate of each part of a chapter.
 
 The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 was built for 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. Its package still holds the 1,359 keys of 0.0.42 (see the traps of "The parts of the GPU time of a frame"). The headset folds the other keys itself at a start. The list has 1,772 keys after the runs of `s10c8` and `s00c1`. The app 0.0.44 is the first with all of them in its package. With the keys in the build the app starts in 4 to 5 s.
 
