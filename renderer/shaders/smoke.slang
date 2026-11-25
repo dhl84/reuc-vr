@@ -420,12 +420,18 @@ float3 applyFog(float3 color, float depth) {
     return float3((prev*(256-ifog)+fogColor*ifog)>>8)/255.0;
 }
 struct Targets {
-#ifdef UC_LOGIC
+#ifdef DUAL_ALPHA
+    // The headset, a blending draw with GX destination alpha in one draw (key word 67 = 2, dual-source blending): colour with the
+    // constant alpha, and the computed alpha as the second input of the blend factors. No transmit: a module with a second
+    // input must not write location 1.
+    [[vk::location(0)]] float4 color : SV_Target0;
+    [[vk::location(0), vk::index(1)]] float4 blendAlpha : SV_Target1;
+#elif defined(UC_LOGIC)
     uint4 color : SV_Target0;
 #else
     float4 color : SV_Target0;
 #endif
-#ifdef STEREO
+#if defined(STEREO) && !defined(DUAL_ALPHA)
     // The headset's HUD layer (hud_layer.h): the same colour for its second attachment, T, whose blend factors keep what the scene behind
     // the draw keeps. Pipelines of the EFB have no attachment there: the write is discarded.
     float4 transmit : SV_Target1;
@@ -487,7 +493,10 @@ Targets fragmentMain(Output input) {
 #else
     targets.color = shadeFragment(input);
 #endif
-#ifdef STEREO
+#ifdef DUAL_ALPHA
+    targets.blendAlpha = targets.color;
+    targets.color.a = float(drawState.pixel.z&255)/255.0;
+#elif defined(STEREO)
     targets.transmit = targets.color;
 #endif
 #if defined(MOTION) && !defined(UC_LOGIC_COLOR_ONLY)
@@ -529,6 +538,8 @@ float4 shadeFragment(Output input) {
     }
 #endif
     result.rgb=applyFog(result.rgb,input.position.z);
+#ifndef DUAL_ALPHA   // fragmentMain writes the constant there
     if(destinationAlphaPass!=0) result.a=float(drawState.pixel.z&255)/255.0;
+#endif
     return result;
 }

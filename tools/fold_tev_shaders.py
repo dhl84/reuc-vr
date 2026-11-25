@@ -112,7 +112,10 @@ def main():
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
     modules = {0: os.path.join(args.shaders, "smoke.stereo.frag.spv"), 1: os.path.join(args.shaders, "smoke.stereo.early.frag.spv"),
-               2: os.path.join(args.shaders, "smoke.stereo.tex.frag.spv"), 3: os.path.join(args.shaders, "smoke.stereo.tex.early.frag.spv")}
+               2: os.path.join(args.shaders, "smoke.stereo.tex.frag.spv"), 3: os.path.join(args.shaders, "smoke.stereo.tex.early.frag.spv"),
+               # constant 66 = 2 (a blending draw with destination alpha in one draw): the DUAL_ALPHA modules, variant + 4
+               4: os.path.join(args.shaders, "smoke.stereo.dual.frag.spv"), 5: os.path.join(args.shaders, "smoke.stereo.dual.early.frag.spv"),
+               6: os.path.join(args.shaders, "smoke.stereo.tex.dual.frag.spv"), 7: os.path.join(args.shaders, "smoke.stereo.tex.dual.early.frag.spv")}
     table = os.path.exists(modules[2]) and os.path.exists(modules[3])   # the texture-table modules (variant + 2)
     wanted = {}
     for path in args.keys:
@@ -123,6 +126,8 @@ def main():
                 direct = headset_key(general_coordinates_key(key))
                 for form in (direct, affine_coordinates_key(direct), stripped_key(key)):
                     values, var = constants(form), variant(form)
+                    if values[66] == 2:
+                        var += 4
                     for v in (var, var + 2) if table else (var,):
                         wanted[name(values, v)] = (values, v)
     jobs = []

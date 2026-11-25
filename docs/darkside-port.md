@@ -1122,6 +1122,7 @@ The test aid `UC_PROBE_FILE=<file>` splits the GPU time of a frame (`renderer_pr
 | `nomip`, `nocopymip` | The generated levels of an uploaded texture, or the levels of an EFB copy. |
 | `nodispatch` | The compute dispatch of the vertex pre-pass. |
 | `nofxaa`, `nosharp` | The edge smoothing or the sharpening of the screen pass. |
+| `nodual` | Nothing. A blending draw with destination alpha is two draws again (see below). The picture stays right. |
 
 Warning: Use `nodispatch` only together with `empty`. Without `empty` the draws read vertices that no dispatch wrote, the GPU device is lost (`VkResult -4`), and the app ends.
 
@@ -1157,6 +1158,18 @@ Two changes came from these numbers (app 0.0.48):
 - The automatic render scale has a fifth level: 0.5 of the chosen scale, which is 1.0 for the scale 2.0 (`renderer/auto_scale.h`).
 - The screen pass fills only a part of the eye images while the picture is smaller than they are (`XrCompositor::set_shown_pixels`). The part has the share of the width of the picture, in blocks of 8 pixels: 848x904 at the scale 1.25 and 680x720 at 1.0. `end_frame` gives the runtime that part as `subImage.imageRect`. The foveation map of the eye images is for the whole images, so a part does not use it. The frame without draws then took 3.1 ms at 1.25 and 2.6 ms at 1.0 (`quest2\pb7`). `UC_XR_FULL_EYES=1` fills the whole images, as before.
 
+The whole chapter `s30c4` with the app 0.0.48 (`quest2\c48`): 1,189 s with a mean of 67.0 fps, 83 % of the seconds at 60 fps or more, and no crash. The lowest second had 37 fps. The app 0.0.42 had 63.7 fps and 72 % in that chapter.
+
+The blending draws with destination alpha in one draw (app 0.0.49, 25 November 2026):
+
+- The renderer drew such a draw twice: the colour with the computed alpha, then the constant alpha alone. The headset now draws it once with dual-source blending (the device feature `dualSrcBlend`). The fragment stage writes the colour with the constant alpha, and the computed alpha as the second input of the blend. The colour factors read that second input (`VK_BLEND_FACTOR_SRC1_ALPHA`), and the alpha factors are one and zero.
+- The key word 67 is 2 for such a pipeline (`pipeline_key` with `dual`). Its modules come from the define `DUAL_ALPHA` of `smoke.slang`. These modules have no `transmit` output, because a module with a second blend input must not write location 1. The build makes four more base modules (`smoke.stereo.dual.frag.spv` and three others). `tools/fold_tev_shaders.py` and the fold on the device take them for a key with that word (variant 4 to 7).
+- When the pipeline is compiled, `VulkanRenderer::dual_pipeline` gives it. Until then the draw keeps its two draws, and the key goes to the compile threads and to the key list. So a new key costs no wrong frame. A draw of the HUD layer, of the particle layer or with a logic operation keeps its two draws. The ubershaders have no such form.
+- `UC_NO_DUAL_ALPHA=1` turns it off. The probe `nodual` turns it off while the game runs. The stereo preview of the PC takes the one draw only with `UC_DUAL_ALPHA=1`. That path compiles, and nobody ran it yet.
+- One standing frame, both ways in turn (`quest2\pb9`, scale 1.25): 10.0 ms of GPU work with the one draw, and 11.3 to 11.4 ms with the two draws. The frame had 105 second draws. The pipeline binds fell from 273 to 113 a frame, and the runs from 405 to 390. The pictures of the two ways look the same.
+- The first run folded 64 modules on the headset, in 30 s of compile thread time (`quest2\pb8`). The key list has their 51 keys now (1,823 keys, app 0.0.50).
+- The whole chapter `s30c4` with the app 0.0.50 (`quest2\c50`): 1,203 s with a mean of 68.4 fps, 89 % of the seconds at 60 fps or more, and no crash. One second had 4 fps: two frames of the game took 375 ms each there, with a read from the disc.
+
 What limits the slowest seconds now. Three live runs of the start of `s30c4` with the automatic scale reached the scale 1.0 (`quest2\lv5`, `pf1`, `pf2`). They still had 40 to 60 % of their seconds below 60 fps, with a mean of 60 to 62 fps. In the seconds below 60 fps a frame has 890 to 1,280 draws:
 
 - The GPU is 70 to 84 % busy, and its clock falls to 545 or 599 MHz. The headset raises the clock only above about 85 %. So less GPU work gives a lower clock first, and the GPU time of a frame stays near 13 ms.
@@ -1166,7 +1179,6 @@ What limits the slowest seconds now. Three live runs of the start of `s30c4` wit
 
 Next steps, by expected gain:
 
-- Draw a blending draw with destination alpha once. The Adreno 740 has `dualSrcBlend`: the draw writes the constant alpha, and the blend factors read a second colour output. This saves the second draw on the GPU (1.3 ms) and on the render thread.
 - Cut the work of the render thread for each packet. `vkQueueSubmit2`, `vkResetCommandBuffer`, `vkCmdBeginRendering` and the fences took about 15 % of the thread. A frame has 21 packets, and each one is a submission of its own.
 - Give the vertex pre-pass no vertices of draws that the cull test removes.
 

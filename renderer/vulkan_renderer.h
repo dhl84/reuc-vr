@@ -284,7 +284,7 @@ private:
     void reap_retired(bool wait);
     // A pipeline for a draw: the specialized one when compiled, else the ubershader variant of the same fixed state (see queue_pipeline).
     struct PipelineChoice { VkPipeline pipeline=VK_NULL_HANDLE; bool uber=false; };
-    PipelineKey pipeline_key(const gx::DrawPacket& draw,bool alpha_pass=false) const;
+    PipelineKey pipeline_key(const gx::DrawPacket& draw,bool alpha_pass=false,bool dual=false) const;   // dual: key word 67 = 2 for a blending draw with destination alpha (dual_pipeline)
     bool fused_destination_alpha(const gx::DrawPacket& draw) const;   // the headset: colour and destination alpha in one draw
     void log_depth_stats(const gx::FramePacket& packet,size_t scene_draws,const std::function<uint32_t(size_t)>& index_count);   // UC_DEPTH_STATS (vulkan_depth_efb.cpp)
     // UC_FOLD_CLEAR (depth_efb.h): an EFB copy's clear waits for the next pass on the EFB, which takes it as its load op (CLEAR, when the
@@ -299,6 +299,11 @@ private:
     VkPipeline make_pipeline(const PipelineKey& key,bool uber);
     VkShaderModule folded_module(const std::array<uint32_t,68>& values,bool early,bool table=false);   // tools/fold_tev_shaders.py's module for these constants, or null
     VkPipeline table_pipeline(const PipelineKey& key);   // the texture-table variant of a draw's pipeline when compiled (else queued, null)
+    // The headset: the pipeline that draws a blending draw with GX destination alpha once (dual-source blending, smoke.slang DUAL_ALPHA),
+    // when it is compiled. Otherwise it is queued, and the draw keeps its two draws meanwhile. key: pipeline_key(draw,false,true).
+    VkPipeline dual_pipeline(const PipelineKey& key);
+    bool dual_alpha_=false;   // the device has dualSrcBlend and UC_NO_DUAL_ALPHA is not set
+    PipelineKey last_dual_key_{}; VkPipeline last_dual_pipeline_=VK_NULL_HANDLE;   // dual_pipeline's memo (render thread only)
     VkPipeline uber_merge_pipeline(const PipelineKey& key,uint32_t family=0);   // the small-draw ubershader pipeline of the draw's fixed-function state when compiled (else queued, null)
     std::mutex folded_mutex_; std::unordered_map<uint64_t,VkShaderModule> folded_modules_;
     // The headset: a key without a module of the build gets one made on the device (tev_fold.h), on a compile thread, one at a time.
@@ -306,7 +311,7 @@ private:
     VkShaderModule fold_module(const std::array<uint32_t,68>& values,bool early,bool table);
     void open_device_fold();
     bool device_fold_=false; std::mutex fold_mutex_; std::filesystem::path device_folded_dir_;
-    std::array<std::vector<uint32_t>,4> fold_base_;   // the words of the four TEV modules (folded_module's variants), read at their first use
+    std::array<std::vector<uint32_t>,8> fold_base_;   // the words of the TEV modules (folded_module's variants, 4 to 7: DUAL_ALPHA), read at their first use
     uint64_t device_folds_=0; double device_fold_ms_=0;   // fold_mutex_
     void queue_pipeline(const PipelineKey& key,bool uber);   // pipelines_mutex_ held
     void load_pipeline_cache();

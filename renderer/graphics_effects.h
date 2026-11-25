@@ -51,7 +51,8 @@ inline bool chain_as_before() {
 //   nomip: an uploaded texture gets no generated levels             nocopymip: an EFB copy gets no levels for a mip filter
 //   nodispatch: no compute dispatch of the vertex pre-pass (the draws read the vertices of an earlier frame)
 //   nofxaa, nosharp: the screen pass of the headset without edge smoothing, without sharpening
-enum : uint32_t { kProbeAlpha2=1, kProbeJoin2=2, kProbeSort=4, kProbeEmpty=8, kProbeNoBlend=16, kProbeNoOpaque=32, kProbeScale100=64, kProbeScale150=128, kProbeScale200=256, kProbeTiny=512, kProbeZFail=1024, kProbeNoMip=2048, kProbeNoCopyMip=4096, kProbeNoDispatch=8192, kProbeNoFxaa=16384, kProbeNoSharp=32768 };
+//   nodual: a blending draw with destination alpha is two draws again (no dual-source pipeline). The picture stays right.
+enum : uint32_t { kProbeAlpha2=1, kProbeJoin2=2, kProbeSort=4, kProbeEmpty=8, kProbeNoBlend=16, kProbeNoOpaque=32, kProbeScale100=64, kProbeScale150=128, kProbeScale200=256, kProbeTiny=512, kProbeZFail=1024, kProbeNoMip=2048, kProbeNoCopyMip=4096, kProbeNoDispatch=8192, kProbeNoFxaa=16384, kProbeNoSharp=32768, kProbeNoDual=65536 };
 inline uint32_t renderer_probes() {
     static const char* const path=std::getenv("UC_PROBE_FILE");
     if(!path || !*path) return 0;
@@ -60,9 +61,9 @@ inline uint32_t renderer_probes() {
     const int64_t now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     int64_t last=checked.load(std::memory_order_relaxed);
     if(now-last>500 && checked.compare_exchange_strong(last,now)) {
-        static const char* const names[]={"alpha2","join2","sort","empty","noblend","noopaque","s100","s150","s200","tiny","zfail","nomip","nocopymip","nodispatch","nofxaa","nosharp"};
+        static const char* const names[]={"alpha2","join2","sort","empty","noblend","noopaque","s100","s150","s200","tiny","zfail","nomip","nocopymip","nodispatch","nofxaa","nosharp","nodual"};
         uint32_t found=0; std::error_code error;
-        for(uint32_t i=0;i<16;++i) if(std::filesystem::exists(std::string(path)+"."+names[i],error)) found|=1u<<i;
+        for(uint32_t i=0;i<17;++i) if(std::filesystem::exists(std::string(path)+"."+names[i],error)) found|=1u<<i;
         bits.store(found,std::memory_order_relaxed);
     }
     return bits.load(std::memory_order_relaxed);

@@ -712,6 +712,14 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
     // through the game's distant backdrop at an angle: what fell beyond it was clipped, and the view through the train's windows came out
     // spotty, changing with every head movement. Depth clamping keeps it drawn at the far depth instead (the game tests LEQUAL).
     depth_clamp_=layers_>1 && core.depthClamp && !std::getenv("UC_VR_NO_DEPTH_CLAMP"); enabled.depthClamp=depth_clamp_;
+    // A blending draw with destination alpha in one draw (dual_pipeline): the headset's default, UC_NO_DUAL_ALPHA=1 turns it off.
+    // The stereo preview of the desktop takes it with UC_DUAL_ALPHA=1 (not tested there).
+#ifdef __ANDROID__
+    dual_alpha_=layers_>1 && core.dualSrcBlend && !std::getenv("UC_NO_DUAL_ALPHA");
+#else
+    dual_alpha_=layers_>1 && core.dualSrcBlend && std::getenv("UC_DUAL_ALPHA") && !std::getenv("UC_NO_DUAL_ALPHA");
+#endif
+    enabled.dualSrcBlend=dual_alpha_;
     if (layers_>1) std::fprintf(stderr,"[vr] depth clamp %s\n",depth_clamp_ ? "on" : core.depthClamp ? "off (UC_VR_NO_DEPTH_CLAMP)" : "unavailable");
     enabled.shaderStorageImageExtendedFormats=core.shaderStorageImageExtendedFormats;   // r8/rg8/rg16f storage images of GTAO, SMAA and motion blur
     { VkPhysicalDeviceProperties properties; vkGetPhysicalDeviceProperties(physical_,&properties); anisotropy_limit_=properties.limits.maxSamplerAnisotropy; }
@@ -1176,11 +1184,14 @@ static bool affine_coordinates_enabled() {
     }();
     return on;
 }
-PipelineKey VulkanRenderer::pipeline_key(const gx::DrawPacket& draw,bool alpha_pass) const {
+PipelineKey VulkanRenderer::pipeline_key(const gx::DrawPacket& draw,bool alpha_pass,bool dual) const {
     auto blend=draw.blend;
     const bool fused=!alpha_pass && !fuse_off() && fused_destination_alpha(draw);
+    // dual: a blending draw whose destination alpha goes with the colour (key word 67 = 2). The colour factors read the computed alpha
+    // as the second blend input, and the alpha channel takes the constant (make_pipeline).
+    const bool dual_fused=dual && !alpha_pass && !fused && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && (draw.blend.mode==1 || draw.blend.mode==3);
     if(alpha_pass) blend={0,1,0,3,false,true};
-    else if((draw.uniforms->pixel[2]&256) && !fused) blend.alpha_write=false;
+    else if((draw.uniforms->pixel[2]&256) && !fused && !dual_fused) blend.alpha_write=false;
     if (blend.mode>3 || blend.source>7 || blend.destination>7 || blend.logic>15) throw std::invalid_argument("invalid native blend state");
     if (blend.mode==2 && !logic_ops_) {
         // No logicOp on this GPU (MoltenVK: Metal has none). The ops with a blend equivalent are drawn exactly: CLEAR (the only one RBUE08
@@ -1215,7 +1226,7 @@ PipelineKey VulkanRenderer::pipeline_key(const gx::DrawPacket& draw,bool alpha_p
     const auto& material=draw.material;
     if (material.stages>16) throw std::invalid_argument("native TEV stage count exceeds16");
     key[1]=material.stages;
-    key[67]=alpha_pass || fused;
+    key[67]=dual_fused ? 2u : uint32_t(alpha_pass || fused);
     key[68]=draw.uniforms->pixel[1]&31;
     if(alpha_pass) {
         if((key[68]&17)==17) key[68]=5; // compare equal to the first pass's depth
@@ -1288,6 +1299,23 @@ VulkanRenderer::PipelineChoice VulkanRenderer::pipeline_for(const PipelineKey& r
 }
 // The texture-table variant of a draw's pipeline (key bit kTexTableKeyBit) when it is compiled; otherwise it is queued for the compile threads
 // and the draw keeps its own pipeline and set meanwhile (no ubershader for the table: the draw is just not merged across textures).
+VkPipeline VulkanRenderer::dual_pipeline(const PipelineKey& requested) {
+    if (last_dual_pipeline_ && requested==last_dual_key_) return last_dual_pipeline_;
+    const auto key=static_depth_ ? requested : static_key(requested);
+    bool fresh=false;
+    {
+        std::lock_guard lock(pipelines_mutex_);
+        if (const auto found=pipelines_.find(key); found!=pipelines_.end()) {
+            if (found->second) { last_dual_key_=requested; last_dual_pipeline_=found->second; }
+            return found->second;
+        }
+        fresh=known_keys_.insert(key).second;
+        queue_pipeline(key,false);
+    }
+    // recorded as every new key: the next start compiles it in the warm-up, and a later build folds its module
+    if (fresh && !append_pipeline_key(cache_dir_/"pipeline_keys.bin",key)) std::fprintf(stderr,"[pipeline] cannot record key in %s\n",cache_dir_.string().c_str());
+    return VK_NULL_HANDLE;
+}
 VkPipeline VulkanRenderer::table_pipeline(const PipelineKey& requested) {
     if (last_table_pipeline_ && requested==last_table_key_) return last_table_pipeline_;
     auto key=static_depth_ ? requested : static_key(requested);
@@ -1453,7 +1481,7 @@ uint64_t folded_name(const std::array<uint32_t,68>& values,bool early,bool table
     uint64_t hash=0xCBF29CE484222325ull;
     const auto mix=[&](uint8_t byte) { hash^=byte; hash*=0x100000001B3ull; };
     for (const uint32_t value:values) for (int shift=0;shift<32;shift+=8) mix(uint8_t(value>>shift));
-    mix(uint8_t((early ? 1 : 0)|(table ? 2 : 0)));   // 2, 3: the texture-table modules (TEX_TABLE)
+    mix(uint8_t((early ? 1 : 0)|(table ? 2 : 0)|(values[66]==2 ? 4 : 0)));   // 2, 3: the texture-table modules (TEX_TABLE); + 4: the DUAL_ALPHA modules (constant 66 = 2)
     return hash;
 }
 std::vector<uint32_t> spirv_words(const std::filesystem::path& path) {   // the words of a SPIR-V file, or nothing
@@ -1485,7 +1513,7 @@ void VulkanRenderer::open_device_fold() {
 }
 VkShaderModule VulkanRenderer::fold_module(const std::array<uint32_t,68>& values,bool early,bool table) {
     const uint64_t hash=folded_name(values,early,table);
-    const uint32_t variant=(early ? 1u : 0u)|(table ? 2u : 0u);
+    const uint32_t variant=(early ? 1u : 0u)|(table ? 2u : 0u)|(values[66]==2 ? 4u : 0u);
     std::lock_guard one(fold_mutex_);   // one fold at a time: the game's threads keep their cores
     {   // another compile thread made it while this one waited (keys that differ in their fixed state only share a module)
         std::lock_guard guard(folded_mutex_);
@@ -1493,7 +1521,8 @@ VkShaderModule VulkanRenderer::fold_module(const std::array<uint32_t,68>& values
     }
     auto& base=fold_base_[variant];
     if (base.empty()) {
-        static const char* const names[4]={"smoke.stereo.frag.spv","smoke.stereo.early.frag.spv","smoke.stereo.tex.frag.spv","smoke.stereo.tex.early.frag.spv"};
+        static const char* const names[8]={"smoke.stereo.frag.spv","smoke.stereo.early.frag.spv","smoke.stereo.tex.frag.spv","smoke.stereo.tex.early.frag.spv",
+                                           "smoke.stereo.dual.frag.spv","smoke.stereo.dual.early.frag.spv","smoke.stereo.tex.dual.frag.spv","smoke.stereo.tex.dual.early.frag.spv"};
         base=spirv_words(shaders_/names[variant]);
         if (base.empty()) { std::fprintf(stderr,"[pipeline] device fold: cannot read %s\n",names[variant]); return VK_NULL_HANDLE; }
     }
@@ -1638,6 +1667,7 @@ VkPipeline VulkanRenderer::make_pipeline(const PipelineKey& key,bool uber) {
             // thread). The render thread never does that: its draw takes the ubershader, and the key goes to the compile threads.
             if (!folded && device_fold_ && !no_device_fold) folded=fold_module(spec_values,early_variant,table);
             if (folded) { stages[1].module=folded; stages[1].pSpecializationInfo=nullptr; }
+            else if (key[67]==2) return VK_NULL_HANDLE;   // only the DUAL_ALPHA modules have the second blend input: the draw keeps its two draws
             // No folded module (a key that the build's lists do not have): the driver would specialize the 600 KB module itself. The Adreno
             // shader compiler fails there (VkResult -13) or crashes (libllvm-qgl.so, five times on a Quest 3 on 15 and 16 November 2026).
             // The headset does not compile such a pipeline: its draws keep the ubershader, and the recorded key gets a module in a later build.
@@ -1677,6 +1707,11 @@ VkPipeline VulkanRenderer::make_pipeline(const PipelineKey& key,bool uber) {
         blend.srcColorBlendFactor=blend.srcAlphaBlendFactor=mode.mode==3 ? VK_BLEND_FACTOR_ONE : sources[mode.source];
         blend.dstColorBlendFactor=blend.dstAlphaBlendFactor=mode.mode==3 ? VK_BLEND_FACTOR_ONE : destinations[mode.destination];
         blend.colorBlendOp=blend.alphaBlendOp=mode.mode==3 ? VK_BLEND_OP_REVERSE_SUBTRACT : VK_BLEND_OP_ADD;
+        if (key[67]==2) {   // dual-source blending: the computed alpha is the second input (smoke.slang blendAlpha), and the alpha channel takes the constant
+            const auto second=[](VkBlendFactor factor) { return factor==VK_BLEND_FACTOR_SRC_ALPHA ? VK_BLEND_FACTOR_SRC1_ALPHA : factor==VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA ? VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA : factor; };
+            blend.srcColorBlendFactor=second(blend.srcColorBlendFactor); blend.dstColorBlendFactor=second(blend.dstColorBlendFactor);
+            blend.srcAlphaBlendFactor=VK_BLEND_FACTOR_ONE; blend.dstAlphaBlendFactor=VK_BLEND_FACTOR_ZERO; blend.alphaBlendOp=VK_BLEND_OP_ADD;
+        }
         VkPipelineColorBlendAttachmentState blends[5]{blend,{},{},{},{}};
         blends[1].colorWriteMask=motion_write_mask(key);   // motion vectors: replaced, never blended
         blends[2].colorWriteMask=gbuffer_write_mask(key);  // G-buffer: replaced, never blended
@@ -3465,7 +3500,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         std::erase_if(retained_textures_,[](const auto& held) { return held.second->source.use_count()<=1; });
     }
     // Per draw: where its vertices live (a persistent mesh buffer, or this frame's dynamic buffer for non-mesh draws) and which palette it reads.
-    struct DrawGpu { PipelineKey key{}; PipelineChoice choice{}; const Buffer* vertices=nullptr; const Buffer* indices=nullptr; VkDeviceSize vertex_offset=0, index_offset=0; uint32_t index_count=0, first_index=0; int32_t first_vertex=0; uint32_t palette=0, current=0, indexed=0, bank=kNoBank; uint64_t mesh_id=0; const std::array<float,6>* box=nullptr; };   // box: a cached mesh's object-space bounds   // mesh_id: GpuMesh::id of a cached mesh draw (0 for an inline draw)
+    struct DrawGpu { PipelineKey key{}; PipelineChoice choice{}; const Buffer* vertices=nullptr; const Buffer* indices=nullptr; VkDeviceSize vertex_offset=0, index_offset=0; uint32_t index_count=0, first_index=0; int32_t first_vertex=0; VkPipeline dual=VK_NULL_HANDLE; uint32_t palette=0, current=0, indexed=0, bank=kNoBank; uint64_t mesh_id=0; const std::array<float,6>* box=nullptr; };   // box: a cached mesh's object-space bounds   // mesh_id: GpuMesh::id of a cached mesh draw (0 for an inline draw)
     std::vector<DrawGpu> gpu_draws; gpu_draws.reserve(packet.draws.size());
     std::unordered_map<const gx::TextureBank*,uint32_t> bank_of;   // one bank per distinct texture matrix set
     std::vector<const gx::TextureBank*> banks;
@@ -3494,6 +3529,12 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const bool indexed=draw.state->descriptors[0]!=gx::Mode::none;
         DrawGpu info; info.indexed=indexed; info.current=draw.transforms->current;
         info.key=pipeline_key(draw); info.choice=pipeline_for(info.key);
+        // A blending draw with destination alpha: its one-draw pipeline when that is compiled (dual_pipeline). info.key stays the key of
+        // the colour draw: the state, the joins and the layers read it.
+        if (dual_alpha_ && xform_ && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && (draw.blend.mode==1 || draw.blend.mode==3) && !(renderer_probes()&(kProbeAlpha2|kProbeNoDual))) {
+            const auto dual_key=pipeline_key(draw,false,true);
+            if (dual_key[67]==2) info.dual=dual_pipeline(dual_key);
+        }
         if (gpu_ops_enabled() && info.choice.uber) note_uber_fallback(draw);
         if (draw.mesh) {
             GpuMesh& mesh=gpu_mesh(draw.mesh);   // uploaded and validated on first use
@@ -4826,7 +4867,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             vkCmdDrawIndexed(slot.command,run.count,1,run.first,0,0);
             ++issued_draws_;
             const auto depth=draw.uniforms->pixel[1]&31;
-            if(!(probes&kProbeAlpha2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw))) {   // as below: destination alpha after RGB blending
+            if(!(info.dual && !particle_pass) && !(probes&kProbeAlpha2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw))) {   // as below: destination alpha after RGB blending
                 const auto alpha_key=pipeline_key(draw,true);
                 const auto alpha=pipeline_for(alpha_key);
                 bind_pipeline(alpha.pipeline);
@@ -5157,7 +5198,8 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (xform_) {   // join the pending run when nothing but the vertex range differs, else draw the pending run and start a new one
                 push.motion=0;   // the stereo shaders read the eye block from the set, not this index
                 const auto& x=xform_draws[d];
-                Run run{d,particle_pass ? particle_pipeline(info.key) : info.choice.pipeline,set_index,push,draw_viewport,draw_scissor,x.first,info.index_count,x.positions+x.count,x.attributes+x.count*(x.word&255),
+                const bool dual_run=info.dual && !particle_pass;   // colour and destination alpha in one draw (dual_pipeline)
+                Run run{d,particle_pass ? particle_pipeline(info.key) : dual_run ? info.dual : info.choice.pipeline,set_index,push,draw_viewport,draw_scissor,x.first,info.index_count,x.positions+x.count,x.attributes+x.count*(x.word&255),
                         set_shading_rate_ ? draw_rate(draw,stereo_kind,(info.key[68]>>4)&1) : VkExtent2D{1,1},fovea_draw};
                 // The texture table: the draw's pipeline variant that reads its textures from the packet's table, once compiled (meanwhile the
                 // draw keeps its own). Not for the particle layer's pipelines, nor a draw whose second destination-alpha draw reads its own set.
@@ -5169,20 +5211,20 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 }();
                 if (table_ok && !particle_pass && std::find(table_skipped.begin(),table_skipped.end(),draw.callsite)==table_skipped.end()) {
                     const auto depth=draw.uniforms->pixel[1]&31;
-                    const bool second_alpha=!(probes&kProbeJoin2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw));
+                    const bool second_alpha=!dual_run && !(probes&kProbeJoin2) && (draw.uniforms->pixel[2]&256) && draw.blend.alpha_write && !(depth&1 && ((depth>>1)&7)==0) && (fuse_off() || !fused_destination_alpha(draw));
                     // Lazily (the default): the draw keeps its folded module and own set and only remembers its table variant (run.table_pipeline);
                     // the run moves onto the table when a draw with other textures joins it. A single draw or a run of equal textures reading the
                     // table cost the headset per fragment (non-uniform descriptor indexing: the full-screen glows, fades and sprites ~2x, S18
                     // section 8). UC_TEX_MERGE_EAGER=1: every draw that can on the table, as before.
                     if (!second_alpha) {
-                        if (const VkPipeline table=table_pipeline(info.key)) {
+                        if (const VkPipeline table=table_pipeline(dual_run ? pipeline_key(draw,false,true) : info.key)) {
                             if (table_eager_) { run.pipeline=table; run.table=true; }
                             else if (!table_max_pixels_ || draw_pixels(d)<=table_max_pixels_) run.table_pipeline=table;
                         } else ++table_pending_;
                     }
                     // The small-draw ubershader (uber_merge.h): a small draw may move onto the ubershader of its fixed-function state, but only to
                     // join a run it cannot join otherwise (below): a run of one draw, or of draws that join anyway, keeps its folded module.
-                    if (!second_alpha && !screen_lookup_draw && uber_small_scene_ && !frag_dump_ && uber_merge_stages_ok(info.key)) {
+                    if (!second_alpha && !dual_run && !screen_lookup_draw && uber_small_scene_ && !frag_dump_ && uber_merge_stages_ok(info.key)) {
                         if (draw_pixels(d)>uber_max_pixels_) ++uber_big_;
                         else if (!(run.merge=uber_merge_pipeline(info.key))) ++uber_pending_;
                         else { run.pixels=draw_pixels(d); run.few[0]=uber_merge_pipeline(info.key,1); run.few[1]=uber_merge_pipeline(info.key,2); }
