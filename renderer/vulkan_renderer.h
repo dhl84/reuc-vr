@@ -236,10 +236,6 @@ private:
         Buffer warp_frame;       // and its eye rows (xr_motion.slang WarpEyes)
         VkDescriptorPool warp_pool = VK_NULL_HANDLE; VkDescriptorSet warp_set = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<const gx::MeshBuffers>> mesh_refs;   // keeps the meshes this submission draws alive until its fence completed
-        // What `banks` holds from the submission before, for each bank: the texture matrix ids that can differ from the identity
-        // (gx::DrawPacket::bank_ids). A bank writes only these matrices and its own. Empty after the buffer is made again: every bank
-        // is then written whole.
-        std::vector<std::array<uint64_t,2>> bank_ids;
         std::vector<std::shared_ptr<Texture>> textures;   // shared through texture_pool_: one GPU image per texture, not one per slot
         std::vector<std::shared_ptr<const gx::TexturePixels>> copy_sources;
         Buffer readback; std::shared_ptr<gx::CopyReadback> readback_target; VkExtent2D readback_extent{};   // an EFB copy that the game reads from memory: delivered when the fence completed (collect)

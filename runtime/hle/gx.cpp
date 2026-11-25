@@ -421,16 +421,13 @@ void resolve_texture_matrices(gx::DrawUniform& uniforms,const TextureSelectors& 
     }
 }
 // The bank a draw with per-vertex texture matrix indices reads (null for every other draw). Draws whose matrices did not change share one.
-// It also sets draw.bank_ids: the ids of the matrices that were set when the bank was made. Every other matrix of the bank is the identity.
-void set_texture_bank(gx::DrawPacket& draw,const TextureMatrices& matrices) {
-    if(!gx::has_texture_matrix_index(*draw.state)) { draw.texture_bank=nullptr; return; }
+std::shared_ptr<const gx::TextureBank> texture_bank(const gx::State& state,const TextureMatrices& matrices) {
+    if(!gx::has_texture_matrix_index(state)) return nullptr;
     thread_local std::shared_ptr<const gx::TextureBank> last;
-    thread_local std::array<uint64_t,2> last_ids{};
-    gx::TextureBank bank; std::array<uint64_t,2> ids{};
-    static_assert(std::tuple_size_v<TextureMatrices><=128);
-    for(size_t id=0;id<matrices.size();++id) if(id!=60 && matrices[id]) { std::copy(matrices[id]->begin(),matrices[id]->end(),bank.rows.begin()+id*3); ids[id>>6]|=uint64_t(1)<<(id&63); }
-    if(!last || !(*last==bank)) { last=std::make_shared<const gx::TextureBank>(bank); last_ids=ids; }
-    draw.texture_bank=last; draw.bank_ids=last_ids;
+    gx::TextureBank bank;
+    for(size_t id=0;id<matrices.size();++id) if(id!=60 && matrices[id]) std::copy(matrices[id]->begin(),matrices[id]->end(),bank.rows.begin()+id*3);
+    if(!last || !(*last==bank)) last=std::make_shared<const gx::TextureBank>(bank);
+    return last;
 }
 struct MaterialSnapshot { gx::TevMaterial material; gx::DrawUniform uniforms; };
 // A snapshot is a pure function of the SDK block and the host-side state versioned above, so the last result is reused while neither changed:
@@ -961,7 +958,7 @@ void import_resource(uint32_t address,uint32_t length,gx::State& bindings,gx::Tr
                 selectors[i]=(*indices[i/4]>>(i<4 ? 6+i*6 : (i-4)*6))&63;
             resolve_texture_matrices(uniforms,selectors,matrices);
             draw.uniforms=gx::share(import_uniforms,uniforms);
-            set_texture_bank(draw,matrices);
+            draw.texture_bank=texture_bank(*draw.state,matrices);
             draw.texture_wrap=wraps(textures);
             draw.blend=blend;
             if(source->prompt)if(auto prompt=uc::prompt_from_quad(draw,*source->prompt)) {
@@ -1245,7 +1242,7 @@ void live_end(uint32_t who,std::span<const std::byte> bytes) {
     draw.transforms=live_transforms;
     if(!expand_points(draw,live_point)) return;
     draw.texture=live_texture;
-    draw.material=live_material; draw.uniforms=live_uniforms; set_texture_bank(draw,texture_matrices);
+    draw.material=live_material; draw.uniforms=live_uniforms; draw.texture_bank=texture_bank(*draw.state,texture_matrices);
     draw.texture_maps=live_texture_maps;
     draw.texture_wrap=live_texture_wrap;
     draw.blend=live_blend;
@@ -2416,7 +2413,7 @@ void mesh_draw(const SdkRef& block,uint32_t lr,uint32_t object,uint32_t address,
                 draw.callsite=UC_ADDR(0x80366E14); draw.primitive=0x90; draw.vat=0; draw.state=mesh_state;
                 draw.mesh=geometry.buffers;
                 if(transforms_dirty) { gx::share(mesh_transforms_block,transforms); transforms_dirty=false; }
-                draw.transforms=mesh_transforms_block; draw.material=material; draw.uniforms=mesh_uniforms_block; set_texture_bank(draw,texture_matrices); draw.blend=blend_state; draw.texture=textures[0];
+                draw.transforms=mesh_transforms_block; draw.material=material; draw.uniforms=mesh_uniforms_block; draw.texture_bank=texture_bank(*draw.state,texture_matrices); draw.blend=blend_state; draw.texture=textures[0];
                 draw.texture_wrap=texture_wrap;
                 std::copy(textures.begin()+1,textures.end(),draw.texture_maps.begin());
             }

@@ -78,9 +78,6 @@ struct DrawPacket {
     TevMaterial material;
     Shared<DrawUniform> uniforms;
     std::shared_ptr<const TextureBank> texture_bank;   // set only for draws whose format has per-vertex texture matrix indices
-    // The texture matrix ids of texture_bank whose rows can differ from the identity (bit id&63 of word id>>6). Every other matrix of
-    // the bank is the identity. All ids by default: a producer that does not know them. The Vulkan renderer uploads only these.
-    std::array<uint64_t,2> bank_ids{~uint64_t(0),~uint64_t(0)};
     BlendState blend;
     std::array<uint8_t,8> texture_wrap{}; // SDK mode: S0..1,T2..3,mag4,mip5..6,min7
     std::optional<PromptDraw> native_prompt;

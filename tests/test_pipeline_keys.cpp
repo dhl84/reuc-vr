@@ -117,7 +117,23 @@ static void test_affine_coordinates() {
     k[5]&=~64u; k[9]&=~64u;
     CHECK(uc::affine_coordinates_key(k)==k); // no texture reads: no new variant
 }
+static void test_key_memo() {   // the table in front of the map of pipelines: never the value of another key or of another kind
+    uc::KeyMemo<const int*> memo;
+    int values[300];
+    std::vector<uc::PipelineKey> keys(300);
+    uint32_t seed=7;
+    const auto next=[&] { seed=seed*1664525u+1013904223u; return seed>>8; };
+    for (auto& key:keys) { key={}; key[0]=next()&0x3FFFF; key[1]=1+next()%4; for (int i=2;i<14;++i) key[i]=next(); key[68]=next()&0x1FF; key[69]=3; }
+    for (size_t i=0;i<keys.size();++i) { memo.put(0,keys[i],&values[i]); CHECK(memo.find(0,keys[i])==&values[i]); CHECK(!memo.find(1,keys[i])); }
+    size_t kept=0;
+    for (size_t i=0;i<keys.size();++i) { const int* found=memo.find(0,keys[i]); CHECK(!found || found==&values[i]); kept+=found!=nullptr; CHECK(!memo.find(3,keys[i])); }
+    CHECK(kept>=200);   // 300 keys in 1,024 places: a hash that spreads them keeps about 260
+    uc::PipelineKey a=keys[0]; memo.put(2,a,&values[0]);
+    for (size_t word=0;word<a.size();++word) for (int bit=0;bit<32;++bit) { auto b=a; b[word]^=1u<<bit; CHECK(!memo.find(2,b)); }   // one bit of the key
+    memo.clear(); CHECK(!memo.find(2,a)); CHECK(!memo.find(0,keys[1]));
+}
 int main() {
+    test_key_memo();
     test_affine_coordinates();
     test_xform_coordinates();
     test_without_logic_op();
