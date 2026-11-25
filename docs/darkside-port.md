@@ -1078,6 +1078,16 @@ In `s20c1` the automatic render scale stayed at its lowest level (1.5) for the w
 
 The last boss of `s20c7` ran at 53 to 55 fps for about 10 minutes (`quest2\h2`). The GPU took 15.5 ms a frame at the scale 1.25, at 640 MHz. A frame has about 1,150 draws and 16 EFB copies there. The step from 1.5 to 1.25 did not make the GPU time shorter, so the pixels are not the limit. Only four new keys came in that fight, so the ubershader is not the cause. This is the same kind of scene as the span of `s10c6` (see "Scenes with many draws"). The cause of the GPU cost of a draw is still not found. The start of `s30c4` is such a scene too: the GPU is 97 % busy at 640 MHz and takes 14.6 ms a frame at the scale 1.25.
 
+One setting was tried on the start of `s30c4`: the limit of the small-draw ubershader (`UC_UBER_PX`, 1,024 guest pixels by default). `q3\build\reuc-build\quest_px.sh NAME [ENV_LINE...]` plays that scene with the bot at the fixed scale 1.25. `q3\build\darkside\window_gpu.py` reads the frame rate and the GPU time from the VrApi lines. Each run had about 155 s after the first minute, with the app 0.0.43:
+
+| Limit | Mean fps | Seconds at 60 fps or more | GPU time of a frame, median | Draws a frame |
+|---|---|---|---|---|
+| 1,024 (default) | 65.0 | 94 % | 13.5 ms | 783 |
+| 4,096 | 61.5 | 65 % | 13.9 ms | 847 |
+| 256 | 62.0 | 65 % | 13.7 ms | 854 |
+
+The GPU time is the same within 3 %, and no limit is better than the default. So this limit is not the cause. The runs differ in their draws, because the bot does not play the same way twice.
+
 A trap of the log. The line `[sched]` gives the time for which each thread of the game held the baton. If a thread blocks and no other thread is ready, that thread runs the idle wait of the scheduler (`Sched::idle_wait`). The wait counts for it. So 400 ms a second for thread 5 in a slow scene is not work. That thread ran only 46 million guest cycles a second there. `q3\build\darkside\thread_times.py` prints these times for each chapter of a log.
 
 #### The bot in the wide view
