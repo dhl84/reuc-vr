@@ -1051,6 +1051,8 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s30c7` | 0.0.42 | 1,793 | 62.4 | 76 % | 42 fps |
 | `s10c8`, from the Tyrant | 0.0.43 | 587 | 62.7 | 66 % | 37 fps |
 | `s00c1` | 0.0.43 | 736 | 62.0 | 64 % | 29 fps |
+| `s30c4` again | 0.0.50 | 1,203 | 68.4 | 89 % | 4 fps |
+| `s20c7` again | 0.0.50 | 1,139 | 63.6 | 69 % | 24 fps |
 
 The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 was built for 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. Its package still holds the 1,359 keys of 0.0.42 (see the traps of "The parts of the GPU time of a frame"). The headset folds the other keys itself at a start. The list has 1,772 keys after the runs of `s10c8` and `s00c1`. The app 0.0.44 is the first with all of them in its package. With the keys in the build the app starts in 4 to 5 s.
 
@@ -1169,6 +1171,7 @@ The blending draws with destination alpha in one draw (app 0.0.49, 25 November 2
 - One standing frame, both ways in turn (`quest2\pb9`, scale 1.25): 10.0 ms of GPU work with the one draw, and 11.3 to 11.4 ms with the two draws. The frame had 105 second draws. The pipeline binds fell from 273 to 113 a frame, and the runs from 405 to 390. The pictures of the two ways look the same.
 - The first run folded 64 modules on the headset, in 30 s of compile thread time (`quest2\pb8`). The key list has their 51 keys now (1,823 keys, app 0.0.50).
 - The whole chapter `s30c4` with the app 0.0.50 (`quest2\c50`): 1,203 s with a mean of 68.4 fps, 89 % of the seconds at 60 fps or more, and no crash. One second had 4 fps: two frames of the game took 375 ms each there, with a read from the disc.
+- The chapter `s20c7` with the app 0.0.50 (`quest2\b50`): 1,139 s with a mean of 63.6 fps, 69 % of the seconds at 60 fps or more, and no crash. The app 0.0.42 had 58.5 fps and 42 % there. The last 290 s, with the last boss, had 67.1 fps and 91 %. That boss ran at 53 to 55 fps before.
 
 What limits the slowest seconds now. Three live runs of the start of `s30c4` with the automatic scale reached the scale 1.0 (`quest2\lv5`, `pf1`, `pf2`). They still had 40 to 60 % of their seconds below 60 fps, with a mean of 60 to 62 fps. In the seconds below 60 fps a frame has 890 to 1,280 draws:
 
