@@ -712,13 +712,10 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
     // through the game's distant backdrop at an angle: what fell beyond it was clipped, and the view through the train's windows came out
     // spotty, changing with every head movement. Depth clamping keeps it drawn at the far depth instead (the game tests LEQUAL).
     depth_clamp_=layers_>1 && core.depthClamp && !std::getenv("UC_VR_NO_DEPTH_CLAMP"); enabled.depthClamp=depth_clamp_;
-    // A blending draw with destination alpha in one draw (dual_pipeline): the headset's default, UC_NO_DUAL_ALPHA=1 turns it off.
-    // The stereo preview of the desktop takes it with UC_DUAL_ALPHA=1 (not tested there).
-#ifdef __ANDROID__
-    dual_alpha_=layers_>1 && core.dualSrcBlend && !std::getenv("UC_NO_DUAL_ALPHA");
-#else
+    // A blending draw with destination alpha in one draw (dual_pipeline). OFF by default: on a Quest 3 the GPU hung with it now and
+    // then (frames of about 360 ms, and the app ended after three of them in 2 s, docs/darkside-port.md). UC_DUAL_ALPHA=1 turns it on
+    // for tests, on the headset and in the stereo preview of the desktop.
     dual_alpha_=layers_>1 && core.dualSrcBlend && std::getenv("UC_DUAL_ALPHA") && !std::getenv("UC_NO_DUAL_ALPHA");
-#endif
     enabled.dualSrcBlend=dual_alpha_;
     if (layers_>1) std::fprintf(stderr,"[vr] depth clamp %s\n",depth_clamp_ ? "on" : core.depthClamp ? "off (UC_VR_NO_DEPTH_CLAMP)" : "unavailable");
     enabled.shaderStorageImageExtendedFormats=core.shaderStorageImageExtendedFormats;   // r8/rg8/rg16f storage images of GTAO, SMAA and motion blur
@@ -6207,7 +6204,7 @@ void VulkanRenderer::shutdown() {
         stop_workers();
         for (auto [key,pipeline]:pipelines_) vkDestroyPipeline(device,pipeline,nullptr);
         for (auto [key,pipeline]:uber_pipelines_) vkDestroyPipeline(device,pipeline,nullptr);
-        pipelines_.clear(); uber_pipelines_.clear(); last_pipeline_=VK_NULL_HANDLE; last_table_pipeline_=VK_NULL_HANDLE; last_merge_pipeline_[0]=last_merge_pipeline_[1]=last_merge_pipeline_[2]=VK_NULL_HANDLE;
+        pipelines_.clear(); uber_pipelines_.clear(); last_pipeline_=VK_NULL_HANDLE; last_table_pipeline_=VK_NULL_HANDLE; last_merge_pipeline_[0]=last_merge_pipeline_[1]=last_merge_pipeline_[2]=VK_NULL_HANDLE; last_dual_pipeline_=VK_NULL_HANDLE;
         if (pipeline_cache_) { save_pipeline_cache(); vkDestroyPipelineCache(device,pipeline_cache_,nullptr); pipeline_cache_=VK_NULL_HANDLE; }
         if (g_compile_guard.load()==&compile_guard_) g_compile_guard.store(nullptr);
         compile_guard_.close();

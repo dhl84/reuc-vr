@@ -1051,8 +1051,9 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s30c7` | 0.0.42 | 1,793 | 62.4 | 76 % | 42 fps |
 | `s10c8`, from the Tyrant | 0.0.43 | 587 | 62.7 | 66 % | 37 fps |
 | `s00c1` | 0.0.43 | 736 | 62.0 | 64 % | 29 fps |
-| `s30c4` again | 0.0.50 | 1,203 | 68.4 | 89 % | 4 fps |
-| `s20c7` again | 0.0.50 | 1,139 | 63.6 | 69 % | 24 fps |
+| `s30c4` again | 0.0.48 | 1,189 | 67.0 | 83 % | 37 fps |
+| `s30c4` again, with the one-draw blend (off now) | 0.0.50 | 1,203 | 68.4 | 89 % | 4 fps |
+| `s20c7` again, with the one-draw blend (off now) | 0.0.50 | 1,139 | 63.6 | 69 % | 24 fps |
 
 The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 was built for 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. Its package still holds the 1,359 keys of 0.0.42 (see the traps of "The parts of the GPU time of a frame"). The headset folds the other keys itself at a start. The list has 1,772 keys after the runs of `s10c8` and `s00c1`. The app 0.0.44 is the first with all of them in its package. With the keys in the build the app starts in 4 to 5 s.
 
@@ -1162,16 +1163,21 @@ Two changes came from these numbers (app 0.0.48):
 
 The whole chapter `s30c4` with the app 0.0.48 (`quest2\c48`): 1,189 s with a mean of 67.0 fps, 83 % of the seconds at 60 fps or more, and no crash. The lowest second had 37 fps. The app 0.0.42 had 63.7 fps and 72 % in that chapter.
 
-The blending draws with destination alpha in one draw (app 0.0.49, 25 November 2026):
+The blending draws with destination alpha in one draw (app 0.0.49, 25 November 2026). This path is off by default since the app 0.0.51, because the GPU hangs with it now and then (see the end of this list):
 
 - The renderer drew such a draw twice: the colour with the computed alpha, then the constant alpha alone. The headset now draws it once with dual-source blending (the device feature `dualSrcBlend`). The fragment stage writes the colour with the constant alpha, and the computed alpha as the second input of the blend. The colour factors read that second input (`VK_BLEND_FACTOR_SRC1_ALPHA`), and the alpha factors are one and zero.
 - The key word 67 is 2 for such a pipeline (`pipeline_key` with `dual`). Its modules come from the define `DUAL_ALPHA` of `smoke.slang`. These modules have no `transmit` output, because a module with a second blend input must not write location 1. The build makes four more base modules (`smoke.stereo.dual.frag.spv` and three others). `tools/fold_tev_shaders.py` and the fold on the device take them for a key with that word (variant 4 to 7).
 - When the pipeline is compiled, `VulkanRenderer::dual_pipeline` gives it. Until then the draw keeps its two draws, and the key goes to the compile threads and to the key list. So a new key costs no wrong frame. A draw of the HUD layer, of the particle layer or with a logic operation keeps its two draws. The ubershaders have no such form.
-- `UC_NO_DUAL_ALPHA=1` turns it off. The probe `nodual` turns it off while the game runs. The stereo preview of the PC takes the one draw only with `UC_DUAL_ALPHA=1`. That path compiles, and nobody ran it yet.
+- `UC_DUAL_ALPHA=1` turns it on, on the headset and in the stereo preview of the PC. The probe `nodual` turns it off again while the game runs. The PC path compiles, and nobody ran it yet.
 - One standing frame, both ways in turn (`quest2\pb9`, scale 1.25): 10.0 ms of GPU work with the one draw, and 11.3 to 11.4 ms with the two draws. The frame had 105 second draws. The pipeline binds fell from 273 to 113 a frame, and the runs from 405 to 390. The pictures of the two ways look the same.
 - The first run folded 64 modules on the headset, in 30 s of compile thread time (`quest2\pb8`). The key list has their 51 keys now (1,823 keys, app 0.0.50).
 - The whole chapter `s30c4` with the app 0.0.50 (`quest2\c50`): 1,203 s with a mean of 68.4 fps, 89 % of the seconds at 60 fps or more, and no crash. One second had 4 fps: two frames of the game took 375 ms each there, with a read from the disc.
 - The chapter `s20c7` with the app 0.0.50 (`quest2\b50`): 1,139 s with a mean of 63.6 fps, 69 % of the seconds at 60 fps or more, and no crash. The app 0.0.42 had 58.5 fps and 42 % there. The last 290 s, with the last boss, had 67.1 fps and 91 %. That boss ran at 53 to 55 fps before.
+- The fault. A run of five chapters with the app 0.0.50 ended in `s20c3` after 53 s (`quest2\r50`): the kernel log of the headset had `GPU hang detected` three times in 2 s, and the app ended with `submit frame failed: VkResult -4`. A second run of that chapter ended the same way after 242 s (`quest2\x1`). With `UC_NO_DUAL_ALPHA=1` the chapter ran for 519 s without a fault (`quest2\x2`).
+- One GPU hang shows in the log as a frame of 350 to 399 ms (a line `[hitch]`). Three hangs in 2 s end the app. Each run with the one draw has such frames: 10 in `quest2\c50`, 8 in `quest2\b50`, 26 in `quest2\r50`, 7 in `quest2\x1`. No run without it has one (`quest2\c48`, `x2`, `lv5`, `pf1`). So the one second with 4 fps of `quest2\c50` was two such hangs, not a slow read from the disc.
+- The hangs are spread over a chapter. They do not follow a change of the render scale at once, and they came at the scales 1.25, 1.5 and 1.75. Without the coarse shading and the foveation map (`UC_NO_VRS=1 UC_NO_FOVEATION=1`) a run still had 7 of them (`quest2\x3`). The standing frames of the probe runs had none. The cause is not found. `q3\build\reuc-build\quest_s20c3.sh NAME [ENV_LINE...]` plays that chapter for a test.
+- So the numbers of `quest2\c50` and `quest2\b50` hold for a path that is off now. The gain of the one draw was 1.4 fps in `s30c4` (68.4 against 67.0 fps).
+- The app 0.0.51 has the path off. It played `s20c3` for 512 s at 71.3 fps with no such frame and no crash (`quest2\x4`).
 
 What limits the slowest seconds now. Three live runs of the start of `s30c4` with the automatic scale reached the scale 1.0 (`quest2\lv5`, `pf1`, `pf2`). They still had 40 to 60 % of their seconds below 60 fps, with a mean of 60 to 62 fps. In the seconds below 60 fps a frame has 890 to 1,280 draws:
 
