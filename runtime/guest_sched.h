@@ -65,6 +65,11 @@ public:
     int wake_all(uint32_t key);
     void sleep_ticks(uint64_t ticks);
     uint64_t take_blocked_ticks();               // the running thread's time in block_on since the last call; resets it
+    // The running thread gives the baton to the other ready threads for at most `ticks`. It goes on at once when no other thread is
+    // ready and no load is in flight (load_begin), so it does not sleep for nothing. Not for the deterministic mode: sleep_ticks there.
+    void donate_ticks(uint64_t ticks);
+    void load_begin() { ++loads_; }              // an asynchronous read started: a guest thread waits for its result
+    void load_end() { --loads_; }                // its event ran or was dropped
     [[noreturn]] void exit_current(uint32_t value);
     uint32_t join(Thread* t);
     void set_priority(Thread* t, int priority);
@@ -103,6 +108,7 @@ public:
 private:
     static constexpr uint32_t join_key(const Thread* t) { return 0xF0000000u + uint32_t(t->id); }
     static constexpr uint32_t sleep_key(const Thread* t) { return 0xF8000000u + uint32_t(t->id); }
+    static constexpr uint32_t donate_key(const Thread* t) { return 0xF4000000u + uint32_t(t->id); }
     void make_ready(Thread* t, bool front = false);
     Thread* pick_ready();
     void wake(Thread* t);
@@ -132,6 +138,9 @@ private:
     std::atomic<Thread*> baton_{nullptr};   // running_ for the spin in handoff (written with running_, under baton_m_)
     uint64_t spin_ns_ = 0;                  // how long a thread that handed the baton on spins for it before sleeping (UC_SCHED_SPIN_US, default 0 = sleep at once)
     Thread* main_ = nullptr;
+    uint32_t donor_key_ = 0;                // the wait key of the thread in donate_ticks, 0 = none (baton holder only)
+    uint64_t donate_seq_ = 0;               // tells the timer of an older donate_ticks call from the one of the current call
+    std::atomic<int> loads_{0};             // asynchronous reads in flight (load_begin)
     ppc::Ctx irq_ctx_{};
     std::atomic<bool> shutdown_{false}, main_done_{false};
     bool ee_ = true, in_irq_ = false;

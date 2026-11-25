@@ -1205,6 +1205,51 @@ Traps of these measurements:
 - The value `render` of the line `[perf]` holds waits of the render thread. It stayed near 13 ms a frame with the probe `empty`. Take the CPU time of that thread from a profile.
 - When the build links `libmain.so` again, it copies the key list and the folded modules into the package (`POST_BUILD` in `game/CMakeLists.txt`). It does not copy them at any other time. A build after a change of the key list alone packs the old keys and modules.
 
+#### The waits of the game thread in slow seconds
+
+`q3\build\darkside\low_cause.py RUN\run.log` sorts the seconds of a run below 60 fps by what the game thread and the render loop did in them. The run of five chapters with the app 0.0.51 (`quest2\r51`) had 197 such seconds of 4,364. The run of `s30c4` with the app 0.0.48 (`quest2\c48`) had 204 of 1,189.
+
+- In `s30c4` the GPU is the limit in all of them. The game thread uses under 500 ms of CPU a second and waits 490 to 600 ms for the renderer. The render loop finds no free GPU slot 300 to 500 times a second.
+- In `s20c1` to `s20c5` the game thread is the limit in 81 of the 197 seconds. It uses 600 to 860 ms of CPU a second there, and a present has 1,400 to 1,650 draws.
+
+A CPU profile with the waits gave the parts of the time of the game thread in `s20c1` (`q3\build\reuc-build\quest_prof_s20c1.sh`, `quest2\gp1`, app 0.0.51):
+
+| Part of the time of the game thread | At 340 s | At 545 s |
+|---|---|---|
+| On a core | 63 % | 59 % |
+| The frame wait (`hle_DcFrameWait`) | 16 % | 13 % |
+| A more urgent guest thread has the baton (`Sched::safe_point`) | 18 % | 20 % |
+| The wait for the renderer | 4 % | 9 % |
+
+The frame wait is `timed_wait` in `game/game_pacing.cpp`. It has two changes:
+
+- The sleep of a late frame. In a late frame the game thread slept 2 ms, so that the guest threads of lower priority got time (`kTimedYieldMs`). Those threads use under 10 ms of CPU a second in the fights (`q3\build\darkside\thread_ms.py RUN\run.log cpu`). When no other thread is ready and no disc read is in flight, the sleep now ends at once (`Sched::donate_ticks`, `Sched::load_begin`). `UC_FULL_YIELD=1` gives the full sleep. The deterministic mode keeps the full sleep.
+- The deadline after a late frame. The deadline of a frame is the deadline before it plus one period. When the clock is past that time, the deadline is the clock. So a late frame moves all later deadlines, and a fast frame after it waits for its slot. In `s20c1` the game thread waited 210 ms a second in the frame wait at a mean of 69 fps. The test variable `UC_PACE_SLACK_MS=N` lets the deadline stay behind the clock by N ms. The game then makes up a delay of that size. The variable is off by default.
+
+Results for the first 683 s of `s20c1` (`q3\build\darkside\bins_compare.py CHAPTER RUN\run.log ...`):
+
+| Run | App | Mean fps | Seconds below 60 fps | CPU of the game thread | Frame wait | Frame latency |
+|---|---|---|---|---|---|---|
+| `quest2\r51` | 0.0.51 | 68.4 | 61 | 663 ms a second | 210 ms a second | not taken |
+| `quest2\gp1` | 0.0.51 | 69.0 | 37 | 667 ms a second | 212 ms a second | 20.7 ms |
+| `quest2\d52` | 0.0.53 | 69.2 | 46 | 686 ms a second | 185 ms a second | 21.7 ms |
+| `quest2\ps14` | 0.0.53 with `UC_PACE_SLACK_MS=14` | 69.8 | 24 | 623 ms a second | 11 ms a second | 27.0 ms |
+
+- The new sleep alone changes the frame rate by less than the spread between two runs of the same app. Each of the four chapter runs with it loaded its data and came to its result screen.
+- With a slack of 14 ms the chapter had the fewest seconds below 60 fps. The frame latency of the log line `[guest-blocked]` rose from 21 ms to 27 ms. The game then works ahead of the display by up to one period.
+- In `s30c4` the slack gave nothing. The run with it had 65.8 fps, and 75 % of its 1,441 s were at 60 fps or more (`quest2\cs14`). The run `quest2\c48` had 67.0 fps and 83 % of 1,189 s. Without the slack the frame wait is 2 to 12 ms a second in the slow seconds of that chapter. The bot needed 252 s more in the run with the slack, so the two runs do not hold the same seconds.
+- `UC_SCHED_SPIN_US=200` lets a guest thread spin for the baton before it sleeps. It gave nothing: 68.9 fps and 45 seconds below 60 fps with the new sleep (`quest2\sp1`).
+
+Open points:
+
+- A smaller slack was not tested. It gives less latency and makes up less delay.
+- A guest thread of priority 3 (entry 804FDCA8) takes the baton about 500 times a second. It uses 45 to 56 ms of CPU a second. The game thread is off the baton for 18 to 20 % of its time because of it. Nobody looked at the cause.
+
+Traps of these values:
+
+- The value `main loop waited` of the line `[guest-blocked]` is the wait of the render loop of the host. The frame wait of the game is the value `wait` of the line `[game-pacing]`, which is a total.
+- The values `run ms` of the line `[sched]` hold the idle time of the scheduler after a thread blocked. The line `[sched-cycles]` has the CPU time of each thread. On Android its unit is the millisecond.
+
 #### The bot in the wide view
 
 The `bot` step of `scripts/drive.py` presses A at fixed places for a choice of ways, and it shoots at a grid of five rows. Two places stopped it:

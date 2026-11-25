@@ -188,10 +188,12 @@ void hle_DVDReadAsyncPrio(ppc::Ctx& c) {
     Sched& s = os_sched();
     uint8_t* mem = c.mem;
     const uint64_t generation=s.async_begin();
+    s.load_begin();   // Sched::donate_ticks keeps its full time while a read is in flight: the thread that waits for it runs in that time
+    const std::shared_ptr<void> loading(nullptr,[&s](void*) { s.load_end(); });   // ends when the event below ran or was dropped
     enqueue([=, &s] {
         auto data = std::make_shared<std::vector<uint8_t>>();
         int64_t n = read_padded(version, *data, len, off);
-        s.post_external([=, &s] {                           // runs on the baton holder, with interrupts enabled
+        s.post_external([=, &s, keep=loading] {             // runs on the baton holder, with interrupts enabled
             ppc::Ctx& ic = s.irq_ctx();
             if (g_cancelled.erase(fi)) return;               // DVDCancel already answered for this command block
             if (n >= 0) { std::memcpy(mem + (buf & 0x3FFFFFFFu), data->data(), len); gx::note_write_range(buf, len); std::lock_guard lock(g_m); ++g_stats.reads; g_stats.bytes += len; }

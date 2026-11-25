@@ -355,6 +355,15 @@ void Sched::sleep_ticks(uint64_t ticks) {
     block_on(key);
 }
 
+void Sched::donate_ticks(uint64_t ticks) {
+    const uint32_t key = donate_key(running_);
+    const uint64_t seq = ++donate_seq_;
+    post_at(now_ticks() + ticks, [this, key, seq] { if (donate_seq_ == seq) wake_all(key); }, EventKind::Sleep);
+    donor_key_ = key;
+    block_on(key);   // reschedule() ends the wait early when the scheduler has nothing else to run
+    if (donor_key_ == key) donor_key_ = 0;
+}
+
 void Sched::set_priority(Thread* t, int priority) {
     t->priority = priority;
     preempt_check();
@@ -563,6 +572,12 @@ void Sched::reschedule(Thread* self) {
         deliver_events();
         ext_allowed_ = !det_;
         if (Thread* n = pick_ready()) { handoff(self, n); return; }
+        if (donor_key_ && loads_.load(std::memory_order_relaxed) == 0) {   // nobody needs the time that donate_ticks gave away
+            const uint32_t key = donor_key_;
+            donor_key_ = 0;
+            wake_all(key);
+            continue;
+        }
         if (main_done_) { if (self->state == Thread::State::Dead) return; throw ThreadExit{}; }
         ee_ = true;   // idle
         ext_allowed_ = true;

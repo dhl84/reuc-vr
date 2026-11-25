@@ -40,14 +40,26 @@ void timed_wait() {
     if(network_period_ticks)period=network_period_ticks;
     const uint64_t now=uc::now_ticks(),spin=uc::ms_to_ticks(2);
     const uint64_t blocked=uc::os_sched().take_blocked_ticks();   // how long this thread was off the baton in this frame (its wait for the draw-done)
-    deadline_ticks=std::max(deadline_ticks+period,now);   // a late frame starts the next one at once instead of waiting for the next slot
+    // A late frame starts the next one at once instead of waiting for the next slot. Test variable UC_PACE_SLACK_MS: the deadline
+    // can also stay behind the clock by that many ms, so the frames after a late frame do not wait until the delay is made up.
+    static const uint64_t slack=[] { const char* text=std::getenv("UC_PACE_SLACK_MS"); return text ? uint64_t(std::max(0.0,std::strtod(text,nullptr))*double(uc::kTimebaseHz)/1000.0) : uint64_t(0); }();
+    const uint64_t behind=uc::deterministic_clock() ? 0 : std::min(slack,now);
+    deadline_ticks=std::max(deadline_ticks+period,now-behind);
     if(deadline_ticks>now+spin) uc::os_sched().sleep_ticks(deadline_ticks-spin-now);
     // A late frame does not wait here, so the game's main thread never blocks. The guest threads of lower priority then get no CPU time: on a
     // Quest 3 at 72 Hz the first fight of The Darkside Chronicles ran at 50 fps, and the game then showed "Loading data" for ever, because
     // its loading thread ran 20 to 34 ms a second. On the console the wait for the next retrace gives those threads their time. A game
     // with such threads (common/title.h kTimedYieldMs) sleeps for a short time in a late frame too. It does not sleep when the thread was
     // blocked for that long in the frame already: those threads ran then.
-    else if(uc::title::kTimedYieldMs && (uc::deterministic_clock() || blocked<uc::ms_to_ticks(uc::title::kTimedYieldMs))) uc::os_sched().sleep_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
+    // The sleep ends at once when no other thread is ready and no disc read is in flight (Sched::donate_ticks). In the fights of
+    // the first chapters those threads need less than 10 ms of a second, and the full sleep took 110 to 170 ms of a second from the
+    // game's main thread when that thread was the limit of the frame rate. UC_FULL_YIELD=1 gives the full sleep for a comparison.
+    // The deterministic mode keeps the full sleep, so its recordings keep their order of threads.
+    else if(uc::title::kTimedYieldMs && (uc::deterministic_clock() || blocked<uc::ms_to_ticks(uc::title::kTimedYieldMs))) {
+        static const bool full_yield=std::getenv("UC_FULL_YIELD")!=nullptr;
+        if(full_yield || uc::deterministic_clock()) uc::os_sched().sleep_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
+        else uc::os_sched().donate_ticks(uc::ms_to_ticks(uc::title::kTimedYieldMs));
+    }
     while(uc::now_ticks()<deadline_ticks) {}
     uc::os_sched().take_blocked_ticks();   // the sleeps above are not a part of the next frame
 }

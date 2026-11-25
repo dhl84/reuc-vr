@@ -264,7 +264,48 @@ static void test_guest_thread_deep_stack() {
     CHECK(result == 112 * 113 / 2);
 }
 
+static void test_donate_returns_when_nobody_is_ready() {   // donate_ticks: the giver goes on at once when no other thread has work
+    g_log.clear(); Sched s(nullptr);
+    Thread* m = s.create(0, 5, [&](ppc::Ctx&) {
+        const auto start = std::chrono::steady_clock::now();
+        s.donate_ticks(ms_to_ticks(300));
+        CHECK(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(150));   // nobody else: no wait
+        Thread* lo = s.create(0, 20, [&](ppc::Ctx&) { note("lo1"); s.yield(); note("lo2"); });
+        s.resume(lo);
+        const auto second = std::chrono::steady_clock::now();
+        s.donate_ticks(ms_to_ticks(300)); note("m");
+        CHECK(std::chrono::steady_clock::now() - second < std::chrono::milliseconds(150));   // the other thread ended: no wait
+    });
+    s.run(m);
+    CHECK(joined() == "lo1,lo2,m");
+}
+
+static void test_donate_waits_for_a_load() {   // donate_ticks: with a read in flight the giver waits its full time
+    g_log.clear(); Sched s(nullptr);
+    Thread* m = s.create(0, 5, [&](ppc::Ctx&) {
+        s.load_begin();
+        const auto start = std::chrono::steady_clock::now();
+        s.donate_ticks(ms_to_ticks(60));
+        CHECK(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(55));
+        s.load_end();
+        Thread* busy = s.create(0, 20, [&](ppc::Ctx&) {   // a thread that never blocks keeps the baton until the timer of the giver
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200)) s.safe_point();
+            note("busy");
+        });
+        s.resume(busy);
+        const auto second = std::chrono::steady_clock::now();
+        s.donate_ticks(ms_to_ticks(40)); note("m");
+        const auto took = std::chrono::steady_clock::now() - second;
+        CHECK(took >= std::chrono::milliseconds(35) && took < std::chrono::milliseconds(150));
+        s.join(busy);
+    });
+    s.run(m);
+    CHECK(joined() == "m,busy");
+}
+
 int main() {
+    test_donate_returns_when_nobody_is_ready(); test_donate_waits_for_a_load();
     test_guest_thread_deep_stack();
     test_dump_contexts();
     test_priorities_and_join(); test_round_robin(); test_wake_order(); test_wake_preempts();
