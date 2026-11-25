@@ -1054,6 +1054,11 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s30c4` again | 0.0.48 | 1,189 | 67.0 | 83 % | 37 fps |
 | `s30c4` again, with the one-draw blend (off now) | 0.0.50 | 1,203 | 68.4 | 89 % | 4 fps |
 | `s20c7` again, with the one-draw blend (off now) | 0.0.50 | 1,139 | 63.6 | 69 % | 24 fps |
+| `s20c1` again | 0.0.51 | 707 | 68.0 | 89 % | 48 fps |
+| `s20c2` again | 0.0.51 | 548 | 71.2 | 98 % | 53 fps |
+| `s20c3` again | 0.0.51 | 1,384 | 70.9 | 98 % | 46 fps |
+| `s20c4` again | 0.0.51 | 826 | 70.4 | 96 % | 50 fps |
+| `s20c5` again | 0.0.51 | 899 | 69.4 | 96 % | 43 fps |
 
 The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 was built for 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. Its package still holds the 1,359 keys of 0.0.42 (see the traps of "The parts of the GPU time of a frame"). The headset folds the other keys itself at a start. The list has 1,772 keys after the runs of `s10c8` and `s00c1`. The app 0.0.44 is the first with all of them in its package. With the keys in the build the app starts in 4 to 5 s.
 
@@ -1177,7 +1182,7 @@ The blending draws with destination alpha in one draw (app 0.0.49, 25 November 2
 - One GPU hang shows in the log as a frame of 350 to 399 ms (a line `[hitch]`). Three hangs in 2 s end the app. Each run with the one draw has such frames: 10 in `quest2\c50`, 8 in `quest2\b50`, 26 in `quest2\r50`, 7 in `quest2\x1`. No run without it has one (`quest2\c48`, `x2`, `lv5`, `pf1`). So the one second with 4 fps of `quest2\c50` was two such hangs, not a slow read from the disc.
 - The hangs are spread over a chapter. They do not follow a change of the render scale at once, and they came at the scales 1.25, 1.5 and 1.75. Without the coarse shading and the foveation map (`UC_NO_VRS=1 UC_NO_FOVEATION=1`) a run still had 7 of them (`quest2\x3`). The standing frames of the probe runs had none. The cause is not found. `q3\build\reuc-build\quest_s20c3.sh NAME [ENV_LINE...]` plays that chapter for a test.
 - So the numbers of `quest2\c50` and `quest2\b50` hold for a path that is off now. The gain of the one draw was 1.4 fps in `s30c4` (68.4 against 67.0 fps).
-- The app 0.0.51 has the path off. It played `s20c3` for 512 s at 71.3 fps with no such frame and no crash (`quest2\x4`).
+- The app 0.0.51 has the path off. It played `s20c3` for 512 s at 71.3 fps with no such frame and no crash (`quest2\x4`). Then it played the five chapters `s20c1` to `s20c5` in a row in 1 h 19 min, again with no such frame and no crash (`quest2\r51`). The table of chapter frame rates has its rows.
 
 What limits the slowest seconds now. Three live runs of the start of `s30c4` with the automatic scale reached the scale 1.0 (`quest2\lv5`, `pf1`, `pf2`). They still had 40 to 60 % of their seconds below 60 fps, with a mean of 60 to 62 fps. In the seconds below 60 fps a frame has 890 to 1,280 draws:
 
