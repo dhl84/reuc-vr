@@ -1026,8 +1026,10 @@ Routes that were used, as aims for the headset. Each one follows CHRONICLES at t
 | `s30c4` | `save_s30c3_done` | `aim:0.2,0.04`, `aim:0.078,0.0` |
 | `s30c5` | the save after `s30c4` | `aim:0.2,0.04`, `aim:0.111,-0.152` |
 | `s30c6` | `save_s30c5_done_good` | `aim:0.261,0.126` (the fourth piece), `aim:0.011,0.019` |
+| `s10c8` | the headset save at the Tyrant (`quest2\soak4_save_b\soak4`) | `aim:-0.056,0.019` (Memories of a Lost City), `aim:-0.084,0.124`, YES at `aim:-0.16,0.115`, with `CHAIN_RESUME=1` |
+| `s00c1` | the save after `s30c7` | `CHAIN_MAIN="aim:0.59,0.237 wait:40 press:A wait:300"` (SECRET in place of CHRONICLES), with `CHAIN_RESUME=1` |
 
-The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. The first run (`quest2\g3`, app 0.0.40) played `s30c2` and `s20c1` and was stopped in `s20c2` because of the black picture (see below). The second run (`quest2\g4`, app 0.0.41) played six chapters in a row in 1 h 40 min. Its bot then stood in `s20c6` (see "The bot in the wide view"). The third run (`quest2\h2`, app 0.0.42) went on from the checkpoint of `s20c6` and played to the end of `s30c3`. Four more runs of that day (`quest2\h3` to `quest2\h6`, app 0.0.42) played `s30c4` to `s30c7`. They had no `UC_DC_WEAK`, apart from the first part of `s30c6`. No run had a crash. So each chapter of the three scenarios ran on the headset. The fights at the end of `s10c8` and the extra chapter `s00c1` are still left. `s00c1` ran for 30 s only, after the staff roll.
+The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the weapons `UP/LEFT/DOWN/-/-/-/-`. The first run (`quest2\g3`, app 0.0.40) played `s30c2` and `s20c1` and was stopped in `s20c2` because of the black picture (see below). The second run (`quest2\g4`, app 0.0.41) played six chapters in a row in 1 h 40 min. Its bot then stood in `s20c6` (see "The bot in the wide view"). The third run (`quest2\h2`, app 0.0.42) went on from the checkpoint of `s20c6` and played to the end of `s30c3`. Four more runs of that day (`quest2\h3` to `quest2\h6`, app 0.0.42) played `s30c4` to `s30c7`. They had no `UC_DC_WEAK`, apart from the first part of `s30c6`. No run had a crash. Two runs had the app 0.0.43. The first played the fights at the end of `s10c8` from the checkpoint at the Tyrant (`quest2\h7`). The second played the extra chapter `s00c1` (`quest2\h8`). So each chapter of the game ran on the headset to its result screen.
 
 | Script | App | Seconds | Mean fps | Seconds at 60 fps or more | Lowest second |
 |---|---|---|---|---|---|
@@ -1047,8 +1049,10 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s30c6`, to the boss | 0.0.42 | 1,821 | 68.1 | 86 % | 30 fps |
 | `s30c6`, the boss | 0.0.42 | 267 | 71.2 | 100 % | 50 fps |
 | `s30c7` | 0.0.42 | 1,793 | 62.4 | 76 % | 42 fps |
+| `s10c8`, from the Tyrant | 0.0.43 | 587 | 62.7 | 66 % | 37 fps |
+| `s00c1` | 0.0.43 | 736 | 62.0 | 64 % | 29 fps |
 
-The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 has 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. With the keys in the build the app starts in 4 to 5 s.
+The seconds of the movies and of the loading count too. The app 0.0.40 had no folded module for 323 keys of the first chapters. The app 0.0.41 had none for 405 keys of the later ones. Their draws took the ubershader for a time. The keys are in `project/dc/pipeline_keys.quest` now. The app 0.0.42 has 1,359 keys. The app 0.0.43 has 1,699 keys, with those of `s20c7` and of the chapters of Operation Javier. The list has 1,772 keys after the runs of `s10c8` and `s00c1`, for the next build. With the keys in the build the app starts in 4 to 5 s.
 
 #### The black picture after a change of the render scale
 
