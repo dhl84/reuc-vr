@@ -1370,6 +1370,72 @@ The app 0.0.57 played the five Oblivion chapters in a row with the clock limits 
 
 A restart of the adb server of the PC cuts a play. The driver then prints `stopped: no reply to input`, and the game runs on with no fault. Godot starts its own adb server, and two plays ended that way (`quest2\r57b`, `quest2\r57c`). If a play stops with that line, look at the creation time of the process `adb.exe` first.
 
+#### The CPU time of the app at the battery clock
+
+The system puts every thread of the app into the cpuset `/immersive`. A cpuset is the list of CPU cores that a group of threads can use. This cpuset holds the cores 3 to 5 only. Core 2 runs the `timewarp` thread of the system.
+
+| Cores | Clock, at most | Clock limit on battery |
+|---|---|---|
+| 0 and 1 | 2.05 GHz | 1.38 GHz |
+| 2 to 5 | 2.36 GHz | 1.92 GHz |
+
+The app has three busy threads: the game thread, the thread `gx-builder` and the render thread. The sound threads use the same three cores. `q3\build\reuc-build\cpusets.sh` and `thread_cores.sh` print these facts, and they change nothing on the headset.
+
+A second play of the app 0.0.57 with the same limits recorded CPU profiles (`quest2\p57`). It had 129 seconds below 60 fps in 4,181 chapter seconds. The play `quest2\r57d` had 194 in 4,289. So two plays of one app differ by about 65 slow seconds, and a smaller gain needs more than one play to show.
+
+The profile tools:
+
+- `q3\build\reuc-build\prof_at.sh NAME "CHAPTER:SECOND:DURATION ..."` records simpleperf profiles at chapter seconds of a running play.
+- `q3\build\darkside\slow_times.py RUN/run.log` lists the slow spans of a play by chapter second. It gives the seconds for `prof_at.sh`.
+- `q3\build\darkside\prof_get.sh NAME_AT` copies a profile to the PC, and it writes the samples and the thread list.
+- `prof_incl.py SAMPLES TID` gives the time of each function together with the functions that it calls.
+- `prof_srclines.py SAMPLES TID LEAF_TEXT SYMBOL_FILE` gives the time of one function by source line.
+- `pgo_cover.py SAMPLES PROFDATA [TID]` gives the time in translated functions that the optimizer profile never saw run.
+
+What the four profiles of `quest2\p57` show:
+
+- The game thread has a flat profile. 75 % of its time is translated game code. The largest functions are `body_80309F64` (4.7 %), `body_8012D590` (3.7 %), `memcpy` (3 %) and `hle_AXFrame` (2 to 4 %).
+- The render thread used 912 ms of CPU a second in the spans that the log names GPU bound. That is about 17 ms a frame at 1.92 GHz, and the period of 72 Hz is 13.9 ms. So the render thread limits those seconds together with the GPU.
+- The thread `gx-builder` spends 15 % in `mesh_draw`, 14.5 % in `memcpy` and 14.4 % in `sched_yield`. The yields come from `CommandQueue::loop()` in `runtime/hle/gx_queue.cpp`. It spins 256 times before a timed wait of 500 microseconds.
+
+The largest costs of the render thread in those spans:
+
+| Cost | Share of the thread |
+|---|---|
+| Driver calls for each packet (`vkUpdateDescriptorSets`, `vkQueueSubmit2`, `vkResetCommandBuffer`, `vkCmdBeginRendering`) | 14.3 % |
+| Cull test of each vertex | 7 % |
+| Copies of the texture matrix banks | 4.9 % |
+| Fills of the matrix palettes | 3.9 % |
+| Index rebase for the vertex pre-pass | 2.2 % |
+| Setup of `DrawGpu` | 2.1 % |
+| Copy of the 1,840 bytes of `DrawUniform` | 1.9 % |
+
+Three changes came from this. They are in the source, and the app 0.0.58 has them.
+
+The matrix writes. A palette block holds the position matrices and the normal matrices of a draw, and a bank holds its texture matrices. The renderer wrote each block and each bank whole. Now `gx::fill_palette` writes only the matrix rows that the draws of the frame use. `gx::used_texture_matrices` finds the texture matrices of a mesh at its upload, and `gx::copy_texture_bank` copies only their rows. A block with more than 10 matrices and a bank with more than 40 are written whole. `UC_FULL_PALETTES=1` and `UC_FULL_BANKS=1` give the old way. `tests/test_gx_transforms.cpp` tests the three functions.
+
+The boost rule. `q3\build\darkside\boost_use.py RUN/run.log` splits the seconds of a play by the boost and by the load of the game thread. In `quest2\r57d` the old rule spent 475 of its 789 boost seconds on seconds with no busy thread. A busy game thread gave 2 slow seconds in 273 seconds with the boost, and 103 slow seconds without it. `load_hist.py` shows that those slow seconds come at 800 ms or more of game thread CPU a second. So the new rule goes by the CPU load:
+
+- The renderer measures the CPU time of the game thread and of the render thread in each second. The line `[vr-load]` of the log has both. `UC_NO_LOAD_LOG=1` turns the line off.
+- The load of a second is the larger of two values: the share of the game thread, and the share of the render thread minus 0.15.
+- A boost starts after a late second with a load of 0.60 or more.
+- A boost also starts before a late second, at a load of 0.80 or more. That start needs room for 40 s in the budget.
+- A boost ends after 4 seconds with a load below 0.58, but not before its sixth second. The limits of 40 s and of 18 % of the run time stay.
+- A boost that starts within 6 s of the last one holds twice as long, up to 32 s.
+- If the load is not known, the old rule applies. `tests/test_cpu_boost.cpp` tests both rules.
+
+The optimizer profile. The headset build takes counts from a recorded play, and the compiler optimizes a function with the count 0 for size. The profile of 16 November 2026 came from the first chapter only. `pgo_cover.py` looked at the game thread time in functions with the count 0. It found 7 % at the end of `s20c1` and 6 % at the start of `s20c4`. The new recording plays all five Oblivion chapters:
+
+1. `q3\build\reuc-build\quest_dc_pgo_build.sh N` builds the instrumented app 0.0.N.
+2. `run_pgo5.sh NAME N` installs it on a free headset and plays the five chapters with the clock limits of battery. Then it copies the profile files to the PC.
+3. `pgo_merge.sh NAME [OLD_PROFDATA]` makes `project/pgo/dc-quest.profdata` from them.
+
+When the game exits, the instrumented app writes `uc.profraw`. It also writes the profile so far to `uc.profraw.a` and `uc.profraw.b` in turn every 300 s, for a play that ends early. Each of these writes adds one copy to the file. The recording `quest2\g58` ran with the app 0.0.58. All five chapters ended with a save, with no crash report and with a correct picture. The play took 4,956 chapter seconds at 17 to 30 fps, because the counters slow the game. With the new profile, 0.1 % of that game thread time is in functions with the count 0.
+
+A change of the control flow of a function drops its counts. So record the profile after the last change of the hot functions, such as `VulkanRenderer::render()`.
+
+Open on 26 November 2026: the build of the app 0.0.59 with the new profile stopped, because the PC ran out of memory. So no play measured the three changes at the speed of a normal app yet. The headset has the app 0.0.57 again.
+
 #### The bot in the wide view
 
 The `bot` step of `scripts/drive.py` presses A at fixed places for a choice of ways, and it shoots at a grid of five rows. Two places stopped it:

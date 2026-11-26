@@ -47,8 +47,16 @@ struct alignas(16) PaletteBlock {
 };
 static_assert(sizeof(PaletteBlock)==2064);
 void fill_palette(PaletteBlock& block, const Transforms& transforms);
+// The same for the matrices that the draws of the block read. `first_rows`: bit mask of the first position row of each matrix (the
+// current row of a draw, or used_rows() of its vertices). The vertex shader reads the position rows row..row+2 and the normal rows
+// (row & 31)..(row & 31)+2 of such a matrix, and `loaded`. The other rows of the block keep what they held: nothing reads them.
+// A block with many matrices is filled whole.
+void fill_palette(PaletteBlock& block, const Transforms& transforms, uint64_t first_rows);
 // Bit mask of the position matrix rows used by `vertices`' per-vertex matrix index.
 uint64_t used_rows(std::span<const Vertex> vertices);
+// Bit mask of the texture matrix ids (0..125) that `vertices` name in their eight per-vertex ids (255 = no id).
+using TextureMatrixIds=std::array<uint64_t,2>;
+TextureMatrixIds used_texture_matrices(std::span<const Vertex> vertices);
 // Throws the errors gpu_vertex() throws for a row that is out of range or not loaded: the current row, or every row in `rows` when indexed.
 void validate_draw_rows(const Transforms& transforms, bool indexed, uint64_t rows, uint32_t callsite);
 Projection make_projection(const std::array<float,6>& coefficients,uint32_t type);

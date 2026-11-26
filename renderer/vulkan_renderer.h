@@ -78,6 +78,8 @@ public:
     void set_aim_source(std::function<std::array<float,2>()> source) { aim_source_ = std::move(source); }
     // The pointer `seconds` ago, and how many seconds the local wake strip spans: the wake is laid along the mouse path (late_aim.h) while both are set.
     void set_aim_history(std::function<std::array<float,2>(double)> history) { aim_history_ = std::move(history); }
+    // The CPU time of the game thread so far, in nanoseconds (any thread may call it). The headset's CPU boost follows its change.
+    void set_game_cpu_clock(std::function<uint64_t()> clock) { game_cpu_ns_ = std::move(clock); }
     void set_wake_seconds(double seconds) { wake_seconds_ = seconds; }
     // The headset's eyes read the presented EFB region in place (no copy into the slot image) unless the frame may be captured.
     void keep_frame(bool keep) { keep_frame_ = keep; }
@@ -253,7 +255,7 @@ private:
     // A mesh uploaded once and drawn from every frame; freed once the guest dropped it (owner expired) and no submission still holds it.
     // Meshes live in a few large buffers (one vkAllocateMemory per slab, not per mesh): vertices then indices at the given offsets.
     struct MeshSlab { Buffer buffer; VkDeviceSize used=0; uint32_t live=0; };
-    struct GpuMesh { MeshSlab* slab=nullptr; VkDeviceSize vertex_offset=0, index_offset=0; uint32_t index_count=0; uint64_t rows=0; std::weak_ptr<const gx::MeshBuffers> owner; uint64_t id=0; std::array<float,6> box{}; };   // box: object-space bounds (min xyz, max xyz), the headset's culling   // id: never reused; the ray tracing cache keys its BLAS by it
+    struct GpuMesh { MeshSlab* slab=nullptr; VkDeviceSize vertex_offset=0, index_offset=0; uint32_t index_count=0; uint64_t rows=0; gx::TextureMatrixIds texture_ids{}; std::weak_ptr<const gx::MeshBuffers> owner; uint64_t id=0; std::array<float,6> box{}; };   // box: object-space bounds (min xyz, max xyz), the headset's culling   // id: never reused; the ray tracing cache keys its BLAS by it
     struct PresentImage {
         VkImage image = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;   // HDR only: the encode pass renders into it
@@ -577,7 +579,8 @@ private:
     uc::CpuBoost cpu_boost_;
     bool cpu_boost_on_=false;
     std::chrono::steady_clock::time_point auto_window_start_{};
-    uint64_t auto_presents_=0, auto_busy_ns_=0;
+    uint64_t auto_presents_=0, auto_busy_ns_=0, auto_game_cpu_=0, auto_render_cpu_=0;
+    std::function<uint64_t()> game_cpu_ns_;
     void auto_scale_tick();
     bool native_eye_scale_=false;
     uint32_t max_image_dimension_=0;

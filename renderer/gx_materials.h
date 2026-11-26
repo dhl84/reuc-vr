@@ -1,6 +1,8 @@
 #pragma once
 #include <array>
+#include <bit>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <cstddef>
 namespace gx {
@@ -42,6 +44,15 @@ struct TextureBank {
     TextureBank() { for(size_t i=0;i<rows.size();++i) rows[i]={float(i%3==0),float(i%3==1),float(i%3==2),0}; }
     bool operator==(const TextureBank&) const = default;
 };
+// Copies the matrices of a bank whose ids are in the bit mask `ids` (id 0..125, gx::used_texture_matrices). The other rows of the
+// target keep what they held: the vertex shader reads a matrix only by an id of a vertex. With many ids it copies the whole bank.
+inline void copy_texture_bank(TextureBank& target,const TextureBank& source,const std::array<uint64_t,2>& ids) {
+    if (std::popcount(ids[0])+std::popcount(ids[1])>40) { std::memcpy(static_cast<void*>(&target),&source,sizeof source); return; }
+    for (size_t word=0;word<2;++word) for (uint64_t left=ids[word]; left; left&=left-1) {
+        const size_t id=word*64+size_t(std::countr_zero(left));
+        if (id<126) std::memcpy(&target.rows[3*id],&source.rows[3*id],3*sizeof(source.rows[0]));
+    }
+}
 struct PixelMaterial { uint32_t alpha,depth,blend,destination_alpha; };
 PixelMaterial import_pixel_material(std::span<const std::byte> bytes);
 struct ColorMaterial {

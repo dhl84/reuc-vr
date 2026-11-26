@@ -113,6 +113,44 @@ int main() {
         }
         const gx::Vertex rows[]={[]{ gx::Vertex x; x.position_matrix=9; return x; }(),[]{ gx::Vertex x; x.position_matrix=6; return x; }()};
         CHECK(gx::used_rows(rows)==((uint64_t(1)<<9)|(uint64_t(1)<<6)));
+        // The fill for the used matrices only: the rows that the shader reads for these matrices equal the whole fill, and the other
+        // rows keep what the block held. A matrix at row 40 reads the normal rows 8..10 (row & 31).
+        {
+            gx::set_position_matrix(t,40,{{{3,0,0,1},{0,3,0,2},{0,0,3,3}}});
+            gx::PaletteBlock whole; gx::fill_palette(whole,t);
+            gx::PaletteBlock part; for (auto& r : part.position) r={-7,-7,-7,-7}; for (auto& r : part.normal) r={-7,-7,-7,-7};
+            const uint64_t used=(uint64_t(1)<<6)|(uint64_t(1)<<40);
+            gx::fill_palette(part,t,used);
+            for (uint32_t row : {6u,40u}) for (uint32_t i=0;i<3;++i) {
+                CHECK(part.position[row+i]==whole.position[row+i]);
+                CHECK(part.normal[(row&31)+i]==whole.normal[(row&31)+i]);
+            }
+            CHECK(part.loaded==whole.loaded);
+            CHECK((part.position[9]==std::array<float,4>{-7,-7,-7,-7}) && (part.normal[20]==std::array<float,4>{-7,-7,-7,-7}));
+            gx::PaletteBlock many; for (auto& r : many.position) r={-7,-7,-7,-7};
+            gx::fill_palette(many,t,0x7FFull);   // 11 matrices: the whole block
+            CHECK(many.position==whole.position && many.normal==whole.normal);
+            gx::PaletteBlock edge{}; gx::fill_palette(edge,t,uint64_t(1)<<63);   // a row that validation rejects: no write past the block
+            CHECK(edge.position[63]==t.position_rows[63]);
+        }
+        // The texture matrices that vertices name, and the copy of only those matrices of a bank.
+        {
+            gx::Vertex a, b; a.texture_matrix[0]=10; a.texture_matrix[7]=70; b.texture_matrix[3]=125; b.texture_matrix[4]=200;   // 200: not an id
+            const gx::Vertex both[]={a,b};
+            const auto ids=gx::used_texture_matrices(both);
+            CHECK(ids[0]==(uint64_t(1)<<10) && ids[1]==((uint64_t(1)<<(70-64))|(uint64_t(1)<<(125-64))));
+            CHECK((gx::used_texture_matrices(std::span<const gx::Vertex>{})==gx::TextureMatrixIds{}));
+            gx::TextureBank source; for (size_t i=0;i<source.rows.size();++i) source.rows[i]={float(i),1,2,3};
+            gx::TextureBank target; for (auto& r : target.rows) r={-7,-7,-7,-7};
+            gx::copy_texture_bank(target,source,ids);
+            for (size_t id=0;id<126;++id) for (size_t i=0;i<3;++i) {
+                const bool named=id==10 || id==70 || id==125;
+                CHECK(target.rows[3*id+i]==(named ? source.rows[3*id+i] : std::array<float,4>{-7,-7,-7,-7}));
+            }
+            gx::TextureBank whole; for (auto& r : whole.rows) r={-7,-7,-7,-7};
+            gx::copy_texture_bank(whole,source,{~uint64_t(0),~uint64_t(0)});   // many ids (and the bits 126 and 127): the whole bank
+            CHECK(whole==source);
+        }
         gx::validate_draw_rows(t,true,gx::used_rows(rows),0);
         gx::validate_draw_rows(t,false,0,0);
         gx::Vertex unloaded; unloaded.position_matrix=20;

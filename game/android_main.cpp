@@ -34,6 +34,11 @@ extern "C" int __llvm_profile_write_file(void);
 #include <algorithm>
 #include <fstream>
 #include <string>
+#ifdef UC_PGO_GENERATE
+#include <atomic>
+#include <chrono>
+#include <thread>
+#endif
 #include <vector>
 #include "xr_android.h"
 
@@ -207,7 +212,25 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** 
     pthread_attr_setstacksize(&attributes, 256u << 20);
     pthread_t thread;
     if (pthread_create(&thread, &attributes, run_game, &run) != 0) { std::fprintf(stderr, "[android] cannot start the game thread\n"); return 1; }
+#ifdef UC_PGO_GENERATE
+    // A long recording must survive a run that is cut (a crash, a stopped app): the profile so far goes to uc.profraw.a and uc.profraw.b
+    // in turn every five minutes, so one of the two files is always complete.
+    std::atomic<bool> pgo_stop{false};
+    std::thread pgo_writer([&] {
+        for (int second = 1, turn = 0; !pgo_stop.load(); ++second) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (second % 300 != 0) continue;
+            const std::string part = own + (turn++ % 2 ? "/uc.profraw.b" : "/uc.profraw.a");
+            __llvm_profile_set_filename(part.c_str());
+            std::fprintf(stderr, "[android] PGO profile so far %s: %d\n", part.c_str(), __llvm_profile_write_file());
+        }
+    });
+#endif
     pthread_join(thread, nullptr);
+#ifdef UC_PGO_GENERATE
+    pgo_stop.store(true);
+    pgo_writer.join();
+#endif
 #ifdef UC_OPENXR
     if (uc::complete_android_xr_restart()) return run.rc;
 #endif

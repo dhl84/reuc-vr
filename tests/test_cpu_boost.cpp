@@ -50,6 +50,36 @@ int main() {
         CHECK(run(boost,50,20,13.5)==0 && !boost.on());
         CHECK(run(boost,50,1,12.0)==1 && boost.on());
     }
+    // With a known load (the CPU time of the busiest thread as a part of the second).
+    const auto loaded=[](B& boost,double fps,double load,int seconds) { int changes=0; for(int i=0;i<seconds;++i) changes+=boost.window(fps,8,72,load); return changes; };
+    {   // a late second starts the boost only with a busy thread, and the boost ends after the short hold and the calm seconds
+        B boost;
+        CHECK(loaded(boost,72,0.4,300)==0);
+        CHECK(loaded(boost,50,0.4,20)==0 && !boost.on());            // late, but no thread is busy: the CPU is not the cause
+        CHECK(loaded(boost,50,0.7,1)==1 && boost.on());
+        CHECK(loaded(boost,72,0.4,B::kLoadHold-1)==0 && boost.on());
+        CHECK(loaded(boost,72,0.4,1)==1 && !boost.on());
+        CHECK(boost.boosted()==B::kLoadHold);
+    }
+    {   // a heavy load starts the boost before a late second, and the boost holds while the load is above the release load
+        B boost;
+        CHECK(loaded(boost,72,0.7,400)==0 && !boost.on());           // busy, not heavy, not late
+        CHECK(loaded(boost,72,0.85,1)==1 && boost.on());
+        CHECK(loaded(boost,72,0.65,20)==0 && boost.on());            // the same work under the boost
+        CHECK(loaded(boost,72,0.5,B::kCalm-1)==0 && boost.on());
+        CHECK(loaded(boost,72,0.5,1)==1 && !boost.on());
+    }
+    {   // a heavy load with little room in the share: no start before a late second, but a start after one
+        B boost;
+        CHECK(loaded(boost,72,0.85,100)==0 && !boost.on());          // 100 s: a long boost does not fit in the share
+        CHECK(loaded(boost,60,0.85,1)==1 && boost.on());
+    }
+    {   // a load that stays heavy: the share holds, and the boost rests after the longest run
+        B boost;
+        loaded(boost,72,0.9,5000);
+        CHECK(boost.boosted()>0 && double(boost.boosted())<=0.2*double(boost.total()));
+        CHECK(double(boost.boosted())>=0.12*double(boost.total()));
+    }
     {   // no frames and no target: nothing changes
         B boost;
         for(int i=0;i<100;++i) CHECK(!boost.window(0,0,72) && !boost.window(30,13,0));

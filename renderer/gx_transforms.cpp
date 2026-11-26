@@ -1,5 +1,6 @@
 #include "gx_transforms.h"
 #include "gx_vertices.h"
+#include <bit>
 #include <cmath>
 
 namespace gx {
@@ -38,10 +39,26 @@ void fill_palette(PaletteBlock& block,const Transforms& transforms) {
     for (size_t i=0;i<64;++i) block.normal[i]={transforms.normal_rows[i][0],transforms.normal_rows[i][1],transforms.normal_rows[i][2],0};
     block.loaded={uint32_t(transforms.loaded_normal_rows.to_ullong()),uint32_t(transforms.loaded_normal_rows.to_ullong()>>32),0,0};
 }
+void fill_palette(PaletteBlock& block,const Transforms& transforms,uint64_t first_rows) {
+    if (std::popcount(first_rows)>10) { fill_palette(block,transforms); return; }   // 60 rows or more: the whole block is as fast
+    for (uint64_t left=first_rows; left; left&=left-1) {
+        const unsigned row=unsigned(std::countr_zero(left)), normal=row&31;
+        for (unsigned i=0;i<3;++i) {
+            if (row+i<64) block.position[row+i]=transforms.position_rows[row+i];
+            block.normal[normal+i]={transforms.normal_rows[normal+i][0],transforms.normal_rows[normal+i][1],transforms.normal_rows[normal+i][2],0};
+        }
+    }
+    block.loaded={uint32_t(transforms.loaded_normal_rows.to_ullong()),uint32_t(transforms.loaded_normal_rows.to_ullong()>>32),0,0};
+}
 uint64_t used_rows(std::span<const Vertex> vertices) {
     uint64_t rows=0;
     for (const auto& vertex : vertices) rows|=uint64_t(1)<<std::min<uint32_t>(vertex.position_matrix,63);   // rows past 63 land on bit 63, which validation rejects like any row above 61
     return rows;
+}
+TextureMatrixIds used_texture_matrices(std::span<const Vertex> vertices) {
+    TextureMatrixIds ids{};
+    for (const auto& vertex : vertices) for (const uint8_t id : vertex.texture_matrix) if (id<126) ids[id>>6]|=uint64_t(1)<<(id&63);
+    return ids;
 }
 void validate_draw_rows(const Transforms& transforms,bool indexed,uint64_t rows,uint32_t callsite) {
     const auto check=[&](uint32_t row) {

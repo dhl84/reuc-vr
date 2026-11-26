@@ -1928,7 +1928,7 @@ VulkanRenderer::GpuMesh& VulkanRenderer::gpu_mesh(const std::shared_ptr<const gx
     for (size_t i=0;i<vertices.size();++i) target[i]=gx::mesh_vertex(vertices[i]);
     std::memcpy(static_cast<std::byte*>(slab.buffer.mapped)+mesh.index_offset,indices.data(),index_bytes);
     slab.used+=total; ++slab.live;
-    mesh.index_count=uint32_t(indices.size()); mesh.rows=gx::used_rows(vertices); mesh.owner=source; mesh.id=next_mesh_id_++;
+    mesh.index_count=uint32_t(indices.size()); mesh.rows=gx::used_rows(vertices); mesh.texture_ids=gx::used_texture_matrices(vertices); mesh.owner=source; mesh.id=next_mesh_id_++;
     mesh.box={1e30f,1e30f,1e30f,-1e30f,-1e30f,-1e30f};
     for (const auto& vertex:vertices) for (int i=0;i<3;++i) { mesh.box[i]=std::min(mesh.box[i],vertex.position[i]); mesh.box[3+i]=std::max(mesh.box[3+i],vertex.position[i]); }
     if (const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-created_at).count(); ms>2) std::fprintf(stderr,"[gpu-mesh] %zu vertices %zu indices uploaded in %.2f ms (%zu meshes resident)\n",vertices.size(),indices.size(),ms,meshes_.size()+1);
@@ -2072,6 +2072,18 @@ void VulkanRenderer::set_render_scale(double scale) {
 }
 // One window of about a second of presented frames for uc::AutoScale. A window with a pause in it (loading, the headset off the head)
 // says nothing about the GPU and is left out.
+namespace {
+// The CPU time of the calling thread. 0 where the port has no use for it (the CPU boost is a headset matter).
+uint64_t thread_cpu_ns() {
+#if defined(__ANDROID__)
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
+    return uint64_t(ts.tv_sec)*1'000'000'000ull+uint64_t(ts.tv_nsec);
+#else
+    return 0;
+#endif
+}
+}
 void VulkanRenderer::auto_scale_tick() {
     const auto now=std::chrono::steady_clock::now();
     const bool first=auto_window_start_==std::chrono::steady_clock::time_point{};
@@ -2080,6 +2092,11 @@ void VulkanRenderer::auto_scale_tick() {
     const uint64_t presents=presentations_.load(), busy=gpu_busy_ns_.load();
     const uint64_t frames=presents-auto_presents_;
     const double gpu_ms=frames && busy>=auto_busy_ns_ ? double(busy-auto_busy_ns_)/1e6/double(frames) : 0;
+    // The CPU time of the game thread and of this thread (the render thread) in the window, as parts of a second. -1: not known.
+    const uint64_t game_cpu=game_cpu_ns_ ? game_cpu_ns_() : 0, render_cpu=thread_cpu_ns();
+    const double game_load=!first && seconds>0 && game_cpu>auto_game_cpu_ && auto_game_cpu_ ? double(game_cpu-auto_game_cpu_)/1e9/seconds : -1;
+    const double render_load=!first && seconds>0 && render_cpu>auto_render_cpu_ && auto_render_cpu_ ? double(render_cpu-auto_render_cpu_)/1e9/seconds : -1;
+    auto_game_cpu_=game_cpu; auto_render_cpu_=render_cpu;
     auto_window_start_=now; auto_presents_=presents; auto_busy_ns_=busy;
     if (first || seconds>1.5 || !frames) return;
     double target=60;
@@ -2090,10 +2107,18 @@ void VulkanRenderer::auto_scale_tick() {
     if (const char* v=std::getenv("UC_AUTO_SCALE_HZ")) target=std::atof(v);
     const double fps=double(frames)/seconds, was=configured_scale_;
 #ifdef UC_OPENXR
-    if (cpu_boost_on_ && xr_ && cpu_boost_.window(fps,gpu_ms,target)) {
-        const bool sent=xr_->set_cpu_boost(cpu_boost_.on());
-        std::fprintf(stderr,"[vr] CPU boost %s%s (%.1f fps of %.0f, GPU %.2f ms a frame, %u of %u s with the boost)\n",cpu_boost_.on() ? "on" : "off",
-                     sent ? "" : ", no request",fps,target,gpu_ms,cpu_boost_.boosted(),cpu_boost_.total());
+    if (cpu_boost_on_ && xr_) {
+        // One load for uc::CpuBoost: the game thread, or the render thread less a margin. The render thread is busy in each second
+        // (0.7 of a second in a fast scene of the app 0.0.57 on battery, 0.9 in a slow one), so it counts as busy only from 0.75.
+        constexpr double kRenderMargin=0.15;
+        const double load=game_load<0 && render_load<0 ? -1 : std::max(game_load,render_load<0 ? -1 : render_load-kRenderMargin);
+        static const bool load_log=std::getenv("UC_NO_LOAD_LOG")==nullptr;
+        if (load_log) std::fprintf(stderr,"[vr-load] game %.2f render %.2f fps %.1f boost %d\n",game_load,render_load,fps,int(cpu_boost_.on()));
+        if (cpu_boost_.window(fps,gpu_ms,target,std::max(load,-1.0))) {
+            const bool sent=xr_->set_cpu_boost(cpu_boost_.on());
+            std::fprintf(stderr,"[vr] CPU boost %s%s (%.1f fps of %.0f, GPU %.2f ms a frame, game thread %.2f, render thread %.2f, %u of %u s with the boost)\n",cpu_boost_.on() ? "on" : "off",
+                         sent ? "" : ", no request",fps,target,gpu_ms,game_load,render_load,cpu_boost_.boosted(),cpu_boost_.total());
+        }
     }
 #endif
     if (!auto_scale_on_ || !auto_scale_.window(fps,gpu_ms,target)) return;
@@ -3526,8 +3551,16 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
     std::vector<DrawGpu> gpu_draws; gpu_draws.reserve(packet.draws.size());
     std::unordered_map<const gx::TextureBank*,uint32_t> bank_of;   // one bank per distinct texture matrix set
     std::vector<const gx::TextureBank*> banks;
+    std::vector<gx::TextureMatrixIds> bank_ids;   // the matrices of each bank that the vertices of its draws name
     std::unordered_map<const gx::Transforms*,uint32_t> palette_of;   // one palette per distinct transform block
     std::vector<const gx::Transforms*> palette_blocks;
+    std::vector<uint64_t> palette_rows;   // the matrices of each palette that its draws read (gx::fill_palette writes only those)
+    const auto palette_index=[&](const gx::Transforms* block,uint64_t rows) {
+        const auto [palette,inserted]=palette_of.try_emplace(block,uint32_t(palette_blocks.size()));
+        if (inserted) { palette_blocks.push_back(block); palette_rows.push_back(0); }
+        palette_rows[palette->second]|=rows;
+        return palette->second;
+    };
     // The headset's space warp: per draw its motion kind and previous palette for the pre-pass (smoke.slang XformJob motionKind/prevPalette):
     // 1 = last frame's matrices of the same draw (tracker_), 2 = no match (the motion pass applies the camera's motion), 0 = not tracked.
     std::vector<std::array<uint32_t,2>> warp_prev(packet.draws.size(),std::array<uint32_t,2>{0,0});
@@ -3550,6 +3583,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const size_t group=(draw.primitive==0xA8 || draw.primitive==0xB0) ? 2 : 3;
         const bool indexed=draw.state->descriptors[0]!=gx::Mode::none;
         DrawGpu info; info.indexed=indexed; info.current=draw.transforms->current;
+        uint64_t matrix_rows=uint64_t(1)<<std::min<uint32_t>(info.current,63);   // the matrices that the vertices of the draw read
         info.key=pipeline_key(draw); info.choice=pipeline_for(info.key);
         // A blending draw with destination alpha: its one-draw pipeline when that is compiled (dual_pipeline). info.key stays the key of
         // the colour draw: the state, the joins and the layers read it.
@@ -3558,10 +3592,15 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (dual_key[67]==2) info.dual=dual_pipeline(dual_key);
         }
         if (gpu_ops_enabled() && info.choice.uber) note_uber_fallback(draw);
+        static const bool no_banks=std::getenv("UC_NO_TMI")!=nullptr;   // debug: ignore per-vertex texture matrix ids (A/B against the old behaviour)
+        const bool banked=!no_banks && gx::has_texture_matrix_index(*draw.state);
+        gx::TextureMatrixIds texture_ids{};   // the texture matrices that the vertices of a draw with a bank name
         if (draw.mesh) {
             GpuMesh& mesh=gpu_mesh(draw.mesh);   // uploaded and validated on first use
             if (mesh.index_count % group != 0) throw std::invalid_argument("index count does not match native draw topology");
             gx::validate_draw_rows(*draw.transforms,indexed,mesh.rows,draw.callsite);
+            if (indexed) matrix_rows=mesh.rows;
+            texture_ids=mesh.texture_ids;
             if (slot.mesh_refs.empty() || slot.mesh_refs.back()!=draw.mesh) slot.mesh_refs.push_back(draw.mesh);
             info.vertices=info.indices=&mesh.slab->buffer; info.vertex_offset=mesh.vertex_offset; info.index_offset=mesh.index_offset; info.index_count=mesh.index_count; info.mesh_id=mesh.id; info.box=&mesh.box;
         } else {
@@ -3569,13 +3608,14 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             if (indices.size() % group != 0) throw std::invalid_argument("index count does not match native draw topology");
             for (uint32_t index : indices) if (index >= vertices.size()) throw std::invalid_argument("draw index exceeds owned vertices");
             if (vertices.size() > size_t(INT32_MAX) - vertex_count || indices.size() > size_t(UINT32_MAX) - index_count) throw std::invalid_argument("frame exceeds indexed draw limits");
-            gx::validate_draw_rows(*draw.transforms,indexed,gx::used_rows(vertices),draw.callsite);
+            const uint64_t vertex_rows=gx::used_rows(vertices);
+            gx::validate_draw_rows(*draw.transforms,indexed,vertex_rows,draw.callsite);
+            if (indexed) matrix_rows=vertex_rows;
+            if (banked) texture_ids=gx::used_texture_matrices(vertices);
             info.index_count=uint32_t(indices.size()); info.first_index=uint32_t(index_count); info.first_vertex=int32_t(vertex_count);
             vertex_count += vertices.size(); index_count += indices.size();
         }
-        const auto [palette,inserted]=palette_of.try_emplace(draw.transforms.block().get(),uint32_t(palette_blocks.size()));
-        if (inserted) palette_blocks.push_back(palette->first);
-        info.palette=palette->second;
+        info.palette=palette_index(draw.transforms.block().get(),matrix_rows);
 #ifdef UC_OPENXR
         // Space warp: depth-writing perspective draws carry last frame's matrices of the same draw (its previous palette), as the desktop's
         // scene draws do for their vectors below.
@@ -3583,18 +3623,16 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             const size_t d=gpu_draws.size();
             const auto key=tracker_.key(draw);
             if (const auto* previous=tracker_.previous(key)) {
-                const auto [prev,added]=palette_of.try_emplace(previous->transforms.get(),uint32_t(palette_blocks.size()));
-                if (added) palette_blocks.push_back(prev->first);
-                warp_prev[d]={1u,prev->second};
+                warp_prev[d]={1u,palette_index(previous->transforms.get(),matrix_rows)};
             } else warp_prev[d]={2u,0u};
             tracker_.record(key,draw.transforms.block(),true);
         }
 #endif
-        static const bool no_banks=std::getenv("UC_NO_TMI")!=nullptr;   // debug: ignore per-vertex texture matrix ids (A/B against the old behaviour)
-        if (!no_banks && gx::has_texture_matrix_index(*draw.state)) {
+        if (banked) {
             if (!draw.texture_bank) throw std::invalid_argument("native draw has per-vertex texture matrix indices but no texture bank");
             const auto [bank,added]=bank_of.try_emplace(draw.texture_bank.get(),uint32_t(banks.size()));
-            if (added) banks.push_back(bank->first);
+            if (added) { banks.push_back(bank->first); bank_ids.push_back({}); }
+            bank_ids[bank->second][0]|=texture_ids[0]; bank_ids[bank->second][1]|=texture_ids[1];
             info.bank=bank->second;
         }
         if (const size_t d=gpu_draws.size(); d<scene_draws) {   // scene draw: last frame's matrices of the same draw for its motion vectors
@@ -3603,9 +3641,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
                 MotionBlock block{};
                 if (const auto* previous=tracker_.previous(key)) {
                     block.kind=1; block.prev_rows=previous->transforms->projection;
-                    const auto [palette,inserted]=palette_of.try_emplace(previous->transforms.get(),uint32_t(palette_blocks.size()));
-                    if (inserted) palette_blocks.push_back(palette->first);
-                    block.prev_palette=palette->second;
+                    block.prev_palette=palette_index(previous->transforms.get(),matrix_rows);
                 } else { block.kind=2; block.prev_rows=tracker_.clip_to_prev_clip(); }
                 draw_motion[d]=uint32_t(motion_blocks.size()); motion_blocks.push_back(block);
             }
@@ -3678,14 +3714,27 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
         const VkDeviceSize palette_bytes=VkDeviceSize(palette_blocks.size())*sizeof(gx::PaletteBlock);
         if (slot.palettes.size < palette_bytes) { destroy_buffer(slot.palettes); slot.palettes = make_buffer(palette_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|rt_input_usage()); }
         auto* palettes=static_cast<gx::PaletteBlock*>(slot.palettes.mapped);
-        for (size_t i=0;i<palette_blocks.size();++i) gx::fill_palette(palettes[i], *palette_blocks[i]);
+        // Only the matrices that the draws read: a block has 128 rows, and most draws read 6 of them. The whole blocks were 4 % of the
+        // CPU time of the render thread in a slow scene (Quest 3 on battery, app 0.0.57). UC_FULL_PALETTES=1 writes whole blocks.
+        static const bool full_palettes=std::getenv("UC_FULL_PALETTES")!=nullptr;
+        for (size_t i=0;i<palette_blocks.size();++i) {
+            if (full_palettes) gx::fill_palette(palettes[i], *palette_blocks[i]);
+            else gx::fill_palette(palettes[i], *palette_blocks[i], palette_rows[i]);
+        }
     }
     {   // the descriptor always has a bank bound; a frame without per-vertex texture matrices binds one unused entry
         const VkDeviceSize bank_bytes=VkDeviceSize(std::max<size_t>(banks.size(),1))*sizeof(gx::TextureBank);
         if (slot.banks.size < bank_bytes) { destroy_buffer(slot.banks); slot.banks = make_buffer(bank_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
-        // A bank is written whole (6,048 bytes). A write of only the matrices that the game had set was slower (app 0.0.54): the game
-        // has most of them set, because position loads and texture loads share the rows.
-        for (size_t i=0;i<banks.size();++i) std::memcpy(static_cast<gx::TextureBank*>(slot.banks.mapped)+i,banks[i],sizeof(gx::TextureBank));
+        // A whole bank is 6,048 bytes, and the whole banks were 5 % of the CPU time of the render thread in a slow scene (Quest 3 on
+        // battery, app 0.0.57). So a bank gets only the matrices that the vertices of its draws name (gx::copy_texture_bank).
+        // A write of only the matrices that the game had set was slower (app 0.0.54): the game has most of them set, because
+        // position loads and texture loads share the rows. UC_FULL_BANKS=1 writes whole banks.
+        static const bool full_banks=std::getenv("UC_FULL_BANKS")!=nullptr;
+        for (size_t i=0;i<banks.size();++i) {
+            auto& target=static_cast<gx::TextureBank*>(slot.banks.mapped)[i];
+            if (full_banks) std::memcpy(&target,banks[i],sizeof(gx::TextureBank));
+            else gx::copy_texture_bank(target,*banks[i],bank_ids[i]);
+        }
     }
     {   // bound even when no draw reads it
         const VkDeviceSize motion_bytes=layers_>1 ? VkDeviceSize(std::max<size_t>(packet.draws.size(),1))*stereo_stride_ : VkDeviceSize(std::max<size_t>(motion_blocks.size(),1))*sizeof(MotionBlock);
