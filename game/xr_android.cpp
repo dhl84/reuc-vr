@@ -55,8 +55,9 @@ std::unique_ptr<XrCompositor> make_android_xr() {
     }
     config.refresh = float(settings.refresh);
     config.foveation_level = settings.foveation;
-    // UC_CPU_BOOST=1: the runtime's boost CPU level (2.36 GHz on the Quest 3's fast cores) instead of sustained high (2.21 GHz); the
-    // runtime may throttle it when the headset heats up. For measurements.
+    // UC_CPU_BOOST=1: the runtime's boost CPU level from the start (up to 2.36 GHz on the Quest 3's fast cores) instead of sustained
+    // high (1.92 GHz on battery, 2.21 GHz on a charger). The runtime allows it for 45 s in a row and a fifth of the run time. For
+    // measurements: without it uc::CpuBoost asks for the level in slow seconds.
     if (const char* boost = std::getenv("UC_CPU_BOOST")) config.cpu_boost = *boost == '1';
     config.stereo.scale = settings.scale; config.stereo.screen = settings.screen; config.stereo.hud_pitch = float(settings.hud_pitch);
     config.stereo.hud_fit = true;   // gameplay HUD at the display's edges, following the head (StereoScene); menus keep HOTD4's screen

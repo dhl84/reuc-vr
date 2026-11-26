@@ -1072,6 +1072,13 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c3` again | 0.0.55 | 1,419 | 71.2 | 98 % | 47 fps |
 | `s20c4` again | 0.0.55 | 852 | 71.0 | 97 % | 44 fps |
 | `s20c5` again | 0.0.55 | 724 | 69.6 | 95 % | 43 fps |
+| `s20c1`, battery limits | 0.0.57 | 723 | 68.3 | 89 % | 49 fps |
+| `s20c2`, battery limits | 0.0.57 | 541 | 70.4 | 94 % | 47 fps |
+| `s20c3`, battery limits | 0.0.57 | 1,382 | 71.1 | 99 % | 49 fps |
+| `s20c4`, battery limits | 0.0.57 | 832 | 71.0 | 97 % | 43 fps |
+| `s20c5`, battery limits | 0.0.57 | 811 | 69.4 | 95 % | 44 fps |
+
+The five rows with "battery limits" ran with the clock limits of a headset on battery (section "The clock limits of a headset on battery"). All other rows ran on a charger.
 
 The three rows of `s20c7` do not hold the same seconds, because the bot needed a different time for the last boss in each run. The fight took 1,467 s with the app 0.0.42, 675 s with the app 0.0.50 and 2,900 s with the app 0.0.51 (`quest2\b51`). In the fight the mean was 56.1 fps with the app 0.0.42 and 67.2 fps with the app 0.0.51. In the part before the first boss the mean was 62.6 fps and 68.1 fps. The run `quest2\b51` had no GPU hang and no crash. `q3\build\darkside\room_seconds.py RUN\run.log` prints the seconds and the frame rate of each part of a chapter.
 
@@ -1349,6 +1356,19 @@ Two changes came from this (app 0.0.56):
 What the boost did in `quest2\d56_bat`. In one span the frame rate was 50 to 59 fps for the first 5 s of the boost, at 1.92 GHz. Then the clock went to 2.36 GHz, and the frame rate went to 72 fps. In another span the clock stayed at 1.92 GHz for the 8 s of the boost. The runtime raises the clock only while the CPU load is 83 % or more. So the shortest boost holds 16 s since the app 0.0.57.
 
 One setting was not used. The manifest key `com.oculus.trade_cpu_for_gpu_amount` with the value 1 opens the GPU level 6 (640 MHz) together with dynamic resolution. It takes one level from the CPU, and the game thread limits many slow seconds.
+
+The app 0.0.57 played the five Oblivion chapters in a row with the clock limits of battery (`quest2\r57d`, `q3\build\reuc-build\run_bat5.sh NAME`):
+
+- All five chapters ended with a save. The play had no crash report and no fault frame.
+- The mean was 70.2 fps. 95.5 % of the 4,289 chapter seconds had 60 fps or more. The chapter table has the five rows.
+- `s20c1` and `s20c2` lost the most. They had 89 % and 94 % of the seconds at 60 fps or more, and 97 % and 99 % on a charger. The other three chapters kept their shares.
+- 194 seconds were below 60 fps. In 89 of them the game thread used less than 600 ms of CPU. The GPU or the renderer set the limit there.
+- In the other 105 slow seconds the game thread was busy. It used 751 ms of CPU a second, and it lost 49 ms to thread switches.
+- The game thread was busy in 1,796 of the 4,289 seconds. Its CPU time at 1.92 GHz is the next cost to lower.
+- The CPU boost started 43 times. It held 819 of 4,546 s (18 %), and the CPU clock was 2.36 GHz in about 650 of them.
+- The GPU ran at 599 MHz in about half of the seconds and at 545 MHz or less in the other half.
+
+A restart of the adb server of the PC cuts a play. The driver then prints `stopped: no reply to input`, and the game runs on with no fault. Godot starts its own adb server, and two plays ended that way (`quest2\r57b`, `quest2\r57c`). If a play stops with that line, look at the creation time of the process `adb.exe` first.
 
 #### The bot in the wide view
 
