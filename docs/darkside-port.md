@@ -1317,6 +1317,39 @@ The app 0.0.55 has only the two changes that stayed. It played the five Oblivion
 - In the slow seconds with a busy game thread, the game thread waited 137 ms a second for the renderer. That is more than the 84 ms of the app 0.0.54, and less than the 142 to 184 ms before.
 - The five chapters had 119 seconds below 60 fps in 4,273 seconds. In 83 of them the game thread used less than 600 ms of CPU. The render loop found no free GPU slot 225 to 413 times a second there. So the GPU limits most of the slow seconds that are left.
 
+#### The clock limits of a headset on battery
+
+A Quest 3 on a charger raises the clock limits of its CPU and its GPU. Meta names this the charging boost (the page "CPU and GPU levels" of the Meta developer documentation). Every play before 26 November 2026 ran on a charger. So every frame rate above this section is the frame rate of a headset on a charger.
+
+| State of the headset | CPU clock | GPU clock, at most |
+|---|---|---|
+| On a charger | 2.21 GHz | 640 MHz |
+| On battery | 1.92 GHz | 545 MHz |
+| On battery, the app asks for dynamic resolution | 1.92 GHz | 599 MHz |
+| On battery, the app asks for the CPU boost level | 2.36 GHz at most | no change |
+
+- The VrApi lines of logcat show the clocks. A line of a play on a charger has `CPU4/GPU=4/4,2208/640MHz`. The level stays 4, and only the clocks tell the two states apart.
+- The test aid. `adb shell setprop debug.crcs.disable_charging_boost 1` turns the charging boost off within 2 s. An empty value turns it on again, and a restart of the headset does that too. `q3\build\reuc-build\quest_battery.sh COMMAND [ARG...]` sets the property, runs the command and clears the property.
+- `adb shell dumpsys battery unplug` does not turn the charging boost off (`quest2\b55_bat`).
+
+The test is the start of `s30c4` at the fixed render scale 1.25 (`quest_px.sh`), about 150 s for each play:
+
+| Play | Clock limits | Mean fps | Seconds at 60 fps or more | GPU time of a frame, median |
+|---|---|---|---|---|
+| `quest2\b55_bat`, app 0.0.55 | charger | 71.1 | 100 % | 11.4 ms |
+| `quest2\b55_usb`, app 0.0.55 | charger | 69.5 | 93 % | 10.9 ms |
+| `quest2\n56_bat`, app 0.0.56 without the two requests | battery | 60.6 | 56 % | 14.1 ms |
+| `quest2\d56_bat`, app 0.0.56 | battery | 64.6 | 91 % | 13.0 ms |
+
+Two changes came from this (app 0.0.56):
+
+- The app turns the dynamic resolution of the runtime on (`XR_META_recommended_layer_resolution`). `XrCompositor::end_frame` asks for the recommended size of the layer in each frame. The renderer does not use the answer, because it has its own automatic render scale. The request opens the GPU level 5: the GPU ran at 599 MHz in `quest2\d56_bat`, and at 545 MHz without the request. `UC_NO_XR_DYNRES=1` leaves the extension off.
+- The app asks for the boost level of the CPU in slow seconds (`uc::CpuBoost` in `renderer/cpu_boost.h`, `XrCompositor::set_cpu_boost`). The runtime allows that level for 45 s in a row and for a fifth of the run time. So a boost starts after a second below 93 % of the refresh rate, and it ends after 16 to 40 s. The rule keeps the boost below 18 % of the seconds. A second whose GPU time alone fills the period starts no boost. `tests/test_cpu_boost.cpp` tests the rule. `UC_NO_CPU_BOOST=1` turns it off. The line `[vr] CPU boost on` of the log shows each start.
+
+What the boost did in `quest2\d56_bat`. In one span the frame rate was 50 to 59 fps for the first 5 s of the boost, at 1.92 GHz. Then the clock went to 2.36 GHz, and the frame rate went to 72 fps. In another span the clock stayed at 1.92 GHz for the 8 s of the boost. The runtime raises the clock only while the CPU load is 83 % or more. So the shortest boost holds 16 s since the app 0.0.57.
+
+One setting was not used. The manifest key `com.oculus.trade_cpu_for_gpu_amount` with the value 1 opens the GPU level 6 (640 MHz) together with dynamic resolution. It takes one level from the CPU, and the game thread limits many slow seconds.
+
 #### The bot in the wide view
 
 The `bot` step of `scripts/drive.py` presses A at fixed places for a choice of ways, and it shoots at a grid of five rows. Two places stopped it:

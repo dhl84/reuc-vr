@@ -312,6 +312,7 @@ void VulkanRenderer::initialize(SDL_Window* window, bool validation, const std::
     // The automatic render scale: on for the headset (UC_AUTO_SCALE=0 turns it off); the preview takes it with UC_AUTO_SCALE=1 for tests
     // (its target rate: UC_AUTO_SCALE_HZ, 60 without it).
     { const char* v = std::getenv("UC_AUTO_SCALE"); auto_scale_on_ = xr_ ? !(v && *v == '0') : preview_ && v && *v == '1'; }
+    cpu_boost_on_ = xr_ && !std::getenv("UC_NO_CPU_BOOST");
     std::vector<const char*> extensions;
     if (!xr_) {   // the headset needs no window surface: OpenXR adds what it needs to the instance
         Uint32 count = 0; const char* const* required = SDL_Vulkan_GetInstanceExtensions(&count);
@@ -2088,7 +2089,14 @@ void VulkanRenderer::auto_scale_tick() {
 #endif
     if (const char* v=std::getenv("UC_AUTO_SCALE_HZ")) target=std::atof(v);
     const double fps=double(frames)/seconds, was=configured_scale_;
-    if (!auto_scale_.window(fps,gpu_ms,target)) return;
+#ifdef UC_OPENXR
+    if (cpu_boost_on_ && xr_ && cpu_boost_.window(fps,gpu_ms,target)) {
+        const bool sent=xr_->set_cpu_boost(cpu_boost_.on());
+        std::fprintf(stderr,"[vr] CPU boost %s%s (%.1f fps of %.0f, GPU %.2f ms a frame, %u of %u s with the boost)\n",cpu_boost_.on() ? "on" : "off",
+                     sent ? "" : ", no request",fps,target,gpu_ms,cpu_boost_.boosted(),cpu_boost_.total());
+    }
+#endif
+    if (!auto_scale_on_ || !auto_scale_.window(fps,gpu_ms,target)) return;
     set_render_scale(user_scale_);
     std::fprintf(stderr,"[vr] automatic render scale %.3f -> %.3f (%.1f fps of %.0f, GPU %.2f ms a frame)\n",was,configured_scale_,fps,target,gpu_ms);
 }
@@ -3357,7 +3365,7 @@ bool VulkanRenderer::render(const gx::FramePacket& packet, bool display,uint64_t
             }
         }
     }
-    if (auto_scale_on_ && packet.present && display) auto_scale_tick();
+    if ((auto_scale_on_ || cpu_boost_on_) && packet.present && display) auto_scale_tick();
     const bool has_output = swapchain_ != VK_NULL_HANDLE || (xr_ && efb_);   // the headset has no window swapchain: its output is the XR swapchain
     if (const auto now = std::chrono::steady_clock::now(); uc::rebuild_due(resized_, has_output, now, last_rebuild_)) {
         last_rebuild_ = now; rebuild();        if (resized_) return refused("the swapchain is not rebuilt yet");

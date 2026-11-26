@@ -102,6 +102,11 @@ XrCompositor::XrCompositor(XrConfig config, XrPlatform platform)
         if (refresh_control_) extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
         space_warp_supported_ = has(XR_FB_SPACE_WARP_EXTENSION_NAME);   // enabled whenever offered; the Display page decides per frame
         if (space_warp_supported_) extensions.push_back(XR_FB_SPACE_WARP_EXTENSION_NAME);
+        // XR_META_recommended_layer_resolution is the runtime's dynamic resolution. On battery a Quest 3 gives the GPU level 5 (599 MHz)
+        // only to an app that has it on. Without it the GPU stays at 545 MHz. The renderer keeps its own automatic render scale and
+        // only asks for the recommendation each frame (end_frame). UC_NO_XR_DYNRES=1: the extension stays off.
+        layer_resolution_ = has(XR_META_RECOMMENDED_LAYER_RESOLUTION_EXTENSION_NAME) && !std::getenv("UC_NO_XR_DYNRES");
+        if (layer_resolution_) extensions.push_back(XR_META_RECOMMENDED_LAYER_RESOLUTION_EXTENSION_NAME);
         XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 #ifdef __ANDROID__
         XrInstanceCreateInfoAndroidKHR android{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
@@ -165,8 +170,10 @@ void XrCompositor::attach(VkInstance instance, VkPhysicalDevice physical, VkDevi
         binding.queueFamilyIndex = family; binding.queueIndex = 0;
         XrSessionCreateInfo create{XR_TYPE_SESSION_CREATE_INFO}; create.next = &binding; create.systemId = system_;
         xr_check(xrCreateSession(instance_, &create, &session_), "Vulkan OpenXR session");
+        if (layer_resolution_) get_layer_resolution_ = function<PFN_xrGetRecommendedLayerResolutionMETA>(instance_, "xrGetRecommendedLayerResolutionMETA");
         if (performance_control_ && config_.sustained_cpu) {
             auto set = function<PFN_xrPerfSettingsSetPerformanceLevelEXT>(instance_, "xrPerfSettingsSetPerformanceLevelEXT");
+            set_level_ = set;
             const auto level = config_.cpu_boost ? XR_PERF_SETTINGS_LEVEL_BOOST_EXT : XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
             const auto result = set(session_, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, level);
             std::fprintf(stderr, "[vulkan-xr] CPU %s performance request: %d\n", config_.cpu_boost ? "boost" : "sustained high", int(result));
@@ -940,6 +947,12 @@ void XrCompositor::copy_capture(VkCommandBuffer command, VkImage destination, Vk
                VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_READ_BIT,VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 }
 
+bool XrCompositor::set_cpu_boost(bool on) {
+    if (!set_level_ || !session_ || config_.cpu_boost) return false;   // UC_CPU_BOOST=1 asked for the boost level at the start
+    const auto result = set_level_(session_, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, on ? XR_PERF_SETTINGS_LEVEL_BOOST_EXT : XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+    return XR_SUCCEEDED(result);
+}
+
 void XrCompositor::end_frame(bool rendered) {
     if (!frame_open_) return;
     if (rendered && !acquired_) throw std::logic_error("OpenXR frame has no acquired eye image");
@@ -967,6 +980,20 @@ void XrCompositor::end_frame(bool rendered) {
     const auto layer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO}; end.displayTime = frame_.predictedDisplayTime;
     end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; end.layerCount = rendered ? 1 : 0; end.layers = &layer;
+    if (rendered && get_layer_resolution_) {
+        // The request alone marks the app as one with dynamic resolution. The log has the first answer and each 500th change of it.
+        XrRecommendedLayerResolutionGetInfoMETA info{XR_TYPE_RECOMMENDED_LAYER_RESOLUTION_GET_INFO_META};
+        info.layer = layer; info.predictedDisplayTime = frame_.predictedDisplayTime;
+        XrRecommendedLayerResolutionMETA answer{XR_TYPE_RECOMMENDED_LAYER_RESOLUTION_META};
+        const auto result = get_layer_resolution_(session_, &info, &answer);
+        const int32_t width = XR_SUCCEEDED(result) && answer.isValid ? answer.recommendedImageDimensions.width : -1;
+        if (width != recommended_width_) {
+            if (recommended_changes_++ % 500 == 0)
+                std::fprintf(stderr, "[vulkan-xr] recommended layer resolution %dx%d (result %d, change %u)\n", width,
+                             width < 0 ? -1 : answer.recommendedImageDimensions.height, int(result), recommended_changes_);
+            recommended_width_ = width;
+        }
+    }
     const auto t3 = std::chrono::steady_clock::now();
     xr_check(xrEndFrame(session_, &end), "submit OpenXR frame"); frame_open_ = false;
     xr_time(3, t3, std::chrono::steady_clock::now());

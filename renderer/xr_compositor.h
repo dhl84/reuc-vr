@@ -156,6 +156,9 @@ public:
     // images (the automatic render scale), record() fills only a part of the eye images of that share, and end_frame() gives the
     // runtime that part (subImage.imageRect). The screen pass then stores fewer pixels. UC_XR_FULL_EYES=1: always the whole images.
     void set_shown_pixels(uint32_t width) { shown_width_ = width; }
+    // Asks the runtime for the boost level of the CPU, or for the sustained-high level again (uc::CpuBoost decides). False: no request
+    // went out (no XR_EXT_performance_settings, or the run has the boost level from its start).
+    bool set_cpu_boost(bool on);
     XrTime display_time() const { return frame_.predictedDisplayTime; }
     XrSpace space() const { return space_; }
 private:
@@ -185,6 +188,10 @@ private:
     PFN_xrCreateVulkanDeviceKHR create_device_ = nullptr;
     PFN_xrGetVulkanGraphicsDevice2KHR get_device_ = nullptr;
     bool refresh_control_ = false, performance_control_ = false, thread_control_ = false;
+    bool layer_resolution_ = false;   // XR_META_recommended_layer_resolution is on
+    PFN_xrGetRecommendedLayerResolutionMETA get_layer_resolution_ = nullptr;
+    int32_t recommended_width_ = 0; uint32_t recommended_changes_ = 0;
+    PFN_xrPerfSettingsSetPerformanceLevelEXT set_level_ = nullptr;
 #ifdef __ANDROID__
     PFN_xrSetAndroidApplicationThreadKHR set_thread_ = nullptr;
     size_t guest_tids_seen_ = 0;   // guest host threads already registered with the runtime (begin_frame)

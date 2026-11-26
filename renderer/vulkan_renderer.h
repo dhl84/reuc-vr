@@ -1,5 +1,6 @@
 #pragma once
 #include "auto_scale.h"
+#include "cpu_boost.h"
 #include "dlss5_pass.h"
 #include "graphics_effects.h"
 #include "gx_packets.h"
@@ -572,6 +573,9 @@ private:
     double user_scale_=0.5;
     uc::AutoScale auto_scale_;
     bool auto_scale_on_=false;
+    // The headset's CPU boost in slow seconds (cpu_boost.h), judged in the same windows. UC_NO_CPU_BOOST=1 turns it off.
+    uc::CpuBoost cpu_boost_;
+    bool cpu_boost_on_=false;
     std::chrono::steady_clock::time_point auto_window_start_{};
     uint64_t auto_presents_=0, auto_busy_ns_=0;
     void auto_scale_tick();
