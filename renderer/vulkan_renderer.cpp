@@ -2108,9 +2108,10 @@ void VulkanRenderer::auto_scale_tick() {
     const double fps=double(frames)/seconds, was=configured_scale_;
 #ifdef UC_OPENXR
     if (cpu_boost_on_ && xr_) {
-        // One load for uc::CpuBoost: the game thread, or the render thread less a margin. The render thread is busy in each second
-        // (0.7 of a second in a fast scene of the app 0.0.57 on battery, 0.9 in a slow one), so it counts as busy only from 0.75.
-        constexpr double kRenderMargin=0.15;
+        // One load for uc::CpuBoost: the game thread, or the render thread less a margin. The render thread is busy in each second:
+        // five chapters of the app 0.0.59 on battery had 2,300 fast seconds with a render thread at 0.7 to 0.9, and the slow seconds
+        // of a calm game thread had the same shares (the GPU set the limit there). So it counts as busy only from 0.90.
+        constexpr double kRenderMargin=0.30;
         const double load=game_load<0 && render_load<0 ? -1 : std::max(game_load,render_load<0 ? -1 : render_load-kRenderMargin);
         static const bool load_log=std::getenv("UC_NO_LOAD_LOG")==nullptr;
         if (load_log) std::fprintf(stderr,"[vr-load] game %.2f render %.2f fps %.1f boost %d\n",game_load,render_load,fps,int(cpu_boost_.on()));

@@ -80,6 +80,23 @@ int main() {
         CHECK(boost.boosted()>0 && double(boost.boosted())<=0.2*double(boost.total()));
         CHECK(double(boost.boosted())>=0.12*double(boost.total()));
     }
+    {   // a late second whose GPU time fills the period: a busy thread starts no boost, a heavy load does
+        B boost;
+        CHECK(loaded(boost,72,0.4,300)==0);
+        int changes=0;
+        for(int i=0;i<20;++i) changes+=boost.window(50,13.5,72,0.7);
+        CHECK(changes==0 && !boost.on());
+        CHECK(boost.window(50,13.5,72,0.85) && boost.on());
+    }
+    {   // a start soon after the end of a boost: with a known load the boost does not hold longer
+        B boost;
+        loaded(boost,72,0.4,600);
+        CHECK(loaded(boost,50,0.7,1)==1 && boost.on());
+        CHECK(loaded(boost,72,0.4,B::kLoadHold)==1 && !boost.on());
+        CHECK(loaded(boost,50,0.7,1)==1 && boost.on());
+        CHECK(loaded(boost,72,0.4,B::kLoadHold-1)==0 && boost.on());
+        CHECK(loaded(boost,72,0.4,1)==1 && !boost.on());
+    }
     {   // no frames and no target: nothing changes
         B boost;
         for(int i=0;i<100;++i) CHECK(!boost.window(0,0,72) && !boost.window(30,13,0));

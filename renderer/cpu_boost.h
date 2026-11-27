@@ -43,12 +43,15 @@ struct CpuBoost {
         if(since_off_==kForget) hold_=0;   // a long time without a boost: the next one is short again
         if(rest_) { --rest_; return false; }
         if(double(boosted_+shortest)>kShare*double(total_)) return false;   // the share is spent
+        const bool gpu_bound=gpu_ms>kGpuBound*1000.0/target_hz;
         if(known) {
+            // A late second whose GPU time fills the period needs a heavy load: a faster CPU does not repair it for a busy thread.
             const bool room=double(boosted_+kLongestRun)<=kShare*double(total_);
-            if(!(late && load>=kBusy) && !(load>=kHeavy && room)) return false;
-        } else if(!late || gpu_ms>kGpuBound*1000.0/target_hz) return false;
-        // A start soon after the end of a boost: the scene still needs it, so this boost holds longer.
-        if(since_off_<=kRelapse) hold_=std::min(std::max(hold_,shortest)*2,kLongestHold);
+            if(!(late && load>=(gpu_bound ? kHeavy : kBusy)) && !(load>=kHeavy && room)) return false;
+        } else if(!late || gpu_bound) return false;
+        // Without a known load, a start soon after the end of a boost holds longer: the scene still needs it. With a known load
+        // the release load does that work, and the longer hold spent a third of the boost seconds on calm seconds (app 0.0.59).
+        if(!known && since_off_<=kRelapse) hold_=std::min(std::max(hold_,shortest)*2,kLongestHold);
         on_=true; run_=calm_=0;
         return true;
     }

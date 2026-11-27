@@ -1077,8 +1077,13 @@ The runs had `UC_DC_GOD=1 UC_DC_WEAK=1 UC_DC_ROCKET=1 UC_DC_BLOOD=1` and the wea
 | `s20c3`, battery limits | 0.0.57 | 1,382 | 71.1 | 99 % | 49 fps |
 | `s20c4`, battery limits | 0.0.57 | 832 | 71.0 | 97 % | 43 fps |
 | `s20c5`, battery limits | 0.0.57 | 811 | 69.4 | 95 % | 44 fps |
+| `s20c1`, battery limits | 0.0.60 | 715 | 69.7 | 97 % | 48 fps |
+| `s20c2`, battery limits | 0.0.60 | 534 | 71.6 | 99 % | 58 fps |
+| `s20c3`, battery limits | 0.0.60 | 1,371 | 71.1 | 98 % | 49 fps |
+| `s20c4`, battery limits | 0.0.60 | 839 | 70.3 | 94 % | 40 fps |
+| `s20c5`, battery limits | 0.0.60 | 672 | 69.8 | 96 % | 40 fps |
 
-The five rows with "battery limits" ran with the clock limits of a headset on battery (section "The clock limits of a headset on battery"). All other rows ran on a charger.
+The ten rows with "battery limits" ran with the clock limits of a headset on battery (section "The clock limits of a headset on battery"). All other rows ran on a charger.
 
 The three rows of `s20c7` do not hold the same seconds, because the bot needed a different time for the last boss in each run. The fight took 1,467 s with the app 0.0.42, 675 s with the app 0.0.50 and 2,900 s with the app 0.0.51 (`quest2\b51`). In the fight the mean was 56.1 fps with the app 0.0.42 and 67.2 fps with the app 0.0.51. In the part before the first boss the mean was 62.6 fps and 68.1 fps. The run `quest2\b51` had no GPU hang and no crash. `q3\build\darkside\room_seconds.py RUN\run.log` prints the seconds and the frame rate of each part of a chapter.
 
@@ -1417,11 +1422,12 @@ The matrix writes. A palette block holds the position matrices and the normal ma
 The boost rule. `q3\build\darkside\boost_use.py RUN/run.log` splits the seconds of a play by the boost and by the load of the game thread. In `quest2\r57d` the old rule spent 475 of its 789 boost seconds on seconds with no busy thread. A busy game thread gave 2 slow seconds in 273 seconds with the boost, and 103 slow seconds without it. `load_hist.py` shows that those slow seconds come at 800 ms or more of game thread CPU a second. So the new rule goes by the CPU load:
 
 - The renderer measures the CPU time of the game thread and of the render thread in each second. The line `[vr-load]` of the log has both. `UC_NO_LOAD_LOG=1` turns the line off.
-- The load of a second is the larger of two values: the share of the game thread, and the share of the render thread minus 0.15.
+- The load of a second is the larger of two values: the share of the game thread, and the share of the render thread minus 0.30.
 - A boost starts after a late second with a load of 0.60 or more.
+- If the GPU time of a late second fills 95 % of the frame period, that start needs a load of 0.80 or more.
 - A boost also starts before a late second, at a load of 0.80 or more. That start needs room for 40 s in the budget.
 - A boost ends after 4 seconds with a load below 0.58, but not before its sixth second. The limits of 40 s and of 18 % of the run time stay.
-- A boost that starts within 6 s of the last one holds twice as long, up to 32 s.
+- A boost that starts within 6 s of the last one holds no longer than the others. The longer hold is for the old rule only.
 - If the load is not known, the old rule applies. `tests/test_cpu_boost.cpp` tests both rules.
 
 The optimizer profile. The headset build takes counts from a recorded play, and the compiler optimizes a function with the count 0 for size. The profile of 16 November 2026 came from the first chapter only. `pgo_cover.py` looked at the game thread time in functions with the count 0. It found 7 % at the end of `s20c1` and 6 % at the start of `s20c4`. The new recording plays all five Oblivion chapters:
@@ -1434,7 +1440,37 @@ When the game exits, the instrumented app writes `uc.profraw`. It also writes th
 
 A change of the control flow of a function drops its counts. So record the profile after the last change of the hot functions, such as `VulkanRenderer::render()`.
 
-Open on 26 November 2026: the build of the app 0.0.59 with the new profile stopped, because the PC ran out of memory. So no play measured the three changes at the speed of a normal app yet. The headset has the app 0.0.57 again.
+The app 0.0.59 has the three changes. It played the five chapters with the clock limits of battery (`quest2\r59b`). All five chapters ended with a save and with no crash report.
+
+That app had the first form of the load rule. Its margin for the render thread was 0.15, and it had no GPU condition. A boost soon after the last one held twice as long. `q3\build\darkside\load_split.py RUN/run.log` splits the seconds of a play by the two loads of the `[vr-load]` lines. It showed that 489 of the 817 boost seconds had a game thread below 0.60. In 266 of them the render thread was at 0.73 or more, and the GPU limited most of those seconds. The budget of 18 % was empty at second 698 of `s20c1`, so the slow span at second 712 had no boost.
+
+`boost_sim2.py RUN/run.log [MARGIN [DOUBLE]]` plays other forms of the rule on the recorded lines. It gave the margin 0.30 and the end of the longer hold. The app 0.0.60 has that rule together with the GPU condition, and it played the same five chapters (`quest2\r60`). It also had no crash report, and all five chapters ended with a save.
+
+| Play | App | Chapter seconds | Slow seconds | Slow seconds with a busy game thread | Boost starts | Chapter seconds with the boost |
+|---|---|---|---|---|---|---|
+| `quest2\r57d` | 0.0.57 | 4,289 | 194 | 105 | 43 | 789 |
+| `quest2\p57` | 0.0.57 | 4,181 | 129 | 87 | 41 | 796 |
+| `quest2\r59b` | 0.0.59 | 4,316 | 134 | 45 | 49 | 812 |
+| `quest2\r60` | 0.0.60 | 4,131 | 132 | 51 | 17 | 312 |
+
+A slow second has fewer than 60 presented frames. A busy game thread uses 600 ms of CPU or more in the second. `q3\build\darkside\cmp_bat.sh RUN...` prints these counts.
+
+What the table shows:
+
+- The profile and the load rule cut the slow seconds with a busy game thread to about a half.
+- The total of the slow seconds stayed inside the spread of two plays of one app.
+- The rule of the app 0.0.60 gives the same result with 312 boost seconds in place of 812. So the budget is not empty at a heavy span.
+- The slow span at the end of `s20c1` had 14 slow seconds in `quest2\r60` and 27 in `quest2\r59b`.
+
+The slow spans move between plays. `s20c2` had 21 slow seconds near second 30 in `quest2\r59b` and none in `quest2\r60`. `s20c4` had 46 slow seconds in its first 260 s in `quest2\r60` and 3 in `quest2\r59b`.
+
+The other slow seconds are open. In `quest2\r60`, 81 of the 132 slow seconds had a game thread below 600 ms. The GPU and the render thread limit those seconds together. In such seconds of `quest2\r59b` the GPU needed 14.5 to 16 ms a frame at 545 to 599 MHz.
+
+`q3\build\reuc-build\build_play5.sh NAME N` builds the app 0.0.N and plays the five chapters into `quest2\NAME`. `run_new5.sh NAME N` does the play only. If a free headset has another version, it installs the APK first.
+
+A press of the power button of the headset opens a power-off dialog. With the dialog open, no app starts, and `adb shell am force-stop` waits without end. `run_new5.sh` closes the dialog with `am stack remove TASK`. `am stack list` gives the task number.
+
+The PC build of the same source compiled (`q3\build\reuc-build\pc_build_low.sh`). Two PC runs drew the first scene and its skinned figures correctly. One run used the new matrix writes, and one used `UC_FULL_PALETTES=1 UC_FULL_BANKS=1`. A pixel compare was not possible, because the bot stopped the two runs at different game moments.
 
 #### The bot in the wide view
 
