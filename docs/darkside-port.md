@@ -1466,6 +1466,8 @@ The slow spans move between plays. `s20c2` had 21 slow seconds near second 30 in
 
 The other slow seconds are open. In `quest2\r60`, 81 of the 132 slow seconds had a game thread below 600 ms. The GPU and the render thread limit those seconds together. In such seconds of `quest2\r59b` the GPU needed 14.5 to 16 ms a frame at 545 to 599 MHz.
 
+`q3\build\darkside\slow_by_scale.py RUN/run.log` counts the slow seconds by the automatic render scale of the second. It counts all seconds of the log, so its totals are a little larger. In `quest2\r60`, 51 of the 82 slow seconds with a calm game thread came at a scale above 1.00. In `quest2\r59b` they were 89 of 95. The scale 1.75 had 53 slow seconds in its 306 seconds of `quest2\r60`. Most of these slow seconds came more than 8 s after the last change of the scale. So the scale stays high for too long in a scene that the GPU cannot hold. The next step is a faster step down of the scale after a late second with a full GPU. That step is not started.
+
 `q3\build\reuc-build\build_play5.sh NAME N` builds the app 0.0.N and plays the five chapters into `quest2\NAME`. `run_new5.sh NAME N` does the play only. If a free headset has another version, it installs the APK first.
 
 A press of the power button of the headset opens a power-off dialog. With the dialog open, no app starts, and `adb shell am force-stop` waits without end. `run_new5.sh` closes the dialog with `am stack remove TASK`. `am stack list` gives the task number.
